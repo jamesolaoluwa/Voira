@@ -1,0 +1,320 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
+import { motion } from 'framer-motion';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
+import FileUpload from '@/components/ui/FileUpload';
+import { ArrowLeft, Mic, Square, Upload, FileText, Loader2 } from 'lucide-react';
+import { base44 } from '@/api/base44Client';
+import useAudioRecorder from '@/components/recording/AudioRecorder';
+
+export default function RefineDraft() {
+  const navigate = useNavigate();
+  
+  const [question, setQuestion] = useState('');
+  const [existingDraft, setExistingDraft] = useState('');
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [voiceNotes, setVoiceNotes] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const {
+    isRecording,
+    isPaused,
+    amplitude,
+    startRecording,
+    pauseRecording,
+    resumeRecording,
+    stopRecording,
+    uploadAndTranscribe,
+  } = useAudioRecorder();
+
+  const handleFileSelect = async (file) => {
+    setUploadedFile(file);
+    setIsProcessing(true);
+    
+    try {
+      // Upload file
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      
+      // Extract text from file
+      const extraction = await base44.integrations.Core.ExtractDataFromUploadedFile({
+        file_url,
+        json_schema: {
+          type: 'object',
+          properties: {
+            content: { type: 'string' }
+          }
+        }
+      });
+      
+      if (extraction.status === 'success') {
+        setExistingDraft(extraction.output.content);
+      }
+    } catch (error) {
+      console.error('Error processing file:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleStartRecording = async () => {
+    await startRecording();
+  };
+
+  const handleStopRecording = async () => {
+    stopRecording();
+    setIsProcessing(true);
+    
+    try {
+      const transcribedNotes = await uploadAndTranscribe();
+      setVoiceNotes(transcribedNotes);
+    } catch (error) {
+      console.error('Error transcribing:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRefine = async () => {
+    if (!existingDraft && !uploadedFile) {
+      alert('Please provide an existing draft to refine');
+      return;
+    }
+    
+    setIsProcessing(true);
+    
+    try {
+      const refinementPrompt = `
+        Refine the following draft based on the user's instructions:
+        
+        Question/Context: ${question || 'General refinement'}
+        
+        Existing Draft:
+        ${existingDraft}
+        
+        User's Voice Instructions:
+        ${voiceNotes || 'Make it clearer and more compelling'}
+        
+        Provide a refined version that:
+        1. Maintains the original voice and authenticity
+        2. Incorporates the requested changes
+        3. Improves clarity and impact
+        4. Keeps the core message intact
+        
+        Return JSON with: { refinedDraft, changesSummary }
+      `;
+      
+      const result = await base44.integrations.Core.InvokeLLM({
+        prompt: refinementPrompt,
+        response_json_schema: {
+          type: 'object',
+          properties: {
+            refinedDraft: { type: 'string' },
+            changesSummary: { type: 'string' }
+          }
+        }
+      });
+      
+      // Save to database
+      const recording = await base44.entities.Recording.create({
+        title: 'Refined Draft',
+        transcript: voiceNotes || 'Direct refinement',
+        refined_draft: result.refinedDraft,
+        type: 'refine',
+        question,
+      });
+      
+      // Navigate to Draft page
+      navigate(createPageUrl('Draft'), {
+        state: {
+          sessionData: {
+            id: recording.id,
+            title: 'Refined Draft',
+            transcript: voiceNotes,
+            refinedDraft: result.refinedDraft,
+            type: 'refine',
+            question,
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error refining draft:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex items-center gap-4 mb-8"
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => navigate(createPageUrl('Home'))}
+          className="text-zinc-400 hover:text-white"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-bold text-zinc-900 dark:text-zinc-100">
+            Refine Existing Draft
+          </h1>
+          <p className="text-zinc-600 dark:text-zinc-500">Upload your draft and tell Voira how to improve it</p>
+        </div>
+      </motion.div>
+
+      <div className="max-w-3xl mx-auto space-y-8">
+        {/* Question/Context */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
+        >
+          <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">
+            Application Question or Context (Optional)
+          </Label>
+          <Input
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="e.g., Describe a challenge you overcame..."
+            className="bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+          />
+        </motion.div>
+
+        {/* Existing Draft Input */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6 space-y-4"
+        >
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+            Your Existing Draft
+          </h3>
+          
+          {/* File Upload */}
+          <div>
+            <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">
+              Upload File (PDF, Word, or Text)
+            </Label>
+            <FileUpload
+              onFileSelect={handleFileSelect}
+              accept=".pdf,.doc,.docx,.txt"
+              label="Drop your draft here or click to upload"
+              helperText="Voira will extract the content and help you refine it"
+            />
+          </div>
+
+          {/* OR separator */}
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-zinc-200 dark:border-white/10" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-white dark:bg-[hsl(var(--card))] px-4 text-zinc-500 dark:text-zinc-500">OR</span>
+            </div>
+          </div>
+
+          {/* Text Input */}
+          <div>
+            <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">
+              Paste Your Draft
+            </Label>
+            <Textarea
+              value={existingDraft}
+              onChange={(e) => setExistingDraft(e.target.value)}
+              placeholder="Paste your existing draft here..."
+              className="bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 min-h-[200px]"
+            />
+          </div>
+        </motion.div>
+
+        {/* Voice Instructions */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6 space-y-6"
+        >
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+            <Mic className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+            Tell Voira What to Change
+          </h3>
+
+          <div className="flex flex-col items-center gap-6">
+            <VoiceVisualizer 
+              size={180} 
+              isActive={isRecording && !isPaused} 
+              amplitude={amplitude}
+            />
+
+            {!isRecording ? (
+              <Button
+                size="lg"
+                onClick={handleStartRecording}
+                disabled={isProcessing}
+                className="bg-gradient-to-r from-teal-600 to-teal-500 hover:from-teal-500 hover:to-teal-400"
+              >
+                <Mic className="w-5 h-5 mr-2" />
+                Record Changes
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                onClick={handleStopRecording}
+                className="bg-rose-600 hover:bg-rose-500"
+              >
+                <Square className="w-4 h-4 mr-2" />
+                Finish Recording
+              </Button>
+            )}
+
+            {voiceNotes && (
+              <div className="w-full bg-zinc-50 dark:bg-[#13131a] rounded-xl p-4 border border-zinc-200 dark:border-white/10">
+                <p className="text-sm text-zinc-600 dark:text-zinc-500 mb-2">Your Instructions:</p>
+                <p className="text-zinc-800 dark:text-zinc-300">{voiceNotes}</p>
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Submit Button */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="flex justify-center"
+        >
+          <Button
+            size="lg"
+            onClick={handleRefine}
+            disabled={isProcessing || (!existingDraft && !uploadedFile)}
+            className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 px-12 h-14 text-lg"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Upload className="w-5 h-5 mr-2" />
+                Refine Draft
+              </>
+            )}
+          </Button>
+        </motion.div>
+      </div>
+    </div>
+  );
+}

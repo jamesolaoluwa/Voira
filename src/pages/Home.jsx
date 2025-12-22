@@ -1,0 +1,174 @@
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
+import { motion } from 'framer-motion';
+import { GraduationCap, Briefcase, MessageSquare, RefreshCw, Mic, Loader2 } from 'lucide-react';
+import { auth } from '@/components/services/api';
+
+const features = [
+  {
+    icon: GraduationCap,
+    title: 'Application Essay',
+    description: 'Craft compelling essays for college and scholarship applications',
+    href: 'Speak?type=application',
+  },
+  {
+    icon: Briefcase,
+    title: 'Interview Response',
+    description: 'Prepare polished answers for job and program interviews',
+    href: 'Speak?type=interview',
+  },
+  {
+    icon: MessageSquare,
+    title: 'Free Speak',
+    description: 'Express yourself freely and let Voira refine your thoughts',
+    href: 'Speak?type=free',
+  },
+  {
+    icon: RefreshCw,
+    title: 'Refine Existing Draft',
+    description: 'Improve and polish your existing written content',
+    href: 'RefineDraft',
+  },
+  {
+    icon: Mic,
+    title: 'Practice Mode',
+    description: 'Rehearse interviews with real-time feedback and coaching',
+    href: 'Practice',
+  },
+];
+
+export default function Home() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  const checkAuth = async () => {
+    try {
+      const currentUser = await auth.getMe();
+      if (!currentUser) {
+        navigate(createPageUrl('Auth'));
+        return;
+      }
+      setUser(currentUser);
+    } catch (error) {
+      navigate(createPageUrl('Auth'));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen p-6 lg:p-10">
+      {/* Header with Personal Greeting */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="mb-12 max-w-5xl mx-auto"
+      >
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="text-zinc-600 dark:text-zinc-400 text-lg mb-3"
+        >
+          Welcome back, {user?.full_name}. Ready to speak your truth?
+        </motion.p>
+        <h1 className="text-3xl lg:text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
+          What do you want to do today?
+        </h1>
+        <p className="text-zinc-600 dark:text-zinc-500 text-lg">
+          Choose a mode to start expressing yourself naturally
+        </p>
+      </motion.div>
+      
+      {/* Feature Cards Grid */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
+        {features.map((feature, index) => {
+          const Icon = feature.icon;
+          return (
+            <motion.div
+              key={feature.title}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: index * 0.1 }}
+            >
+              <Link to={createPageUrl(feature.href)}>
+                <motion.div
+                  className="group relative p-6 rounded-2xl bg-white border border-zinc-200 shadow-md dark:bg-[hsl(var(--card))] dark:border-white/5 dark:shadow-none cursor-pointer overflow-hidden"
+                  whileHover={{ scale: 1.02, y: -4 }}
+                  whileTap={{ scale: 0.98 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  {/* Hover glow effect */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 to-teal-500/5 dark:from-violet-500/10 dark:to-teal-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  
+                  {/* Icon container */}
+                  <motion.div 
+                    className="relative mb-4 w-12 h-12 rounded-xl bg-gradient-to-br from-violet-100 to-teal-100 dark:from-violet-500/20 dark:to-teal-500/20 flex items-center justify-center"
+                    whileHover={{ scale: 1.1, rotate: 5 }}
+                    transition={{ type: 'spring', stiffness: 300 }}
+                  >
+                    <Icon className="w-6 h-6 text-violet-600 dark:text-violet-400 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors duration-300" />
+                  </motion.div>
+                  
+                  {/* Content */}
+                  <h3 className="relative text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2 transition-colors">
+                    {feature.title}
+                  </h3>
+                  <p className="relative text-sm text-zinc-600 dark:text-zinc-400 transition-colors">
+                    {feature.description}
+                  </p>
+                  
+                  {/* Bottom accent line */}
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-teal-500 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-500 origin-left" />
+                </motion.div>
+              </Link>
+            </motion.div>
+          );
+        })}
+      </div>
+      
+      {/* Quick Stats */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.6 }}
+        className="mt-16 p-6 rounded-2xl bg-white border border-zinc-200 shadow-sm dark:bg-[hsl(var(--card))] dark:border-white/5 dark:shadow-none max-w-5xl mx-auto"
+      >
+        <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-300 mb-6">Your Progress</h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div>
+            <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">12</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Recordings</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold text-violet-600 dark:text-violet-400">{user?.credits_remaining || 0}</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Credits Left</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold text-teal-600 dark:text-teal-400">-42%</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Fewer Fillers</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">2.4h</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Speaking Time</p>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
