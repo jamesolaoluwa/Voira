@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
+import { auth } from '@/components/services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,6 +25,7 @@ const navLinks = [
 
 export default function TopNav({ currentPageName, isAuthenticated = true }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <>
@@ -31,9 +33,9 @@ export default function TopNav({ currentPageName, isAuthenticated = true }) {
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex items-center justify-between h-16">
             {/* Left: Logo */}
-            <Link to={createPageUrl('Landing')} className="flex items-center gap-3 shrink-0 group">
+            <Link to={isAuthenticated ? createPageUrl('Home') : createPageUrl('Landing')} className="flex items-center gap-3 shrink-0 group">
               <img 
-                src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/694481d7a7391caf3ba6ba15/fbc3f3b33_VoiraLogoReduced.jpg"
+                src="/assets/VoiraLogoReduced.jpg"
                 alt="Voira"
                 className="w-8 h-8 object-contain group-hover:scale-105 transition-transform"
               />
@@ -42,17 +44,14 @@ export default function TopNav({ currentPageName, isAuthenticated = true }) {
 
             {/* Center: Navigation Links (Desktop) */}
             <div className="hidden lg:flex items-center gap-1">
-              {navLinks.map((link) => {
-                const isActive = currentPageName === link.page;
-                return (
-                  <Link key={link.page} to={createPageUrl(link.page)}>
-                    <motion.div
-                      className={`relative px-4 py-2 rounded-lg transition-colors ${
-                        isActive ? 'text-zinc-900 dark:text-white' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
-                      }`}
-                      whileHover={{ y: -1 }}
-                      whileTap={{ scale: 0.98 }}
-                    >
+              {navLinks.map((link) => (
+                <NavLink
+                  key={link.page}
+                  to={createPageUrl(link.page)}
+                  className={({ isActive }) => `relative px-4 py-2 rounded-lg transition-colors ${isActive ? 'text-zinc-900 dark:text-white' : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                >
+                  {({ isActive }) => (
+                    <motion.div whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }}>
                       {link.label}
                       {isActive && (
                         <motion.div
@@ -62,9 +61,9 @@ export default function TopNav({ currentPageName, isAuthenticated = true }) {
                         />
                       )}
                     </motion.div>
-                  </Link>
-                );
-              })}
+                  )}
+                </NavLink>
+              ))}
             </div>
 
             {/* Right: Auth / User */}
@@ -92,7 +91,17 @@ export default function TopNav({ currentPageName, isAuthenticated = true }) {
                       </DropdownMenuItem>
                     </Link>
                     <DropdownMenuSeparator className="bg-zinc-200 dark:bg-white/5" />
-                    <DropdownMenuItem className="cursor-pointer text-rose-500 dark:text-rose-400 hover:text-rose-600 dark:hover:text-rose-300 focus:text-rose-600 dark:focus:text-rose-300 focus:bg-rose-50 dark:focus:bg-rose-500/10">
+                    <DropdownMenuItem
+                      onClick={async () => {
+                        try {
+                          await auth.signOut();
+                        } catch (e) {
+                          console.warn('Sign out failed', e);
+                        }
+                        navigate(createPageUrl('Landing'));
+                      }}
+                      className="cursor-pointer text-rose-500 dark:text-rose-400 hover:text-rose-600 dark:hover:text-rose-300 focus:text-rose-600 dark:focus:text-rose-300 focus:bg-rose-50 dark:focus:bg-rose-500/10"
+                    >
                       <LogOut className="w-4 h-4 mr-2" />
                       Sign Out
                     </DropdownMenuItem>

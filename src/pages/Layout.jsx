@@ -1,11 +1,16 @@
 
 import React from 'react';
+import { Outlet } from 'react-router-dom';
 import TopNav from '@/components/navigation/TopNav';
 import ThemeProvider from '@/components/theme/ThemeProvider';
+import { useAuth } from '@/contexts/AuthContext';
+import AuthDebug from '@/components/AuthDebug';
 
 export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
   const isAuthPage = currentPageName === 'Auth';
+  const { user, isLoading } = useAuth();
+  const isAuthenticated = !!user && !isLoading;
   
   return (
     <ThemeProvider>
@@ -105,13 +110,15 @@ export default function Layout({ children, currentPageName }) {
       
       {isLandingPage || isAuthPage ? (
         <main className="min-h-screen">
-          {children}
+          {children || <Outlet />}
+          <AuthDebug />
         </main>
       ) : (
         <>
-          <TopNav currentPageName={currentPageName} />
+          <TopNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} />
           <main className="min-h-screen">
-            {children}
+            {children || <Outlet />}
+            <AuthDebug />
           </main>
         </>
       )}

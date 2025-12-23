@@ -40,7 +40,8 @@ export const auth = {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/Home`,
+  // redirect back to the sign-in route so the app can process the OAuth fragment
+  redirectTo: `${window.location.origin}/auth`,
       }
     });
     if (error) throw error;
@@ -80,6 +81,17 @@ export const auth = {
     return supabase.auth.onAuthStateChange(callback);
   }
 };
+
+// Utility to process OAuth redirect responses (useful after signInWithOAuth redirects)
+export async function processOAuthRedirect() {
+  try {
+    const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+    if (error) throw error;
+    return data.session;
+  } catch (e) {
+    return null;
+  }
+}
 
 // ============================================
 // SESSIONS

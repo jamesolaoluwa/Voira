@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Shield, User, CreditCard, Loader2 } from 'lucide-react';
 import { auth, billing, credits } from '@/components/services/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -18,20 +19,22 @@ export default function Admin() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    checkAuth();
+  checkAuth();
   }, []);
 
   const checkAuth = async () => {
     try {
       const currentUser = await auth.getMe();
-      if (!currentUser || currentUser.role !== 'admin') {
-        navigate(createPageUrl('Home'));
+      const { isAdmin: ctxIsAdmin } = useAuth();
+      if (!currentUser || !ctxIsAdmin) {
+        setUser(null);
+        setIsLoading(false);
         return;
       }
       setUser(currentUser);
       setSelectedRole(currentUser.role);
     } catch (error) {
-      navigate(createPageUrl('Auth'));
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
@@ -74,7 +77,16 @@ export default function Admin() {
       </div>
     );
   }
-
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10 flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-2xl font-semibold mb-4">Access denied</h2>
+          <p className="text-zinc-600">You do not have permission to view this page.</p>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
       <div className="max-w-4xl mx-auto">

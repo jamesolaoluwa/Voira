@@ -9,6 +9,7 @@ import Growth from "./Growth";
 import Library from "./Library";
 
 import Practice from "./Practice";
+import AuthGate from '@/components/AuthGate';
 
 import Pricing from "./Pricing";
 
@@ -21,6 +22,9 @@ import Settings from "./Settings";
 import Speak from "./Speak";
 
 import Auth from "./Auth";
+import { useAuth } from '@/contexts/AuthContext';
+import React from 'react';
+import { Navigate } from 'react-router-dom';
 
 import Home from "./Home";
 
@@ -31,8 +35,10 @@ import Privacy from "./Privacy";
 import Terms from "./Terms";
 
 import Contact from "./Contact";
+import ResetPassword from './ResetPassword';
 
 import Admin from "./Admin";
+import AdminGuard from '@/components/AdminGuard';
 
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 
@@ -84,58 +90,60 @@ function _getCurrentPage(url) {
     }
 
     const pageName = Object.keys(PAGES).find(page => page.toLowerCase() === urlLastPart.toLowerCase());
-    return pageName || Object.keys(PAGES)[0];
+    // default to Landing instead of the first PAGES key
+    return pageName || 'Landing';
+}
+
+// If user is authenticated, go to Home; otherwise render Landing.
+function LandingOrHome() {
+    const { user, session, isLoading } = useAuth();
+    if (isLoading) return null;
+    if (session || user) {
+        return <Navigate to="/home" replace />;
+    }
+    return <Landing />;
 }
 
 // Create a wrapper component that uses useLocation inside the Router context
 function PagesContent() {
     const location = useLocation();
     const currentPage = _getCurrentPage(location.pathname);
-    
+
     return (
-        <Layout currentPageName={currentPage}>
-            <Routes>            
-                
-                    <Route path="/" element={<VoiceProfile />} />
-                
-                
-                <Route path="/VoiceProfile" element={<VoiceProfile />} />
-                
-                <Route path="/RefineDraft" element={<RefineDraft />} />
-                
-                <Route path="/Growth" element={<Growth />} />
-                
-                <Route path="/Library" element={<Library />} />
-                
-                <Route path="/Practice" element={<Practice />} />
-                
-                <Route path="/Pricing" element={<Pricing />} />
-                
-                <Route path="/Profile" element={<Profile />} />
-                
-                <Route path="/Draft" element={<Draft />} />
-                
-                <Route path="/Settings" element={<Settings />} />
-                
-                <Route path="/Speak" element={<Speak />} />
-                
-                <Route path="/Auth" element={<Auth />} />
-                
-                <Route path="/Home" element={<Home />} />
-                
-                <Route path="/Landing" element={<Landing />} />
-                
-                <Route path="/Privacy" element={<Privacy />} />
-                
-                <Route path="/Terms" element={<Terms />} />
-                
-                <Route path="/Contact" element={<Contact />} />
-                
-                <Route path="/Admin" element={<Admin />} />
-                
-            </Routes>
-        </Layout>
+        <Routes>
+            {/* Public routes - no Layout, no AuthGate */}
+            <Route path="/" element={<LandingOrHome />} />
+            <Route path="/landing" element={<Landing />} />
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/contact" element={<Contact />} />
+
+            {/* Protected routes - wrapped with Layout which renders TopNav and AuthDebug; AuthGate prevents unauthenticated access */}
+            <Route element={<Layout currentPageName={currentPage} />}>
+                <Route path="/home" element={<AuthGate><Home /></AuthGate>} />
+                <Route path="/voiceprofile" element={<AuthGate><VoiceProfile /></AuthGate>} />
+                <Route path="/growth" element={<AuthGate><Growth /></AuthGate>} />
+                <Route path="/library" element={<AuthGate><Library /></AuthGate>} />
+                <Route path="/practice" element={<AuthGate><Practice /></AuthGate>} />
+                <Route path="/profile" element={<AuthGate><Profile /></AuthGate>} />
+                <Route path="/settings" element={<AuthGate><Settings /></AuthGate>} />
+                <Route path="/speak" element={<AuthGate><Speak /></AuthGate>} />
+                <Route path="/refinedraft" element={<AuthGate><RefineDraft /></AuthGate>} />
+                <Route path="/draft" element={<AuthGate><Draft /></AuthGate>} />
+                <Route path="/pricing" element={<AuthGate><Pricing /></AuthGate>} />
+                <Route path="/admin" element={<AdminGuard><Admin /></AdminGuard>} />
+            </Route>
+        </Routes>
     );
+}
+
+function AuthRoute() {
+    const { user, session, isLoading } = useAuth();
+    if (isLoading) return null;
+    if (user || session) return <Navigate to="/home" replace />;
+    return <Auth />;
 }
 
 export default function Pages() {

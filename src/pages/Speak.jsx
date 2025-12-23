@@ -15,6 +15,7 @@ import { Mic, Pause, Square, Clock, Type, ArrowLeft, Loader2 } from 'lucide-reac
 import { base44 } from '@/api/base44Client';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 const typeLabels = {
   application: 'Application Essay',
@@ -40,6 +41,7 @@ export default function Speak() {
     uploadAndTranscribe,
   } = useAudioRecorder();
   
+  const { user: authUser, session, isLoading: authLoading } = useAuth();
   const [user, setUser] = useState(null);
   const [userCredits, setUserCredits] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -61,20 +63,24 @@ export default function Speak() {
   
   useEffect(() => {
     checkAuthAndLoadCredits();
-  }, []);
+  }, [authUser, authLoading, session]);
   
   const checkAuthAndLoadCredits = async () => {
     try {
-      const currentUser = await auth.getMe();
-      if (!currentUser) {
-        navigate(createPageUrl('Auth'));
-        return;
-      }
+      // Wait until auth initialization completes
+      if (authLoading) return;
+
+      // AuthGate will handle redirecting unauthenticated users; here we only
+      // populate user-dependent state when available.
+      const currentUser = authUser;
       setUser(currentUser);
-      const creditsData = await creditsAPI.get();
-      setUserCredits(creditsData?.credits_remaining || 0);
+      if (currentUser) {
+        const creditsData = await creditsAPI.get();
+        setUserCredits(creditsData?.credits_remaining || currentUser?.credits_remaining || 0);
+      }
     } catch (error) {
-      navigate(createPageUrl('Auth'));
+      // don't redirect here; log the error and let the AuthGate control routing
+      console.warn('Error loading credits in Speak:', error);
     }
   };
   

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
@@ -23,15 +24,16 @@ import {
 import BadgeCard from '@/components/badges/BadgeCard';
 
 export default function Profile() {
-  const user = {
-    name: 'Alex Rivera',
-    email: 'alex.rivera@example.com',
-    avatar: null,
-    plan: 'Free',
-    creditsRemaining: 120,
-    totalCredits: 200,
-    resetDate: 'Jan 1, 2025',
-  };
+  const { user: authUser, isLoading, isAdmin } = useAuth();
+
+  // Derive display values from authUser (populated by AuthContext)
+  const displayName = authUser?.full_name || authUser?.email || 'User';
+  const email = authUser?.email || '—';
+  const avatar = authUser?.avatar || null;
+  const creditsRemaining = authUser?.credits_remaining ?? 0;
+  const totalCredits = authUser?.credits_total ?? 60;
+  const resetDate = authUser?.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : '—';
+  const plan = isAdmin ? 'Premium' : (authUser?.role === 'premium_user' ? 'Premium' : 'Free');
 
   const stats = [
     { label: 'Sessions Completed', value: '24', icon: Library, color: 'violet' },
@@ -94,15 +96,15 @@ export default function Profile() {
             </div>
             
             <div className="flex-1 text-center sm:text-left">
-              <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">{user.name}</h1>
-              <p className="text-zinc-600 dark:text-zinc-500 mb-3">{user.email}</p>
+              <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">{displayName}</h1>
+              <p className="text-zinc-600 dark:text-zinc-500 mb-3">{email}</p>
               <Badge className={`${
-                user.plan === 'Premium' 
+                plan === 'Premium' 
                   ? 'bg-gradient-to-r from-violet-500 to-purple-500 text-white' 
                   : 'bg-zinc-300 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400'
               }`}>
-                {user.plan === 'Premium' && <Crown className="w-3 h-3 mr-1" />}
-                {user.plan} Plan
+                {plan === 'Premium' && <Crown className="w-3 h-3 mr-1" />}
+                {plan} Plan
               </Badge>
             </div>
           </div>
@@ -122,7 +124,7 @@ export default function Profile() {
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1">Account Status</h2>
               <p className="text-sm text-zinc-700 dark:text-zinc-400">Manage your plan and usage</p>
             </div>
-            {user.plan === 'Free' && (
+            {!isAdmin && plan === 'Free' && (
               <Link to={createPageUrl('Pricing')}>
                 <Button className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400">
                   <Crown className="w-4 h-4 mr-2" />
@@ -139,8 +141,8 @@ export default function Profile() {
                 <span className="text-xs text-zinc-600 dark:text-zinc-500">Credits</span>
               </div>
               <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                {user.creditsRemaining}
-                <span className="text-sm font-normal text-zinc-600 dark:text-zinc-500"> / {user.totalCredits}</span>
+                {creditsRemaining}
+                <span className="text-sm font-normal text-zinc-600 dark:text-zinc-500"> / {totalCredits}</span>
               </p>
             </div>
 
@@ -149,7 +151,7 @@ export default function Profile() {
                 <Calendar className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                 <span className="text-xs text-zinc-600 dark:text-zinc-500">Resets</span>
               </div>
-              <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{user.resetDate}</p>
+              <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{resetDate}</p>
             </div>
 
             <div className="bg-amber-100/50 dark:bg-[#1a1a24]/50 rounded-xl p-4 border border-amber-200 dark:border-transparent">
@@ -157,7 +159,7 @@ export default function Profile() {
                 <Crown className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                 <span className="text-xs text-zinc-600 dark:text-zinc-500">Plan</span>
               </div>
-              <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{user.plan}</p>
+              <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{plan}</p>
             </div>
           </div>
         </motion.div>

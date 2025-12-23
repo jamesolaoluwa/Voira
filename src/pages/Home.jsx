@@ -4,6 +4,7 @@ import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
 import { GraduationCap, Briefcase, MessageSquare, RefreshCw, Mic, Loader2 } from 'lucide-react';
 import { auth } from '@/components/services/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 const features = [
   {
@@ -40,21 +41,26 @@ const features = [
 
 export default function Home() {
   const navigate = useNavigate();
+  const { user: authUser, session, isLoading: authLoading } = useAuth();
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     checkAuth();
-  }, []);
+  }, [authUser, authLoading, session]);
 
   const checkAuth = async () => {
     try {
-      const currentUser = await auth.getMe();
-      if (!currentUser) {
+      // Wait until auth initialization completes
+      if (authLoading) return;
+
+      // If there's no session and no user, the user is unauthenticated
+      if (!session && !authUser) {
         navigate(createPageUrl('Auth'));
         return;
       }
-      setUser(currentUser);
+
+      setUser(authUser);
     } catch (error) {
       navigate(createPageUrl('Auth'));
     } finally {
@@ -85,7 +91,11 @@ export default function Home() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="text-zinc-600 dark:text-zinc-400 text-lg mb-3"
         >
-          Welcome back, {user?.full_name}. Ready to speak your truth?
+          {(() => {
+            const nameSource = user?.full_name || user?.email || '';
+            const firstName = nameSource.split(' ')[0].split('@')[0];
+            return `Welcome back, ${firstName || 'there'}. Ready to speak your truth?`;
+          })()}
         </motion.p>
         <h1 className="text-3xl lg:text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
           What do you want to do today?
@@ -99,6 +109,11 @@ export default function Home() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
         {features.map((feature, index) => {
           const Icon = feature.icon;
+          // build link explicitly so query params aren't transformed unexpectedly
+          const to = feature.href && feature.href.includes('?')
+            ? `${createPageUrl(feature.href.split('?')[0])}?${feature.href.split('?')[1]}`
+            : createPageUrl(feature.href);
+
           return (
             <motion.div
               key={feature.title}
@@ -106,7 +121,7 @@ export default function Home() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
             >
-              <Link to={createPageUrl(feature.href)}>
+              <Link to={to}>
                 <motion.div
                   className="group relative p-6 rounded-2xl bg-white border border-zinc-200 shadow-md dark:bg-[hsl(var(--card))] dark:border-white/5 dark:shadow-none cursor-pointer overflow-hidden"
                   whileHover={{ scale: 1.02, y: -4 }}
