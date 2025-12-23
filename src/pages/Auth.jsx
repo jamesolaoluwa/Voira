@@ -11,7 +11,6 @@ import { auth } from '@/components/services/api';
 import { Loader2 } from 'lucide-react';
 import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/components/lib/supabase';
-import AuthDebug from '@/components/AuthDebug';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -336,8 +335,7 @@ export default function Auth() {
             )}
           </div>
         </motion.div>
-  {/* Auth debug overlay (fixed position) - only in development builds */}
-  {!import.meta.env.PROD && <AuthDebug />}
+        
       </div>
     </div>
   );

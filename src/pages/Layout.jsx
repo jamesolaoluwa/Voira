@@ -2,7 +2,6 @@
 import React from 'react';
 import { Outlet } from 'react-router-dom';
 import TopNav from '@/components/navigation/TopNav';
-import ThemeProvider from '@/components/theme/ThemeProvider';
 import { useAuth } from '@/contexts/AuthContext';
 import AuthDebug from '@/components/AuthDebug';
 
@@ -13,8 +12,7 @@ export default function Layout({ children, currentPageName }) {
   const isAuthenticated = !!user && !isLoading;
   
   return (
-    <ThemeProvider>
-      <div className="min-h-screen bg-white dark:bg-[#0a0a0f] text-zinc-900 dark:text-zinc-100 transition-colors duration-300">
+    <div className="min-h-screen bg-white dark:bg-[#0a0a0f] text-zinc-900 dark:text-zinc-100 transition-colors duration-300">
         <style>{`
           :root {
             --background: 0 0% 100%;
@@ -111,18 +109,17 @@ export default function Layout({ children, currentPageName }) {
       {isLandingPage || isAuthPage ? (
         <main className="min-h-screen">
           {children || <Outlet />}
-          <AuthDebug />
+          {!import.meta.env.PROD && <AuthDebug />}
         </main>
       ) : (
         <>
           <TopNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} />
           <main className="min-h-screen">
             {children || <Outlet />}
-            <AuthDebug />
+            {!import.meta.env.PROD && <AuthDebug />}
           </main>
         </>
       )}
-      </div>
-    </ThemeProvider>
+  </div>
   );
 }
