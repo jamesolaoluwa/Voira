@@ -65,11 +65,14 @@ export default function Library() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
   
-  const filteredRecordings = recordings.filter(rec => {
-    const matchesSearch = rec.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         (rec.tags && rec.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())));
+  const safeRecordings = Array.isArray(recordings) ? recordings : [];
+  const filteredRecordings = safeRecordings.filter(rec => {
+    const title = (rec && rec.title) ? String(rec.title) : '';
+    const tags = Array.isArray(rec?.tags) ? rec.tags : [];
+    const matchesSearch = title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         tags.some(tag => String(tag).toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesFilter = activeFilter === 'All' || 
-                         typeLabels[rec.type]?.toLowerCase() === activeFilter.toLowerCase();
+                         (rec && typeLabels[rec.type] && typeLabels[rec.type].toLowerCase() === activeFilter.toLowerCase());
     return matchesSearch && matchesFilter;
   });
   
