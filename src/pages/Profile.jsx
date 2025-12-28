@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -73,6 +73,9 @@ export default function Profile() {
     },
   ];
 
+  // redirect to auth if unauthenticated (preserve loading state)
+  if (!isLoading && !authUser) return <Navigate to={createPageUrl('Auth')} replace />;
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
       <div className="max-w-4xl mx-auto space-y-8">
@@ -85,9 +88,9 @@ export default function Profile() {
           <div className="flex flex-col sm:flex-row items-center gap-6">
             <div className="relative">
               <Avatar className="w-24 h-24">
-                <AvatarImage src={user.avatar} />
+                <AvatarImage src={avatar} />
                 <AvatarFallback className="bg-gradient-to-br from-violet-500 to-teal-500 text-white text-2xl">
-                  {user.name.split(' ').map(n => n[0]).join('')}
+                  {displayName.split(' ').map(n => n[0]).join('')}
                 </AvatarFallback>
               </Avatar>
               <button className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-violet-500 hover:bg-violet-600 flex items-center justify-center text-white text-xs transition-colors">
