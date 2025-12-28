@@ -162,7 +162,7 @@ export default function ResetPassword() {
               </div>
               <Link
                 to={createPageUrl('Auth')}
-                className="w-full h-12 inline-flex items-center justify-center rounded-md border bg-white"
+                className="w-full h-12 inline-flex items-center justify-center rounded-md border bg-white text-zinc-900"
               >
                 Return to sign in
               </Link>
