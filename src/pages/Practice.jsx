@@ -6,6 +6,8 @@ import ScoreCard from '@/components/ui/ScoreCard';
 import SessionNamingModal from '@/components/ui/SessionNamingModal';
 import PremiumGate from '@/components/premium/PremiumGate';
 import BadgeNotification from '@/components/badges/BadgeNotification';
+import useLiveTranscription from '@/hooks/useLiveTranscription';
+import LiveTranscription from '@/components/transcription/LiveTranscription';
 import { base44 } from '@/api/base44Client';
 import { 
   Briefcase, 
@@ -172,6 +174,7 @@ export default function Practice() {
       }
     }, 5000);
   };
+  const { liveTranscript, isStreaming } = useLiveTranscription(isRecording, { cadence: 1100 });
   
   const handleReset = () => {
     setShowFeedback(false);
@@ -383,28 +386,8 @@ export default function Practice() {
                   </motion.div>
                 )}
                 
-                {/* Live Transcription */}
-                {isRecording && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 1 }}
-                    className="w-full max-w-2xl mt-8 bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
-                  >
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-400">Live Transcription</span>
-                    </div>
-                    <p className="text-zinc-800 dark:text-zinc-300 leading-relaxed">
-                      During my second year leading the community garden project, we faced a critical funding challenge...
-                      <motion.span
-                        animate={{ opacity: [1, 0] }}
-                        transition={{ duration: 0.5, repeat: Infinity }}
-                        className="inline-block w-0.5 h-5 bg-violet-600 dark:bg-violet-400 ml-1 align-middle"
-                      />
-                    </p>
-                  </motion.div>
-                )}
+                {/* Live Transcription (simulated) */}
+                <LiveTranscription text={isRecording ? liveTranscript : ''} isActive={isRecording} />
                 
                 {/* Encouragement */}
                 {isRecording && (

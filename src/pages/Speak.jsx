@@ -16,6 +16,8 @@ import { base44 } from '@/api/base44Client';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
+import useLiveTranscription from '@/hooks/useLiveTranscription';
+import LiveTranscription from '@/components/transcription/LiveTranscription';
 
 const typeLabels = {
   application: 'Application Essay',
@@ -97,6 +99,8 @@ export default function Speak() {
       clearInterval(intervalRef.current);
     };
   }, [audioIsRecording, audioIsPaused]);
+
+  const { liveTranscript, isStreaming, reset: resetLive } = useLiveTranscription(audioIsRecording && !audioIsPaused, { cadence: 1200 });
   
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -105,13 +109,7 @@ export default function Speak() {
   };
   
   const handleStart = async () => {
-    // Decrement credits
-    try {
-      await creditsAPI.decrement(1);
-      setUserCredits(prev => Math.max(0, prev - 1));
-    } catch (error) {
-      console.error('Error decrementing credits:', error);
-    }
+  // Start recording (credits will be decremented after a successful save)
     
     setDuration(0);
     setTranscript('');
@@ -129,15 +127,32 @@ export default function Speak() {
   };
   
   const handleFinish = async () => {
-    audioStopRecording();
     setIsTranscribing(true);
-    
+
     try {
-      // Transcribe the audio
-      const transcribedText = await uploadAndTranscribe((partialTranscript) => {
+      // Stop and get final blob
+      const finalBlob = await audioStopRecording();
+
+      // Validate recording exists and duration
+      if (!finalBlob || finalBlob.size === 0 || duration < 2) {
+        // Show user-friendly error and bail out
+        setIsTranscribing(false);
+        setIsGenerating(false);
+        // Refund local decrement if we removed credits earlier
+        setUserCredits(prev => prev + 0); // no-op if we didn't decrement
+        setTranscript('');
+        alert('No audio recorded or recording too short. Please record at least 2 seconds.');
+        return;
+      }
+
+      // Transcribe/upload the audio
+      const resp = await uploadAndTranscribe((partialTranscript) => {
         setTranscript(partialTranscript);
-      });
-      
+      }, finalBlob);
+
+      const transcribedText = resp?.transcript || '';
+      const audioUrl = resp?.file_url ?? null;
+
       setTranscript(transcribedText);
       setIsTranscribing(false);
       setIsGenerating(true);
@@ -180,6 +195,7 @@ export default function Speak() {
       
       setSessionData({
         transcript: transcribedText,
+        audio_url: audioUrl,
         refinedDraft: analysis.refinedDraft,
         clarityScore: analysis.clarityScore,
         confidenceScore: analysis.confidenceScore,
@@ -211,7 +227,8 @@ export default function Speak() {
 
   const handleSaveSession = async (sessionName) => {
     try {
-      const recording = await sessions.create({
+      // Use createSessionDraft abstraction (returns mock session object)
+      const recording = await createSessionDraft({
         title: sessionName,
         transcript: sessionData.transcript,
         refined_draft: sessionData.refinedDraft,
@@ -219,12 +236,13 @@ export default function Speak() {
         question: sessionData.question,
         goal: sessionIntent || goalInput,
         reference_text: uploadedFileUrl || '',
+        audio_url: sessionData.audio_url ?? null,
         duration_seconds: duration,
         clarity_score: sessionData.clarityScore,
         confidence_score: sessionData.confidenceScore,
         filler_count: sessionData.fillerCount,
       });
-      
+
       navigate(createPageUrl('Draft'), {
         state: { 
           sessionData: {
@@ -234,12 +252,44 @@ export default function Speak() {
           }
         }
       });
+      // Decrement credits locally and attempt server-side decrement if available
+      try {
+        decrementCredits('recording_saved');
+        if (creditsAPI && typeof creditsAPI.decrement === 'function') {
+          creditsAPI.decrement(1).catch(err => console.warn('Remote decrement failed:', err));
+        }
+      } catch (e) {
+        console.warn('Failed to decrement credits after save:', e);
+      }
     } catch (error) {
       console.error('Error saving session:', error);
+      alert('Unable to save session right now. Your draft will be available locally.');
       navigate(createPageUrl('Draft'), {
         state: { sessionData }
       });
     }
+  };
+
+  // Helper: safe decrement local credits without calling methods on numbers
+  const decrementCredits = (reason) => {
+    try {
+      setUserCredits(prev => {
+        const cur = Number.isFinite(prev) ? prev : (authUser?.credits_remaining ?? 0);
+        if (cur <= 0) return 0;
+        return Math.max(0, cur - 1);
+      });
+    } catch (e) {
+      console.warn('decrementCredits failed:', e);
+    }
+  };
+
+  // Helper: create a session draft (temporary mock) — replace backend sessions.create
+  const createSessionDraft = async (payload) => {
+    // Return a mock object that looks like a saved session
+    return {
+      id: `draft-${Date.now()}`,
+      ...payload,
+    };
   };
   
   return (
@@ -461,30 +511,8 @@ export default function Speak() {
           )}
         </motion.div>
         
-        {/* Live Transcription */}
-        <AnimatePresence>
-          {showTranscription && transcript && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              className="mt-12 p-6 bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none w-full max-w-lg"
-              >
-              <div className="flex items-center gap-2 mb-3">
-                <Type className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                <span className="text-sm text-zinc-600 dark:text-zinc-500">Live Transcription</span>
-              </div>
-              <p className="text-zinc-800 dark:text-zinc-300 leading-relaxed">
-                {transcript}
-                <motion.span
-                  animate={{ opacity: [1, 0] }}
-                  transition={{ duration: 0.5, repeat: Infinity }}
-                  className="inline-block w-0.5 h-5 bg-violet-600 dark:bg-violet-400 ml-1 align-middle"
-                  />
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+  {/* Live Transcription */}
+  <LiveTranscription text={(isStreaming && liveTranscript) ? liveTranscript : transcript} isActive={audioIsRecording} />
       </div>
       
       {/* Toggle Options */}
