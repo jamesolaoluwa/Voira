@@ -11,6 +11,7 @@ import FileUpload from '@/components/ui/FileUpload';
 import { ArrowLeft, Mic, Square, Upload, FileText, Loader2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
+import { toast } from '@/components/ui/use-toast';
 
 export default function RefineDraft() {
   const navigate = useNavigate();
@@ -81,7 +82,7 @@ export default function RefineDraft() {
 
   const handleRefine = async () => {
     if (!existingDraft && !uploadedFile) {
-      alert('Please provide an existing draft to refine');
+      toast({ title: 'No draft provided', description: 'Please provide an existing draft to refine' });
       return;
     }
     

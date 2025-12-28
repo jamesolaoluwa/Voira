@@ -16,6 +16,7 @@ import { base44 } from '@/api/base44Client';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { toast } from '@/components/ui/use-toast';
 import useLiveTranscription from '@/hooks/useLiveTranscription';
 import LiveTranscription from '@/components/transcription/LiveTranscription';
 
@@ -77,8 +78,17 @@ export default function Speak() {
       const currentUser = authUser;
       setUser(currentUser);
       if (currentUser) {
-        const creditsData = await creditsAPI.get();
-        setUserCredits(creditsData?.credits_remaining || currentUser?.credits_remaining || 0);
+        // creditsAPI exposes getCredits(); older code called `.get()` which no longer exists
+        let creditsRemaining = currentUser?.credits_remaining ?? 0;
+        if (creditsAPI && typeof creditsAPI.getCredits === 'function') {
+          try {
+            creditsRemaining = await creditsAPI.getCredits();
+          } catch (e) {
+            console.warn('credits.getCredits failed, falling back to user object:', e);
+            creditsRemaining = currentUser?.credits_remaining ?? 0;
+          }
+        }
+        setUserCredits(creditsRemaining || 0);
       }
     } catch (error) {
       // don't redirect here; log the error and let the AuthGate control routing
@@ -135,13 +145,13 @@ export default function Speak() {
 
       // Validate recording exists and duration
       if (!finalBlob || finalBlob.size === 0 || duration < 2) {
-        // Show user-friendly error and bail out
+        // Show user-friendly error and bail out (non-blocking toast)
         setIsTranscribing(false);
         setIsGenerating(false);
         // Refund local decrement if we removed credits earlier
         setUserCredits(prev => prev + 0); // no-op if we didn't decrement
         setTranscript('');
-        alert('No audio recorded or recording too short. Please record at least 2 seconds.');
+        toast({ title: 'Recording too short', description: 'Please record at least 2 seconds.' });
         return;
       }
 
@@ -150,7 +160,8 @@ export default function Speak() {
         setTranscript(partialTranscript);
       }, finalBlob);
 
-      const transcribedText = resp?.transcript || '';
+  // Use backend transcript if present; otherwise fall back to accumulated live transcript
+  const transcribedText = resp?.transcript || (liveTranscript || '');
       const audioUrl = resp?.file_url ?? null;
 
       setTranscript(transcribedText);
@@ -263,7 +274,7 @@ export default function Speak() {
       }
     } catch (error) {
       console.error('Error saving session:', error);
-      alert('Unable to save session right now. Your draft will be available locally.');
+  toast({ title: 'Save failed', description: 'Unable to save session right now. Your draft will be available locally.' });
       navigate(createPageUrl('Draft'), {
         state: { sessionData }
       });
