@@ -2,7 +2,8 @@
 import { useState, useEffect, createContext, useContext } from "react";
 
 const TOAST_LIMIT = 20;
-const TOAST_REMOVE_DELAY = 1000000;
+// Default toast remove delay (ms). Previously was very large which left toasts visible indefinitely.
+const TOAST_REMOVE_DELAY = 5000; // 5 seconds
 
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
@@ -20,7 +21,7 @@ function genId() {
 
 const toastTimeouts = new Map();
 
-const addToRemoveQueue = (toastId) => {
+const addToRemoveQueue = (toastId, delay = TOAST_REMOVE_DELAY) => {
   if (toastTimeouts.has(toastId)) {
     return;
   }
@@ -31,7 +32,7 @@ const addToRemoveQueue = (toastId) => {
       type: actionTypes.REMOVE_TOAST,
       toastId,
     });
-  }, TOAST_REMOVE_DELAY);
+  }, delay);
 
   toastTimeouts.set(toastId, timeout);
 };
@@ -113,11 +114,16 @@ function dispatch(action) {
 function toast({ ...props }) {
   const id = genId();
 
-  const update = (props) =>
+  const update = (props) => {
     dispatch({
       type: actionTypes.UPDATE_TOAST,
       toast: { ...props, id },
     });
+    // reschedule removal if duration provided (or use default)
+    const duration = typeof props.duration === 'number' ? props.duration : TOAST_REMOVE_DELAY;
+    clearFromRemoveQueue(id);
+    if (duration > 0) addToRemoveQueue(id, duration);
+  };
 
   const dismiss = () =>
     dispatch({ type: actionTypes.DISMISS_TOAST, toastId: id });
@@ -133,6 +139,12 @@ function toast({ ...props }) {
       },
     },
   });
+
+  // schedule automatic removal based on provided duration (ms). If duration is 0 or negative, treat as persistent.
+  const duration = typeof props.duration === 'number' ? props.duration : TOAST_REMOVE_DELAY;
+  if (duration > 0) {
+    addToRemoveQueue(id, duration);
+  }
 
   return {
     id,

@@ -76,21 +76,41 @@ export default function useAudioRecorder() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      setIsPaused(false);
-      
-      // Stop all tracks
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+    // Stop the recorder and return a Promise that resolves with the final Blob
+    return new Promise((resolve) => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        const mr = mediaRecorderRef.current;
+
+        const onStop = () => {
+          const finalBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          setAudioBlob(finalBlob);
+
+          // Stop all tracks
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+          }
+
+          // Close audio context
+          if (audioContextRef.current) {
+            audioContextRef.current.close();
+          }
+
+          setIsRecording(false);
+          setIsPaused(false);
+          mr.removeEventListener('stop', onStop);
+          resolve(finalBlob);
+        };
+
+        mr.addEventListener('stop', onStop);
+        try { mr.stop(); } catch (e) { onStop(); }
+      } else {
+        // Already stopped or never started
+        const finalBlob = audioBlob;
+        setIsRecording(false);
+        setIsPaused(false);
+        resolve(finalBlob);
       }
-      
-      // Close audio context
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    }
+    });
   };
 
   const monitorAmplitude = () => {
@@ -117,14 +137,15 @@ export default function useAudioRecorder() {
     }
   };
 
-  const uploadAndTranscribe = async (onTranscriptUpdate) => {
-    if (!audioBlob) {
+  const uploadAndTranscribe = async (onTranscriptUpdate, providedBlob = null) => {
+    const blobToUse = providedBlob || audioBlob;
+    if (!blobToUse) {
       throw new Error('No audio recorded');
     }
 
     try {
       // Convert blob to file
-      const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
+      const audioFile = new File([blobToUse], 'recording.webm', { type: 'audio/webm' });
       
       // Update with initial message
       if (onTranscriptUpdate) {
@@ -132,28 +153,26 @@ export default function useAudioRecorder() {
       }
       
       // Upload audio file for storage
-      const { file_url } = await base44.integrations.Core.UploadFile({
-        file: audioFile
-      });
+      let file_url = null;
+      try {
+        const uploadResp = await base44.integrations.Core.UploadFile({ file: audioFile });
+        file_url = uploadResp?.file_url ?? null;
+      } catch (uploadErr) {
+        console.warn('Audio upload returned an error or null URL:', uploadErr);
+        file_url = null;
+      }
 
-      // ⚠️ DEVELOPER NOTE: Real speech-to-text transcription is NOT enabled.
-      // This is a DEMO PLACEHOLDER only. For production, integrate:
-      // - OpenAI Whisper API
-      // - Google Speech-to-Text
-      // - AssemblyAI
-      // - Or similar transcription service
+      // ⚠️ TRANSCRIPTION PLACEHOLDER: Real STT not enabled. Demo transcript returned.
       console.warn('🔧 TRANSCRIPTION PLACEHOLDER: Real STT not enabled. Demo transcript returned.');
-      
       const demoTranscript = "I believe my experience in leading community initiatives has shaped who I am today. When I started volunteering at the local food bank three years ago, I didn't realize how much it would transform my perspective on service and leadership. Through this work, I've learned the importance of empathy, collaboration, and making a tangible difference in people's lives. These experiences have reinforced my commitment to pursuing a career where I can continue to serve and uplift others.";
-      
       if (onTranscriptUpdate) {
         onTranscriptUpdate(demoTranscript);
       }
 
-      // Store the audio URL for future use
+      // Store the audio URL for future use (may be null)
       console.log('Audio saved at:', file_url);
 
-      return demoTranscript;
+      return { transcript: demoTranscript, file_url };
     } catch (err) {
       console.error('Error processing audio:', err);
       if (onTranscriptUpdate) {

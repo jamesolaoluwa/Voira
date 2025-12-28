@@ -1,34 +1,10 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import useSessionStore from '@/stores/useSessionStore';
 import { TrendingUp, TrendingDown, Award, Mic, Sparkles } from 'lucide-react';
 
-const fillerData = [
-  { week: 'Week 1', count: 24 },
-  { week: 'Week 2', count: 18 },
-  { week: 'Week 3', count: 15 },
-  { week: 'Week 4', count: 12 },
-  { week: 'Week 5', count: 8 },
-  { week: 'Week 6', count: 5 },
-];
-
-const confidenceData = [
-  { week: 'Week 1', score: 62 },
-  { week: 'Week 2', score: 68 },
-  { week: 'Week 3', score: 71 },
-  { week: 'Week 4', score: 75 },
-  { week: 'Week 5', score: 82 },
-  { week: 'Week 6', score: 87 },
-];
-
-const speakingData = [
-  { week: 'Week 1', words: 120 },
-  { week: 'Week 2', words: 145 },
-  { week: 'Week 3', words: 138 },
-  { week: 'Week 4', words: 155 },
-  { week: 'Week 5', words: 162 },
-  { week: 'Week 6', words: 158 },
-];
+// derive chart data from session store (last N sessions)
 
 const improvements = [
   { trait: 'Filler Word Reduction', change: '-79%', positive: true },
@@ -50,6 +26,19 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function Growth() {
+  const sessions = useSessionStore(state => state.sessions || []);
+  const stats = React.useMemo(() => {
+    const total = sessions.length;
+    if (total === 0) return { totalSessions: 0, avgConfidence: 0, avgFillers: 0, avgWPM: 0 };
+    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const avgFillers = Math.round(sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
+    const avgWPM = Math.round(sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
+    return { totalSessions: total, avgConfidence, avgFillers, avgWPM };
+  }, [sessions]);
+  const recent = sessions.slice(0, 12).reverse();
+  const fillerData = recent.map((s, i) => ({ week: `S${i+1}`, count: s.fillerCount }));
+  const confidenceData = recent.map((s, i) => ({ week: `S${i+1}`, score: s.confidenceScore }));
+  const speakingData = recent.map((s, i) => ({ week: `S${i+1}`, words: s.wordsPerMinute }));
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
       {/* Header */}
@@ -73,7 +62,7 @@ export default function Growth() {
         transition={{ delay: 0.1 }}
         className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
       >
-        <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
+          <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <Mic className="w-5 h-5 text-violet-400" />
             <span className="text-xs text-green-400 flex items-center">
@@ -81,7 +70,7 @@ export default function Growth() {
               -79%
             </span>
           </div>
-          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">5</p>
+          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgFillers}</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Filler Words/Session</p>
         </div>
         
@@ -93,7 +82,7 @@ export default function Growth() {
               +40%
             </span>
           </div>
-          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">87%</p>
+          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgConfidence}%</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Confidence Score</p>
         </div>
         
@@ -101,7 +90,7 @@ export default function Growth() {
           <div className="flex items-center justify-between mb-3">
             <Award className="w-5 h-5 text-amber-600 dark:text-amber-400" />
           </div>
-          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">158</p>
+          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgWPM}</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Words/Minute</p>
         </div>
         
@@ -109,7 +98,7 @@ export default function Growth() {
           <div className="flex items-center justify-between mb-3">
             <TrendingUp className="w-5 h-5 text-rose-600 dark:text-rose-400" />
           </div>
-          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">24</p>
+          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalSessions}</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Sessions Completed</p>
         </div>
       </motion.div>

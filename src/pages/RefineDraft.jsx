@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -11,9 +12,13 @@ import FileUpload from '@/components/ui/FileUpload';
 import { ArrowLeft, Mic, Square, Upload, FileText, Loader2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
+import { toast } from '@/components/ui/use-toast';
+import { saveLocalRecording } from '@/lib/localRecordings';
 
 export default function RefineDraft() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
   
   const [question, setQuestion] = useState('');
   const [existingDraft, setExistingDraft] = useState('');
@@ -81,7 +86,7 @@ export default function RefineDraft() {
 
   const handleRefine = async () => {
     if (!existingDraft && !uploadedFile) {
-      alert('Please provide an existing draft to refine');
+      toast({ title: 'No draft provided', description: 'Please provide an existing draft to refine' });
       return;
     }
     
@@ -119,15 +124,37 @@ export default function RefineDraft() {
         }
       });
       
-      // Save to database
-      const recording = await base44.entities.Recording.create({
-        title: 'Refined Draft',
-        transcript: voiceNotes || 'Direct refinement',
-        refined_draft: result.refinedDraft,
-        type: 'refine',
-        question,
-      });
-      
+      // If an existing session id is provided (overwrite), update; otherwise create
+      const urlParams = new URLSearchParams(window.location.search);
+      const recordingId = urlParams.get('id') || location.state?.sessionData?.id;
+      let recording;
+      if (recordingId) {
+        // update existing
+        await base44.entities.Recording.update(recordingId, {
+          transcript: voiceNotes || 'Direct refinement',
+          refined_draft: result.refinedDraft,
+        });
+        recording = { id: recordingId };
+        // optimistic cache update
+          try {
+          queryClient.setQueryData(['recordings'], (old = []) => {
+            return (old || []).map(r => r.id === recordingId ? { ...r, transcript: voiceNotes || r.transcript, refined_draft: result.refinedDraft } : r);
+          });
+          // persist locally as fallback (normalized fields)
+          try { saveLocalRecording({ id: recordingId, title: 'Refined Draft', transcript: voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: new Date().toISOString() }); } catch (e) {}
+        } catch (e) { try { queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {} }
+      } else {
+        // create new
+        recording = await base44.entities.Recording.create({
+          title: 'Refined Draft',
+          transcript: voiceNotes || 'Direct refinement',
+          refined_draft: result.refinedDraft,
+          type: 'refine',
+          question,
+        });
+  try { saveLocalRecording({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', transcript: recording.transcript || voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: recording.created_date || new Date().toISOString() }); } catch (e) {}
+      }
+
       // Navigate to Draft page
       navigate(createPageUrl('Draft'), {
         state: {

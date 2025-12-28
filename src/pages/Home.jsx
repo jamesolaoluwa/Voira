@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { GraduationCap, Briefcase, MessageSquare, RefreshCw, Mic, Loader2 } from 'lucide-react';
 import { auth } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
+import useSessionStore from '@/stores/useSessionStore';
 
 const features = [
   {
@@ -44,29 +45,45 @@ export default function Home() {
   const { user: authUser, session, isLoading: authLoading } = useAuth();
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-
+  const sessions = useSessionStore(state => state.sessions || []);
+  const stats = React.useMemo(() => {
+    const total = sessions.length;
+    if (total === 0) return { totalSessions: 0, avgConfidence: 0, avgFillers: 0, avgWPM: 0 };
+    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const avgFillers = Math.round(sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
+    const avgWPM = Math.round(sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
+    return { totalSessions: total, avgConfidence, avgFillers, avgWPM };
+  }, [sessions]);
+  // Only run auth check when auth loading state changes or when authUser becomes available.
+  // Avoid depending on `session` here to prevent repeated effects caused by session updates elsewhere.
   useEffect(() => {
-    checkAuth();
-  }, [authUser, authLoading, session]);
+    let mounted = true;
 
-  const checkAuth = async () => {
-    try {
-      // Wait until auth initialization completes
-      if (authLoading) return;
+    const checkAuth = async () => {
+      try {
+        if (authLoading) return;
 
-      // If there's no session and no user, the user is unauthenticated
-      if (!session && !authUser) {
-        navigate(createPageUrl('Auth'));
-        return;
+        // If there's no session and no user, the user is unauthenticated
+        if (!session && !authUser) {
+          if (mounted) navigate(createPageUrl('Auth'));
+          return;
+        }
+
+        // Only update local user state when it actually changed to avoid infinite re-renders
+        if (authUser && (!user || authUser.id !== user.id)) {
+          if (mounted) setUser(authUser);
+        }
+      } catch (error) {
+        if (mounted) navigate(createPageUrl('Auth'));
+      } finally {
+        if (mounted && isLoading) setIsLoading(false);
       }
+    };
 
-      setUser(authUser);
-    } catch (error) {
-      navigate(createPageUrl('Auth'));
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    checkAuth();
+
+    return () => { mounted = false; };
+  }, [authLoading, authUser]);
 
   if (isLoading) {
     return (
@@ -167,7 +184,7 @@ export default function Home() {
         <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-300 mb-6">Your Progress</h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
           <div>
-            <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">12</p>
+            <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalSessions}</p>
             <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Recordings</p>
           </div>
           <div>
@@ -175,12 +192,12 @@ export default function Home() {
             <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Credits Left</p>
           </div>
           <div>
-            <p className="text-3xl font-bold text-teal-600 dark:text-teal-400">-42%</p>
-            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Fewer Fillers</p>
+            <p className="text-3xl font-bold text-teal-600 dark:text-teal-400">{stats.avgFillers}</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Filler Words / Session</p>
           </div>
           <div>
-            <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">2.4h</p>
-            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Speaking Time</p>
+            <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgWPM} WPM</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Speaking Pace</p>
           </div>
         </div>
       </motion.div>

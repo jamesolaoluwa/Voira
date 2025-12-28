@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
+import useSessionStore from '@/stores/useSessionStore';
 
 const cleanupOptions = [
   { value: 'light', label: 'Light', description: 'Minimal changes, keep more of your natural voice' },
@@ -36,6 +37,15 @@ const aiProviders = [
 ];
 
 export default function Settings() {
+  const sessions = useSessionStore(state => state.sessions || []);
+  const stats = React.useMemo(() => {
+    const total = sessions.length;
+    if (total === 0) return { avgConfidence: 0, avgWPM: 0, avgFillers: 0 };
+    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const avgFillers = Math.round(sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
+    const avgWPM = Math.round(sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
+    return { avgConfidence, avgWPM, avgFillers };
+  }, [sessions]);
   const [cleanupIntensity, setCleanupIntensity] = useState('moderate');
   const [exportFormat, setExportFormat] = useState('txt');
   const [aiProvider, setAiProvider] = useState('default');
@@ -202,6 +212,21 @@ export default function Settings() {
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-600 dark:text-zinc-400">Credits Remaining</span>
               <span className="font-semibold text-zinc-800 dark:text-zinc-200">120 / 200</span>
+            </div>
+          </div>
+          {/* Small session stats */}
+          <div className="grid grid-cols-3 gap-3 mb-6">
+            <div className="bg-white dark:bg-[#111118] rounded-xl p-4 text-center">
+              <div className="text-xs text-zinc-500">Avg. Confidence</div>
+              <div className="text-lg font-semibold">{stats?.avgConfidence ?? '-'}%</div>
+            </div>
+            <div className="bg-white dark:bg-[#111118] rounded-xl p-4 text-center">
+              <div className="text-xs text-zinc-500">Avg. WPM</div>
+              <div className="text-lg font-semibold">{stats?.avgWPM ?? '-'} WPM</div>
+            </div>
+            <div className="bg-white dark:bg-[#111118] rounded-xl p-4 text-center">
+              <div className="text-xs text-zinc-500">Fillers / Session</div>
+              <div className="text-lg font-semibold">{stats?.avgFillers ?? '-'}</div>
             </div>
           </div>
           
