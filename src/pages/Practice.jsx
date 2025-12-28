@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
@@ -8,7 +9,9 @@ import PremiumGate from '@/components/premium/PremiumGate';
 import BadgeNotification from '@/components/badges/BadgeNotification';
 import useLiveTranscription from '@/hooks/useLiveTranscription';
 import LiveTranscription from '@/components/transcription/LiveTranscription';
+import { toast } from '@/components/ui/use-toast';
 import { base44 } from '@/api/base44Client';
+import { saveLocalRecording } from '@/lib/localRecordings';
 import { 
   Briefcase, 
   GraduationCap, 
@@ -69,9 +72,12 @@ const mockFeedback = {
 };
 
 export default function Practice() {
+  const queryClient = useQueryClient();
   const [selectedScenario, setSelectedScenario] = useState(null);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingState, setRecordingState] = useState('idle');
+  // 'idle' | 'recording' | 'processing' | 'finished' | 'error'
   const [showFeedback, setShowFeedback] = useState(false);
   const [amplitude, setAmplitude] = useState(0);
   const [showNamingModal, setShowNamingModal] = useState(false);
@@ -106,17 +112,23 @@ export default function Practice() {
     setShowFeedback(false);
   };
   
+  const amplitudeIntervalRef = useRef(null);
+
   const handleStartRecording = () => {
     setIsRecording(true);
+    setRecordingState('recording');
     // Simulate amplitude
-    const interval = setInterval(() => {
+    amplitudeIntervalRef.current = setInterval(() => {
       setAmplitude(Math.random() * 0.8 + 0.2);
     }, 100);
     
     // Auto-stop after 5 seconds for demo and generate feedback
     setTimeout(async () => {
       setIsRecording(false);
-      clearInterval(interval);
+      if (amplitudeIntervalRef.current) {
+        clearInterval(amplitudeIntervalRef.current);
+        amplitudeIntervalRef.current = null;
+      }
       setAmplitude(0);
       setIsGeneratingFeedback(true);
       
@@ -149,11 +161,11 @@ export default function Practice() {
           }
         });
         
-        setFeedback(aiResponse);
+  setFeedback(aiResponse);
         
         // Check for badge earning
         const sessions = await base44.entities.Recording.filter({ type: 'practice' });
-        if (sessions.length === 0) {
+  if (sessions.length === 0) {
           const newBadge = {
             badge_type: 'first_session',
             title: 'First Steps',
@@ -169,17 +181,31 @@ export default function Practice() {
         setFeedback(mockFeedback);
       } finally {
         setIsGeneratingFeedback(false);
-        setShowFeedback(true);
-        setShowActionBar(true);
+  setShowFeedback(true);
+  setShowActionBar(true);
+  setRecordingState('finished');
       }
     }, 5000);
   };
-  const { liveTranscript, isStreaming } = useLiveTranscription(isRecording, { cadence: 1100 });
+  const { liveTranscript, isStreaming, reset: resetLive } = useLiveTranscription(isRecording, { cadence: 1100 });
   
   const handleReset = () => {
     setShowFeedback(false);
-    setIsRecording(false);
+  setIsRecording(false);
+  setRecordingState('idle');
+  try { resetLive(); } catch (e) {}
   };
+
+  // cleanup on unmount within component
+  useEffect(() => {
+    return () => {
+      try { resetLive(); } catch (e) {}
+      if (amplitudeIntervalRef.current) {
+        clearInterval(amplitudeIntervalRef.current);
+        amplitudeIntervalRef.current = null;
+      }
+    };
+  }, []);
   
   const handleNextQuestion = () => {
     const questions = sampleQuestions[selectedScenario];
@@ -558,8 +584,13 @@ export default function Practice() {
           isOpen={showNamingModal}
           onClose={() => setShowNamingModal(false)}
           onSave={async (name) => {
+            if (showNamingModal === false) return;
+            // close modal immediately to avoid lingering dialog
+            setShowNamingModal(false);
+            setShowActionBar(false);
+            const savingToast = toast({ title: 'Saving session', description: 'Saving your practice session...' });
             try {
-              await base44.entities.Recording.create({
+              const rec = await base44.entities.Recording.create({
                 title: name,
                 type: 'practice',
                 question: currentQuestion,
@@ -567,12 +598,41 @@ export default function Practice() {
                 confidence_score: feedback.confidence,
                 filler_count: feedback.fillers,
                 refined_draft: feedback.improvedAnswer,
+                transcript: liveTranscript || '',
+                created_date: new Date().toISOString(),
               });
+
+              // optimistic cache update so Library shows saved item immediately
+              try {
+                queryClient.setQueryData(['recordings'], (old = []) => {
+                  const recObj = {
+                    id: rec.id || `draft-${Date.now()}`,
+                    title: rec.title || name,
+                    type: rec.type || 'practice',
+                    transcript: rec.transcript || liveTranscript || '',
+                    duration_seconds: rec.duration_seconds || 0,
+                    created_date: rec.created_date || new Date().toISOString(),
+                    clarity_score: rec.clarity_score,
+                    confidence_score: rec.confidence_score,
+                    filler_count: rec.filler_count,
+                  };
+                  const merged = [recObj, ...old.filter(r => r?.id !== recObj.id)];
+                  try { saveLocalRecording(recObj); } catch (e) {}
+                  return merged;
+                });
+              } catch (e) {
+                try { queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {}
+              }
+              try { savingToast.update({ title: 'Saved', description: 'Practice session saved to Library', duration: 4000 }); } catch (e) {}
+              try { await queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {}
             } catch (error) {
               console.error('Error saving practice session:', error);
+              try { savingToast.update({ title: 'Save failed', description: 'Unable to save practice session right now.', duration: 5000 }); } catch (e) {}
+              toast({ title: 'Save failed', description: 'Unable to save practice session right now.', duration: 5000 });
             }
-            setShowNamingModal(false);
-            setShowActionBar(false);
+
+            setRecordingState('idle');
+            try { resetLive(); } catch (e) {}
           }}
           defaultName={`Practice ${selectedScenario ? scenarios.find(s => s.id === selectedScenario)?.label : 'Session'}`}
           suggestedNames={[

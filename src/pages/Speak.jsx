@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/use-toast';
+import { saveLocalRecording } from '@/lib/localRecordings';
 import useLiveTranscription from '@/hooks/useLiveTranscription';
 import LiveTranscription from '@/components/transcription/LiveTranscription';
 
@@ -48,6 +50,8 @@ export default function Speak() {
   const [user, setUser] = useState(null);
   const [userCredits, setUserCredits] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [recordingState, setRecordingState] = useState('idle');
+  // recordingState: 'idle' | 'recording' | 'processing' | 'finished' | 'error'
   const [showTranscription, setShowTranscription] = useState(true);
   const [showTimer, setShowTimer] = useState(true);
   const [transcript, setTranscript] = useState('');
@@ -59,10 +63,12 @@ export default function Speak() {
   const [goalInput, setGoalInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [sessionData, setSessionData] = useState(null);
   const [uploadedFileUrl, setUploadedFileUrl] = useState(null);
   
   const intervalRef = useRef(null);
+  const queryClient = useQueryClient();
   
   useEffect(() => {
     checkAuthAndLoadCredits();
@@ -125,7 +131,10 @@ export default function Speak() {
     setTranscript('');
     setFillerCount(0);
     setConfidenceLevel(0);
-    await audioStartRecording();
+  // reset live transcript and chunks for fresh session
+  resetLive();
+  setRecordingState('recording');
+  await audioStartRecording();
   };
   
   const handlePause = () => {
@@ -137,7 +146,9 @@ export default function Speak() {
   };
   
   const handleFinish = async () => {
-    setIsTranscribing(true);
+  // mark processing
+  setRecordingState('processing');
+  setIsTranscribing(true);
 
     try {
       // Stop and get final blob
@@ -155,11 +166,10 @@ export default function Speak() {
         return;
       }
 
-      // Transcribe/upload the audio
+  // Transcribe/upload the audio
       const resp = await uploadAndTranscribe((partialTranscript) => {
         setTranscript(partialTranscript);
       }, finalBlob);
-
   // Use backend transcript if present; otherwise fall back to accumulated live transcript
   const transcribedText = resp?.transcript || (liveTranscript || '');
       const audioUrl = resp?.file_url ?? null;
@@ -216,16 +226,18 @@ export default function Speak() {
       });
       
       setIsGenerating(false);
+      setRecordingState('finished');
       setShowNamingModal(true);
     } catch (error) {
       console.error('Error processing recording:', error);
       setIsTranscribing(false);
       setIsGenerating(false);
-      
-      // Fallback
+      setRecordingState('error');
+
+      // Fallback – use whatever partial transcript exists (or empty)
       setSessionData({
-        transcript: transcript || 'Error transcribing audio',
-        refinedDraft: transcript || 'Error transcribing audio',
+        transcript: transcript || liveTranscript || '',
+        refinedDraft: transcript || liveTranscript || '',
         clarityScore: 75,
         confidenceScore: 70,
         fillerCount: 0,
@@ -237,12 +249,16 @@ export default function Speak() {
   };
 
   const handleSaveSession = async (sessionName) => {
-    try {
-      // Use createSessionDraft abstraction (returns mock session object)
-      const recording = await createSessionDraft({
-        title: sessionName,
-        transcript: sessionData.transcript,
-        refined_draft: sessionData.refinedDraft,
+  if (isSaving) return; // prevent double-save
+  setIsSaving(true);
+  // close naming modal immediately if open
+  try { setShowNamingModal(false); } catch (e) {}
+  const savingToast = toast({ title: 'Saving session', description: 'Saving your session...' });
+  try {
+      const payload = {
+        title: sessionName || `${typeLabels[type]} Response`,
+        transcript: sessionData.transcript || liveTranscript || '',
+        refined_draft: sessionData.refinedDraft || '',
         type,
         question: sessionData.question,
         goal: sessionIntent || goalInput,
@@ -252,32 +268,60 @@ export default function Speak() {
         clarity_score: sessionData.clarityScore,
         confidence_score: sessionData.confidenceScore,
         filler_count: sessionData.fillerCount,
-      });
+      };
 
+      // Persist via central sessions API (will use base44.entities.Recording.create)
+      const recording = await sessions.createSessionDraft(payload);
+
+      // Optimistic cache update so Library shows saved session
+      try {
+        queryClient.setQueryData(['recordings'], (old = []) => {
+          const recObj = {
+            id: recording.id || `draft-${Date.now()}`,
+            title: recording.title || sessionName,
+            type: recording.type || type,
+            transcript: recording.transcript || payload.transcript,
+            duration_seconds: recording.duration_seconds || payload.duration_seconds || 0,
+            created_date: recording.created_date || new Date().toISOString(),
+          };
+          const merged = [recObj, ...old.filter(r => r?.id !== recObj.id)];
+          // also persist locally as a fallback in case backend list isn't visible in this runtime
+          try { saveLocalRecording(recObj); } catch (e) {}
+          return merged;
+        });
+      } catch (e) {
+        try { queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {}
+      }
+      // Always refetch recordings after save to ensure Library shows latest
+      try { await queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (e) {}
+
+      // Navigate to Draft viewer with saved session
       navigate(createPageUrl('Draft'), {
         state: { 
           sessionData: {
-            ...sessionData,
+            ...payload,
             id: recording.id,
-            title: sessionName
+            title: sessionName || payload.title,
+            created_at: recording.created_date || new Date().toISOString(),
           }
         }
       });
-      // Decrement credits locally and attempt server-side decrement if available
-      try {
-        decrementCredits('recording_saved');
-        if (creditsAPI && typeof creditsAPI.decrement === 'function') {
-          creditsAPI.decrement(1).catch(err => console.warn('Remote decrement failed:', err));
-        }
-      } catch (e) {
-        console.warn('Failed to decrement credits after save:', e);
+
+      // update toast to saved
+  try { savingToast.update({ title: 'Saved', description: 'Session saved to Library', duration: 4000 }); } catch (e) {}
+      setIsSaving(false);
+      setRecordingState('idle');
+      resetLive();
+      decrementCredits('recording_saved');
+      if (creditsAPI && typeof creditsAPI.decrement === 'function') {
+        creditsAPI.decrement(1).catch(err => console.warn('Remote decrement failed:', err));
       }
     } catch (error) {
       console.error('Error saving session:', error);
-  toast({ title: 'Save failed', description: 'Unable to save session right now. Your draft will be available locally.' });
-      navigate(createPageUrl('Draft'), {
-        state: { sessionData }
-      });
+  try { savingToast.update({ title: 'Save failed', description: 'Unable to save session right now.', duration: 5000 }); } catch (e) {}
+  toast({ title: 'Save failed', description: 'Unable to save session right now. Your draft will be available locally.', duration: 5000 });
+      setIsSaving(false);
+      navigate(createPageUrl('Draft'), { state: { sessionData } });
     }
   };
 
@@ -295,13 +339,16 @@ export default function Speak() {
   };
 
   // Helper: create a session draft (temporary mock) — replace backend sessions.create
-  const createSessionDraft = async (payload) => {
-    // Return a mock object that looks like a saved session
-    return {
-      id: `draft-${Date.now()}`,
-      ...payload,
+  // ...existing code...
+  
+  // Stop recording and cleanup on unmount/navigation
+  useEffect(() => {
+    return () => {
+      // ensure any active recording is stopped
+      try { audioStopRecording(); } catch (e) {}
+      try { resetLive(); } catch (e) {}
     };
-  };
+  }, []);
   
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10 flex flex-col">

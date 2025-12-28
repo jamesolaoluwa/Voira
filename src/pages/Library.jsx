@@ -1,10 +1,22 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
+import { removeLocalRecording } from '@/lib/localRecordings';
+import { getLocalRecordings } from '@/lib/localRecordings';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -46,13 +58,35 @@ export default function Library() {
     queryKey: ['recordings'],
     queryFn: () => base44.entities.Recording.list('-created_date'),
   });
+
+  // merge local recordings saved in localStorage as a fallback
+  const localFallback = getLocalRecordings();
+  const mergedRecordings = (() => {
+    try {
+      const remote = Array.isArray(recordings) ? recordings : [];
+      // local items may be duplicates; ensure unique by id and prefer remote
+      const idx = {};
+      remote.forEach(r => { if (r && r.id) idx[r.id] = r; });
+      localFallback.forEach(l => { if (l && l.id && !idx[l.id]) idx[l.id] = l; });
+      // return sorted by created_date desc
+      return Object.values(idx).sort((a, b) => new Date(b.created_date || b.created_at || 0) - new Date(a.created_date || a.created_at || 0));
+    } catch (e) { return Array.isArray(recordings) ? recordings : []; }
+  })();
   
   const deleteMutation = useMutation({
     mutationFn: (id) => base44.entities.Recording.delete(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
+      // remove from local fallback as well
+      try { removeLocalRecording(id); } catch (e) {}
+      // remove from query cache immediately
+      try {
+        queryClient.setQueryData(['recordings'], (old = []) => (old || []).filter(r => r?.id !== id));
+      } catch (e) {}
       queryClient.invalidateQueries({ queryKey: ['recordings'] });
     },
   });
+
+  const [deleteTarget, setDeleteTarget] = React.useState(null);
   
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -65,7 +99,7 @@ export default function Library() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
   
-  const safeRecordings = Array.isArray(recordings) ? recordings : [];
+  const safeRecordings = Array.isArray(mergedRecordings) ? mergedRecordings : [];
   const filteredRecordings = safeRecordings.filter(rec => {
     const title = (rec && rec.title) ? String(rec.title) : '';
     const tags = Array.isArray(rec?.tags) ? rec.tags : [];
@@ -211,7 +245,7 @@ export default function Library() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDelete(recording.id)}
+                        onClick={() => setDeleteTarget(recording.id)}
                         disabled={deleteMutation.isPending}
                         className="text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10"
                       >
@@ -252,6 +286,19 @@ export default function Library() {
           </motion.div>
         )}
       </div>
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete session</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure you want to delete this session? This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget); setDeleteTarget(null); } }} className="bg-rose-600">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
