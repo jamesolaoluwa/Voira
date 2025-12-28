@@ -136,12 +136,12 @@ export default function RefineDraft() {
         });
         recording = { id: recordingId };
         // optimistic cache update
-        try {
+          try {
           queryClient.setQueryData(['recordings'], (old = []) => {
             return (old || []).map(r => r.id === recordingId ? { ...r, transcript: voiceNotes || r.transcript, refined_draft: result.refinedDraft } : r);
           });
-          // persist locally as fallback
-          try { saveLocalRecording({ id: recordingId, title: 'Refined Draft', transcript: voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', created_date: new Date().toISOString() }); } catch (e) {}
+          // persist locally as fallback (normalized fields)
+          try { saveLocalRecording({ id: recordingId, title: 'Refined Draft', transcript: voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: new Date().toISOString() }); } catch (e) {}
         } catch (e) { try { queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {} }
       } else {
         // create new
@@ -152,7 +152,7 @@ export default function RefineDraft() {
           type: 'refine',
           question,
         });
-        try { saveLocalRecording({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', transcript: recording.transcript || voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', created_date: recording.created_date || new Date().toISOString() }); } catch (e) {}
+  try { saveLocalRecording({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', transcript: recording.transcript || voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: recording.created_date || new Date().toISOString() }); } catch (e) {}
       }
 
       // Navigate to Draft page

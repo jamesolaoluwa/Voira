@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Save, Plus, X, Sparkles, Crown, Loader2 } from 'lucide-react';
+import useSessionStore from '@/stores/useSessionStore';
 import PremiumGate from '@/components/premium/PremiumGate';
 
 const toneOptions = [
@@ -23,6 +24,15 @@ const sentenceLengthOptions = [
 ];
 
 export default function VoiceProfile() {
+  const sessions = useSessionStore(state => state.sessions || []);
+  const stats = React.useMemo(() => {
+    const total = sessions.length;
+    if (total === 0) return { avgConfidence: 0, avgWPM: 0, avgFillers: 0 };
+    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const avgFillers = Math.round(sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
+    const avgWPM = Math.round(sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
+    return { avgConfidence, avgWPM, avgFillers };
+  }, [sessions]);
   const [selectedTone, setSelectedTone] = useState('professional');
   const [confidence, setConfidence] = useState([65]);
   const [emotionalDepth, setEmotionalDepth] = useState([50]);
@@ -125,6 +135,21 @@ export default function VoiceProfile() {
         <p className="text-zinc-600 dark:text-zinc-500 text-lg max-w-2xl">
           Teach Voira how you naturally express yourself so every response still sounds like you.
         </p>
+        {/* Small stats summary from unified session store */}
+        <div className="mt-4 flex gap-4">
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+            <div className="text-xs text-zinc-500">Avg. Confidence</div>
+            <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgConfidence ?? '-'}%</div>
+          </div>
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+            <div className="text-xs text-zinc-500">Avg. WPM</div>
+            <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgWPM ?? '-'} WPM</div>
+          </div>
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+            <div className="text-xs text-zinc-500">Fillers / Session</div>
+            <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgFillers ?? '-'}</div>
+          </div>
+        </div>
       </motion.div>
       
       <div className="max-w-4xl space-y-8">

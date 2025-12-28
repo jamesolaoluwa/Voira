@@ -22,6 +22,7 @@ import {
   Award
 } from 'lucide-react';
 import BadgeCard from '@/components/badges/BadgeCard';
+import useSessionStore from '@/stores/useSessionStore';
 
 export default function Profile() {
   const { user: authUser, isLoading, isAdmin } = useAuth();
@@ -35,11 +36,19 @@ export default function Profile() {
   const resetDate = authUser?.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : '—';
   const plan = isAdmin ? 'Premium' : (authUser?.role === 'premium_user' ? 'Premium' : 'Free');
 
+  const sessions = useSessionStore(state => state.sessions || []);
+  const storeStats = React.useMemo(() => {
+    const total = sessions.length;
+    if (total === 0) return { totalSessions: 0, avgConfidence: 0, improvementTrend: { fillerReductionPct: 0 } };
+    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const fillerReductionPct = Math.round((sessions[0]?.fillerCount || 0) - (sessions[sessions.length - 1]?.fillerCount || 0));
+    return { totalSessions: total, avgConfidence, improvementTrend: { fillerReductionPct } };
+  }, [sessions]);
   const stats = [
-    { label: 'Sessions Completed', value: '24', icon: Library, color: 'violet' },
-    { label: 'Hours Practiced', value: '8.5h', icon: Clock, color: 'teal' },
-    { label: 'Avg. Confidence', value: '82%', icon: TrendingUp, color: 'green' },
-    { label: 'Filler Reduction', value: '-45%', icon: Target, color: 'amber' },
+    { label: 'Sessions Completed', value: String(storeStats.totalSessions), icon: Library, color: 'violet' },
+    { label: 'Hours Practiced', value: `${Math.round((storeStats.totalSessions * 0.5) * 10) / 10}h`, icon: Clock, color: 'teal' },
+    { label: 'Avg. Confidence', value: `${storeStats.avgConfidence}%`, icon: TrendingUp, color: 'green' },
+    { label: 'Filler Reduction', value: `${storeStats.improvementTrend.fillerReductionPct}%`, icon: Target, color: 'amber' },
   ];
 
   const quickActions = [

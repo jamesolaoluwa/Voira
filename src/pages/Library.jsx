@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { removeLocalRecording } from '@/lib/localRecordings';
+import { removeLocalRecording, saveLocalRecording } from '@/lib/localRecordings';
+import { toast } from '@/components/ui/use-toast';
+import useSessionStore from '@/stores/useSessionStore';
 import { getLocalRecordings } from '@/lib/localRecordings';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
@@ -54,28 +56,16 @@ export default function Library() {
   const [activeFilter, setActiveFilter] = useState('All');
   const queryClient = useQueryClient();
   
-  const { data: recordings = [], isLoading } = useQuery({
-    queryKey: ['recordings'],
-    queryFn: () => base44.entities.Recording.list('-created_date'),
-  });
-
-  // merge local recordings saved in localStorage as a fallback
-  const localFallback = getLocalRecordings();
-  const mergedRecordings = (() => {
-    try {
-      const remote = Array.isArray(recordings) ? recordings : [];
-      // local items may be duplicates; ensure unique by id and prefer remote
-      const idx = {};
-      remote.forEach(r => { if (r && r.id) idx[r.id] = r; });
-      localFallback.forEach(l => { if (l && l.id && !idx[l.id]) idx[l.id] = l; });
-      // return sorted by created_date desc
-      return Object.values(idx).sort((a, b) => new Date(b.created_date || b.created_at || 0) - new Date(a.created_date || a.created_at || 0));
-    } catch (e) { return Array.isArray(recordings) ? recordings : []; }
-  })();
+  // Use unified session store as authoritative source
+  const sessions = useSessionStore(state => state.sessions || []);
+  const isLoading = false; // store is synchronous
+  const safeRecordings = Array.isArray(sessions) ? sessions : [];
   
   const deleteMutation = useMutation({
     mutationFn: (id) => base44.entities.Recording.delete(id),
     onSuccess: (_data, id) => {
+  // also remove from our frontend store so Library (which uses the store) updates
+  try { useSessionStore.getState().removeSession(id); } catch (e) {}
       // remove from local fallback as well
       try { removeLocalRecording(id); } catch (e) {}
       // remove from query cache immediately
@@ -99,7 +89,6 @@ export default function Library() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
   
-  const safeRecordings = Array.isArray(mergedRecordings) ? mergedRecordings : [];
   const filteredRecordings = safeRecordings.filter(rec => {
     const title = (rec && rec.title) ? String(rec.title) : '';
     const tags = Array.isArray(rec?.tags) ? rec.tags : [];
@@ -110,8 +99,39 @@ export default function Library() {
     return matchesSearch && matchesFilter;
   });
   
+  // undo-capable delete: remove from store immediately and show undo toast
   const handleDelete = (id) => {
-    deleteMutation.mutate(id);
+    const session = sessions.find(s => s.id === id);
+    if (!session) return;
+    // remove from local store immediately
+    useSessionStore.getState().removeSession(id);
+    try { removeLocalRecording(id); } catch (e) {}
+    try { queryClient.setQueryData(['recordings'], (old = []) => (old || []).filter(r => r?.id !== id)); } catch (e) {}
+
+    let undone = false;
+    const undoKey = `undo-delete-${id}`;
+
+    const undoToast = toast({
+      title: 'Recording deleted',
+      description: 'You can undo this action',
+      duration: 4000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          undone = true;
+          // restore to store and local fallback
+          useSessionStore.getState().addSession(session);
+          try { saveLocalRecording(session); } catch (e) {}
+          try { queryClient.setQueryData(['recordings'], (old = []) => [session, ...(old || [])]); } catch (e) {}
+        }
+      }
+    });
+
+    // delay remote delete so the user can undo
+    setTimeout(() => {
+      if (undone) return;
+      deleteMutation.mutate(id);
+    }, 4000);
   };
   
   return (
@@ -189,20 +209,20 @@ export default function Library() {
                   <div className="flex items-start gap-4">
                     {/* Icon */}
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                      recording.type === 'application' ? 'bg-violet-500/20' :
-                      recording.type === 'interview' ? 'bg-teal-500/20' : 'bg-amber-500/20'
-                    }`}>
-                      <TypeIcon className={`w-5 h-5 ${
-                        recording.type === 'application' ? 'text-violet-400' :
-                        recording.type === 'interview' ? 'text-teal-400' : 'text-amber-400'
-                      }`} />
-                    </div>
+                            recording.type === 'application' ? 'bg-violet-500/20' :
+                            recording.type === 'interview' ? 'bg-teal-500/20' : 'bg-amber-500/20'
+                          }`}>
+                            <TypeIcon className={`w-5 h-5 ${
+                              recording.type === 'application' ? 'text-violet-400' :
+                              recording.type === 'interview' ? 'text-teal-400' : 'text-amber-400'
+                            }`} />
+                          </div>
                     
                     {/* Content */}
                     <div className="flex-1 min-w-0">
                       <Link to={createPageUrl('Draft') + `?id=${recording.id}`}>
                         <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 hover:text-violet-600 dark:hover:text-violet-400 transition-colors truncate">
-                          {recording.title}
+                          {recording.title || recording.question || `${typeLabels[recording.type] || 'Recording'} – ${new Date(recording.createdAt || recording.created_date || Date.now()).toLocaleDateString()}`}
                         </h3>
                       </Link>
                       
@@ -222,21 +242,21 @@ export default function Library() {
                       </div>
                       
                       <div className="flex items-center gap-4 mt-3 text-sm text-zinc-600 dark:text-zinc-500">
-                        {recording.duration_seconds && (
+                        { (recording.durationSec || recording.duration_seconds) && (
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
-                            {formatDuration(recording.duration_seconds)}
+                            {formatDuration(recording.durationSec || recording.duration_seconds)}
                           </span>
                         )}
                         <span className="flex items-center gap-1">
                           <FileText className="w-3 h-3" />
-                          {formatDate(recording.created_date)}
+                          {formatDate(recording.createdAt || recording.created_date)}
                         </span>
-                        {recording.clarity_score && (
+                        {recording.confidenceScore || recording.clarity_score ? (
                           <span>
-                            Clarity: <span className="text-teal-400">{recording.clarity_score}%</span>
+                            Confidence: <span className="text-teal-400">{recording.confidenceScore || recording.clarity_score}%</span>
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                     
@@ -295,7 +315,16 @@ export default function Library() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget); setDeleteTarget(null); } }} className="bg-rose-600">Delete</AlertDialogAction>
+            <AlertDialogAction onClick={() => {
+              if (!deleteTarget) return;
+              // optimistic remove from frontend store + local fallback so UI updates immediately
+              try { useSessionStore.getState().removeSession(deleteTarget); } catch (e) {}
+              try { removeLocalRecording(deleteTarget); } catch (e) {}
+              try { queryClient.setQueryData(['recordings'], (old = []) => (old || []).filter(r => r?.id !== deleteTarget)); } catch (e) {}
+              // then call remote delete
+              deleteMutation.mutate(deleteTarget);
+              setDeleteTarget(null);
+            }} className="bg-rose-600">Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

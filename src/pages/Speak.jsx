@@ -19,6 +19,7 @@ import { auth, sessions, credits as creditsAPI } from '@/components/services/api
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/use-toast';
 import { saveLocalRecording } from '@/lib/localRecordings';
+import useSessionStore from '@/stores/useSessionStore';
 import useLiveTranscription from '@/hooks/useLiveTranscription';
 import LiveTranscription from '@/components/transcription/LiveTranscription';
 
@@ -69,6 +70,7 @@ export default function Speak() {
   
   const intervalRef = useRef(null);
   const queryClient = useQueryClient();
+  const addSessionToStore = useSessionStore(state => state.addSession);
   
   useEffect(() => {
     checkAuthAndLoadCredits();
@@ -270,8 +272,20 @@ export default function Speak() {
         filler_count: sessionData.fillerCount,
       };
 
+      // validate transcript exists
+      const transcriptText = payload.transcript && String(payload.transcript).trim();
+      if (!transcriptText || transcriptText.length < 3) {
+        try { savingToast.update({ title: 'Save failed', description: 'No transcript to save.', duration: 5000 }); } catch (e) {}
+        toast({ title: 'Save failed', description: 'Please record or transcribe before saving.', duration: 5000 });
+        setIsSaving(false);
+        return;
+      }
+
       // Persist via central sessions API (will use base44.entities.Recording.create)
       const recording = await sessions.createSessionDraft(payload);
+
+      // Add to unified session store so all pages update
+  try { addSessionToStore({ id: recording.id || `local-${Date.now()}`, createdAt: recording.created_date || new Date().toISOString(), type: recording.type || type, question: payload.question, transcript: payload.transcript, durationSec: recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration, wordsCount: payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0, confidenceScore: recording.confidence_score || payload.confidence_score || 0, fillerCount: recording.filler_count || payload.filler_count || 0, wordsPerMinute: recording.words_per_minute || Math.round((payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0) / Math.max(1, (recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration) / 60)) }); } catch (e) { console.warn('addSessionToStore failed', e); }
 
       // Optimistic cache update so Library shows saved session
       try {
@@ -281,8 +295,9 @@ export default function Speak() {
             title: recording.title || sessionName,
             type: recording.type || type,
             transcript: recording.transcript || payload.transcript,
-            duration_seconds: recording.duration_seconds || payload.duration_seconds || 0,
-            created_date: recording.created_date || new Date().toISOString(),
+            durationSec: recording.duration_seconds || payload.duration_seconds || 0,
+            createdAt: recording.created_date || new Date().toISOString(),
+            confidenceScore: recording.confidence_score,
           };
           const merged = [recObj, ...old.filter(r => r?.id !== recObj.id)];
           // also persist locally as a fallback in case backend list isn't visible in this runtime
@@ -297,12 +312,12 @@ export default function Speak() {
 
       // Navigate to Draft viewer with saved session
       navigate(createPageUrl('Draft'), {
-        state: { 
+            state: { 
           sessionData: {
             ...payload,
             id: recording.id,
             title: sessionName || payload.title,
-            created_at: recording.created_date || new Date().toISOString(),
+            createdAt: recording.created_date || new Date().toISOString(),
           }
         }
       });

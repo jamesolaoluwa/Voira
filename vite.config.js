@@ -5,8 +5,14 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Intentionally lock the dev server to a single port to avoid multiple
+  // Vite instances and port-hopping which caused blank pages and routing
+  // inconsistencies during development. strictPort=true causes Vite to
+  // fail loudly if the port is already in use instead of trying another port.
   server: {
-    allowedHosts: true
+    allowedHosts: true,
+    port: 5173,
+    strictPort: true,
   },
   resolve: {
     alias: {

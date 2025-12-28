@@ -610,11 +610,12 @@ export default function Practice() {
                     title: rec.title || name,
                     type: rec.type || 'practice',
                     transcript: rec.transcript || liveTranscript || '',
-                    duration_seconds: rec.duration_seconds || 0,
-                    created_date: rec.created_date || new Date().toISOString(),
+                    durationSec: rec.duration_seconds || 0,
+                    createdAt: rec.created_date || new Date().toISOString(),
                     clarity_score: rec.clarity_score,
-                    confidence_score: rec.confidence_score,
-                    filler_count: rec.filler_count,
+                    confidenceScore: rec.confidence_score,
+                    fillerCount: rec.filler_count,
+                    wordsPerMinute: rec.words_per_minute,
                   };
                   const merged = [recObj, ...old.filter(r => r?.id !== recObj.id)];
                   try { saveLocalRecording(recObj); } catch (e) {}
