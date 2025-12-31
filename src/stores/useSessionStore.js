@@ -112,6 +112,8 @@ export const useSessionStore = create((set, get) => ({
     const s = {
       id: session.id || `local-${Date.now()}`,
       createdAt: session.createdAt || new Date().toISOString(),
+  // preserve title when provided so Library can show the user-entered name
+  title: session.title || session.question || '',
       type: session.type || 'speak',
       question: session.question || '',
       transcript: session.transcript || '',
@@ -126,7 +128,13 @@ export const useSessionStore = create((set, get) => ({
     // side-effect: persist locally (do not mutate state here)
     try { saveLocalRecording(s); } catch (e) {}
   },
-  removeSession: (id) => set(prev => ({ ...prev, sessions: (prev.sessions || []).filter(s => s.id !== id) })),
+  removeSession: (id) => {
+    if (!id) {
+      console.warn('removeSession called with falsy id, ignoring');
+      return set(prev => ({ ...prev }));
+    }
+    return set(prev => ({ ...prev, sessions: (prev.sessions || []).filter(s => s.id !== id) }));
+  },
   getSessions: () => get().sessions,
   getStatsSummary: () => computeStats(get().sessions || []),
   // derived helpers

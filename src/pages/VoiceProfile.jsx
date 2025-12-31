@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Save, Plus, X, Sparkles, Crown, Loader2 } from 'lucide-react';
 import useSessionStore from '@/stores/useSessionStore';
 import PremiumGate from '@/components/premium/PremiumGate';
+import PageContainer from '@/components/layout/PageContainer';
 
 const toneOptions = [
   { value: 'warm', label: 'Warm', description: 'Friendly and approachable' },
@@ -48,9 +49,64 @@ export default function VoiceProfile() {
   const [user, setUser] = useState(null);
   const [isPremium, setIsPremium] = useState(false);
   
+  // Temporary local persistence until backend sync
+  const PREF_KEY = 'voira.voiceProfile.preferredWords';
+  const AVOID_KEY = 'voira.voiceProfile.avoidedWords';
+
+  const dedupeCaseInsensitive = (arr) => {
+    const map = new Map();
+    for (const w of (arr || [])) {
+      const t = (w || '').trim();
+      if (!t) continue;
+      const lower = t.toLowerCase();
+      if (!map.has(lower)) map.set(lower, t);
+    }
+    return Array.from(map.values());
+  };
+
   useEffect(() => {
+    // Load persisted words (localStorage) first, fallback to remote profile in loadVoiceProfile
+    try {
+      const rawPref = localStorage.getItem(PREF_KEY);
+      const rawAvoid = localStorage.getItem(AVOID_KEY);
+      if (rawPref) {
+        const parsed = JSON.parse(rawPref);
+        if (Array.isArray(parsed) && parsed.length) {
+          setPreferredWords(dedupeCaseInsensitive(parsed));
+        }
+      }
+      if (rawAvoid) {
+        const parsed = JSON.parse(rawAvoid);
+        if (Array.isArray(parsed) && parsed.length) {
+          setAvoidedWords(dedupeCaseInsensitive(parsed));
+        }
+      }
+    } catch (e) {
+      console.warn('Unable to read voice profile prefs from localStorage', e);
+    }
+
     loadVoiceProfile();
   }, []);
+
+  // Save preferred words when they change
+  useEffect(() => {
+    try {
+      const deduped = dedupeCaseInsensitive(preferredWords);
+      localStorage.setItem(PREF_KEY, JSON.stringify(deduped));
+    } catch (e) {
+      console.warn('Unable to save preferred words', e);
+    }
+  }, [preferredWords]);
+
+  // Save avoided words when they change
+  useEffect(() => {
+    try {
+      const deduped = dedupeCaseInsensitive(avoidedWords);
+      localStorage.setItem(AVOID_KEY, JSON.stringify(deduped));
+    } catch (e) {
+      console.warn('Unable to save avoided words', e);
+    }
+  }, [avoidedWords]);
   
   const loadVoiceProfile = async () => {
     try {
@@ -79,19 +135,23 @@ export default function VoiceProfile() {
   
   const addWord = (type) => {
     if (type === 'preferred' && newPreferred.trim()) {
-      setPreferredWords([...preferredWords, newPreferred.trim()]);
+      const candidate = newPreferred.trim();
+      const merged = [...preferredWords, candidate];
+      setPreferredWords(dedupeCaseInsensitive(merged));
       setNewPreferred('');
     } else if (type === 'avoided' && newAvoided.trim()) {
-      setAvoidedWords([...avoidedWords, newAvoided.trim()]);
+      const candidate = newAvoided.trim();
+      const merged = [...avoidedWords, candidate];
+      setAvoidedWords(dedupeCaseInsensitive(merged));
       setNewAvoided('');
     }
   };
   
   const removeWord = (type, word) => {
     if (type === 'preferred') {
-      setPreferredWords(preferredWords.filter(w => w !== word));
+      setPreferredWords(preferredWords.filter(w => (w || '') !== (word || '')));
     } else {
-      setAvoidedWords(avoidedWords.filter(w => w !== word));
+      setAvoidedWords(avoidedWords.filter(w => (w || '') !== (word || '')));
     }
   };
   
@@ -122,9 +182,10 @@ export default function VoiceProfile() {
   };
   
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f]">
+      <PageContainer className="py-6 lg:py-10">
       {/* Header */}
-      <motion.div
+  <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="mb-8"
@@ -135,24 +196,24 @@ export default function VoiceProfile() {
         <p className="text-zinc-600 dark:text-zinc-500 text-lg max-w-2xl">
           Teach Voira how you naturally express yourself so every response still sounds like you.
         </p>
-        {/* Small stats summary from unified session store */}
-        <div className="mt-4 flex gap-4">
-          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+  {/* Small stats summary from unified session store */}
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-4xl mx-auto items-center">
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm text-center">
             <div className="text-xs text-zinc-500">Avg. Confidence</div>
             <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgConfidence ?? '-'}%</div>
           </div>
-          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm text-center">
             <div className="text-xs text-zinc-500">Avg. WPM</div>
             <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgWPM ?? '-'} WPM</div>
           </div>
-          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm text-center">
             <div className="text-xs text-zinc-500">Fillers / Session</div>
             <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgFillers ?? '-'}</div>
           </div>
         </div>
       </motion.div>
       
-      <div className="max-w-4xl space-y-8">
+  <div className="max-w-4xl mx-auto space-y-8">
         {/* Tone Selection */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -380,7 +441,7 @@ export default function VoiceProfile() {
           </div>
         </motion.div>
         
-        {/* Save Button */}
+  {/* Save Button */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -406,6 +467,7 @@ export default function VoiceProfile() {
           </Button>
         </motion.div>
       </div>
+      </PageContainer>
     </div>
   );
 }

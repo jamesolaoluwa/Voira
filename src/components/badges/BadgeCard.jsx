@@ -27,11 +27,13 @@ const badgeIcons = {
 };
 
 const colorStyles = {
-  violet: 'bg-white border border-zinc-200 shadow-sm text-violet-600 dark:bg-gradient-to-br dark:from-violet-500/20 dark:to-violet-600/10 dark:border-violet-500/30 dark:text-violet-400 dark:shadow-none',
-  teal: 'bg-white border border-zinc-200 shadow-sm text-teal-600 dark:bg-gradient-to-br dark:from-teal-500/20 dark:to-teal-600/10 dark:border-teal-500/30 dark:text-teal-400 dark:shadow-none',
-  amber: 'bg-white border border-zinc-200 shadow-sm text-amber-600 dark:bg-gradient-to-br dark:from-amber-500/20 dark:to-amber-600/10 dark:border-amber-500/30 dark:text-amber-400 dark:shadow-none',
-  rose: 'bg-white border border-zinc-200 shadow-sm text-rose-600 dark:bg-gradient-to-br dark:from-rose-500/20 dark:to-rose-600/10 dark:border-rose-500/30 dark:text-rose-400 dark:shadow-none',
-  emerald: 'bg-white border border-zinc-200 shadow-sm text-emerald-600 dark:bg-gradient-to-br dark:from-emerald-500/20 dark:to-emerald-600/10 dark:border-emerald-500/30 dark:text-emerald-400 dark:shadow-none',
+  // Keep the same light-mode appearance (white bg, soft border/shadow)
+  // but ensure a solid dark card background, subtle dark border and no shadow in dark mode.
+  violet: 'bg-white border border-zinc-200 shadow-sm text-violet-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-violet-400 dark:shadow-none',
+  teal: 'bg-white border border-zinc-200 shadow-sm text-teal-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-teal-400 dark:shadow-none',
+  amber: 'bg-white border border-zinc-200 shadow-sm text-amber-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-amber-400 dark:shadow-none',
+  rose: 'bg-white border border-zinc-200 shadow-sm text-rose-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-rose-400 dark:shadow-none',
+  emerald: 'bg-white border border-zinc-200 shadow-sm text-emerald-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-emerald-400 dark:shadow-none',
 };
 
 export default function BadgeCard({ badge, size = 'default', showDate = true }) {
