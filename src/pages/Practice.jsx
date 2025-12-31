@@ -10,6 +10,7 @@ import BadgeNotification from '@/components/badges/BadgeNotification';
 import useLiveTranscription from '@/hooks/useLiveTranscription';
 import LiveTranscription from '@/components/transcription/LiveTranscription';
 import { toast } from '@/components/ui/use-toast';
+import useSessionStore from '@/stores/useSessionStore';
 import { base44 } from '@/api/base44Client';
 import { saveLocalRecording } from '@/lib/localRecordings';
 import { 
@@ -611,7 +612,7 @@ export default function Practice() {
                 queryClient.setQueryData(['recordings'], (old = []) => {
                   const recObj = {
                     id: rec.id || `draft-${Date.now()}`,
-                    title: rec.title || name,
+                    title: name || rec.title,
                     type: rec.type || 'practice',
                     transcript: rec.transcript || liveTranscript || '',
                     durationSec: rec.duration_seconds || 0,
@@ -623,7 +624,8 @@ export default function Practice() {
                   };
                   const merged = [recObj, ...old.filter(r => r?.id !== recObj.id)];
                   try { saveLocalRecording(recObj); } catch (e) {}
-                  return merged;
+                  try { useSessionStore.getState().addSession(recObj); } catch (e) {}
+                    return merged;
                 });
               } catch (e) {
                 try { queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {}

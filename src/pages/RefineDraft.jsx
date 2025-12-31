@@ -14,6 +14,7 @@ import { base44 } from '@/api/base44Client';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { toast } from '@/components/ui/use-toast';
 import { saveLocalRecording } from '@/lib/localRecordings';
+import useSessionStore from '@/stores/useSessionStore';
 
 export default function RefineDraft() {
   const navigate = useNavigate();
@@ -143,7 +144,7 @@ export default function RefineDraft() {
           // persist locally as fallback (normalized fields)
           try { saveLocalRecording({ id: recordingId, title: 'Refined Draft', transcript: voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: new Date().toISOString() }); } catch (e) {}
         } catch (e) { try { queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {} }
-      } else {
+        } else {
         // create new
         recording = await base44.entities.Recording.create({
           title: 'Refined Draft',
@@ -153,6 +154,7 @@ export default function RefineDraft() {
           question,
         });
   try { saveLocalRecording({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', transcript: recording.transcript || voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: recording.created_date || new Date().toISOString() }); } catch (e) {}
+  try { useSessionStore.getState().addSession({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', createdAt: recording.created_date || new Date().toISOString(), type: 'refine', question, transcript: recording.transcript || voiceNotes || '', durationSec: 0, wordsCount: (voiceNotes || '').split(/\s+/).filter(Boolean).length, confidenceScore: 0, fillerCount: 0, wordsPerMinute: 0 }); } catch (e) {}
       }
 
       // Navigate to Draft page

@@ -285,14 +285,14 @@ export default function Speak() {
       const recording = await sessions.createSessionDraft(payload);
 
       // Add to unified session store so all pages update
-  try { addSessionToStore({ id: recording.id || `local-${Date.now()}`, createdAt: recording.created_date || new Date().toISOString(), type: recording.type || type, question: payload.question, transcript: payload.transcript, durationSec: recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration, wordsCount: payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0, confidenceScore: recording.confidence_score || payload.confidence_score || 0, fillerCount: recording.filler_count || payload.filler_count || 0, wordsPerMinute: recording.words_per_minute || Math.round((payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0) / Math.max(1, (recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration) / 60)) }); } catch (e) { console.warn('addSessionToStore failed', e); }
+  try { addSessionToStore({ id: recording.id || `local-${Date.now()}`, title: sessionName || recording.title, createdAt: recording.created_date || new Date().toISOString(), type: recording.type || type, question: payload.question, transcript: payload.transcript, durationSec: recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration, wordsCount: payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0, confidenceScore: recording.confidence_score || payload.confidence_score || 0, fillerCount: recording.filler_count || payload.filler_count || 0, wordsPerMinute: recording.words_per_minute || Math.round((payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0) / Math.max(1, (recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration) / 60)) }); } catch (e) { console.warn('addSessionToStore failed', e); }
 
       // Optimistic cache update so Library shows saved session
       try {
         queryClient.setQueryData(['recordings'], (old = []) => {
           const recObj = {
             id: recording.id || `draft-${Date.now()}`,
-            title: recording.title || sessionName,
+            title: sessionName || recording.title,
             type: recording.type || type,
             transcript: recording.transcript || payload.transcript,
             durationSec: recording.duration_seconds || payload.duration_seconds || 0,

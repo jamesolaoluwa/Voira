@@ -49,9 +49,64 @@ export default function VoiceProfile() {
   const [user, setUser] = useState(null);
   const [isPremium, setIsPremium] = useState(false);
   
+  // Temporary local persistence until backend sync
+  const PREF_KEY = 'voira.voiceProfile.preferredWords';
+  const AVOID_KEY = 'voira.voiceProfile.avoidedWords';
+
+  const dedupeCaseInsensitive = (arr) => {
+    const map = new Map();
+    for (const w of (arr || [])) {
+      const t = (w || '').trim();
+      if (!t) continue;
+      const lower = t.toLowerCase();
+      if (!map.has(lower)) map.set(lower, t);
+    }
+    return Array.from(map.values());
+  };
+
   useEffect(() => {
+    // Load persisted words (localStorage) first, fallback to remote profile in loadVoiceProfile
+    try {
+      const rawPref = localStorage.getItem(PREF_KEY);
+      const rawAvoid = localStorage.getItem(AVOID_KEY);
+      if (rawPref) {
+        const parsed = JSON.parse(rawPref);
+        if (Array.isArray(parsed) && parsed.length) {
+          setPreferredWords(dedupeCaseInsensitive(parsed));
+        }
+      }
+      if (rawAvoid) {
+        const parsed = JSON.parse(rawAvoid);
+        if (Array.isArray(parsed) && parsed.length) {
+          setAvoidedWords(dedupeCaseInsensitive(parsed));
+        }
+      }
+    } catch (e) {
+      console.warn('Unable to read voice profile prefs from localStorage', e);
+    }
+
     loadVoiceProfile();
   }, []);
+
+  // Save preferred words when they change
+  useEffect(() => {
+    try {
+      const deduped = dedupeCaseInsensitive(preferredWords);
+      localStorage.setItem(PREF_KEY, JSON.stringify(deduped));
+    } catch (e) {
+      console.warn('Unable to save preferred words', e);
+    }
+  }, [preferredWords]);
+
+  // Save avoided words when they change
+  useEffect(() => {
+    try {
+      const deduped = dedupeCaseInsensitive(avoidedWords);
+      localStorage.setItem(AVOID_KEY, JSON.stringify(deduped));
+    } catch (e) {
+      console.warn('Unable to save avoided words', e);
+    }
+  }, [avoidedWords]);
   
   const loadVoiceProfile = async () => {
     try {
@@ -80,19 +135,23 @@ export default function VoiceProfile() {
   
   const addWord = (type) => {
     if (type === 'preferred' && newPreferred.trim()) {
-      setPreferredWords([...preferredWords, newPreferred.trim()]);
+      const candidate = newPreferred.trim();
+      const merged = [...preferredWords, candidate];
+      setPreferredWords(dedupeCaseInsensitive(merged));
       setNewPreferred('');
     } else if (type === 'avoided' && newAvoided.trim()) {
-      setAvoidedWords([...avoidedWords, newAvoided.trim()]);
+      const candidate = newAvoided.trim();
+      const merged = [...avoidedWords, candidate];
+      setAvoidedWords(dedupeCaseInsensitive(merged));
       setNewAvoided('');
     }
   };
   
   const removeWord = (type, word) => {
     if (type === 'preferred') {
-      setPreferredWords(preferredWords.filter(w => w !== word));
+      setPreferredWords(preferredWords.filter(w => (w || '') !== (word || '')));
     } else {
-      setAvoidedWords(avoidedWords.filter(w => w !== word));
+      setAvoidedWords(avoidedWords.filter(w => (w || '') !== (word || '')));
     }
   };
   
