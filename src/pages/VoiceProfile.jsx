@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Save, Plus, X, Sparkles, Crown, Loader2 } from 'lucide-react';
 import useSessionStore from '@/stores/useSessionStore';
 import PremiumGate from '@/components/premium/PremiumGate';
+import PageContainer from '@/components/layout/PageContainer';
 
 const toneOptions = [
   { value: 'warm', label: 'Warm', description: 'Friendly and approachable' },
@@ -122,9 +123,10 @@ export default function VoiceProfile() {
   };
   
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f]">
+      <PageContainer className="py-6 lg:py-10">
       {/* Header */}
-      <motion.div
+  <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="mb-8"
@@ -135,24 +137,24 @@ export default function VoiceProfile() {
         <p className="text-zinc-600 dark:text-zinc-500 text-lg max-w-2xl">
           Teach Voira how you naturally express yourself so every response still sounds like you.
         </p>
-        {/* Small stats summary from unified session store */}
-        <div className="mt-4 flex gap-4">
-          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+  {/* Small stats summary from unified session store */}
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-4xl mx-auto items-center">
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm text-center">
             <div className="text-xs text-zinc-500">Avg. Confidence</div>
             <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgConfidence ?? '-'}%</div>
           </div>
-          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm text-center">
             <div className="text-xs text-zinc-500">Avg. WPM</div>
             <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgWPM ?? '-'} WPM</div>
           </div>
-          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm">
+          <div className="bg-white dark:bg-[#111118] rounded-lg p-3 shadow-sm text-center">
             <div className="text-xs text-zinc-500">Fillers / Session</div>
             <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{stats?.avgFillers ?? '-'}</div>
           </div>
         </div>
       </motion.div>
       
-      <div className="max-w-4xl space-y-8">
+  <div className="max-w-4xl mx-auto space-y-8">
         {/* Tone Selection */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -380,7 +382,7 @@ export default function VoiceProfile() {
           </div>
         </motion.div>
         
-        {/* Save Button */}
+  {/* Save Button */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -406,6 +408,7 @@ export default function VoiceProfile() {
           </Button>
         </motion.div>
       </div>
+      </PageContainer>
     </div>
   );
 }

@@ -30,6 +30,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import PageContainer from '@/components/layout/PageContainer';
 import { Label } from '@/components/ui/label';
 import { 
   Select,
@@ -231,7 +232,8 @@ export default function Practice() {
   };
   
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f]">
+      <PageContainer className="py-6 lg:py-10">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -246,18 +248,18 @@ export default function Practice() {
         </p>
       </motion.div>
       
-      <AnimatePresence mode="wait">
-        {!selectedScenario ? (
+  <AnimatePresence mode="wait">
+          {!selectedScenario ? (
           /* Scenario Selection */
           <motion.div
             key="selection"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="max-w-2xl"
+            className="max-w-2xl mx-auto"
           >
-            <h2 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200 mb-6">Choose a scenario</h2>
-            <div className="grid gap-4">
+            <h2 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200 mb-6 text-center">Choose a scenario</h2>
+            <div className="grid gap-4 max-w-3xl mx-auto">
               {scenarios.map((scenario, index) => (
                 <motion.button
                   key={scenario.id}
@@ -284,7 +286,7 @@ export default function Practice() {
               ))}
             </div>
           </motion.div>
-        ) : (
+          ) : (
           /* Practice Interface - Centered & Immersive */
           <motion.div
             key="practice"
@@ -579,7 +581,9 @@ export default function Practice() {
           </motion.div>
         )}
 
-        {/* Session Naming Modal */}
+  </AnimatePresence>
+
+  {/* Session Naming Modal */}
         <SessionNamingModal
           isOpen={showNamingModal}
           onClose={() => setShowNamingModal(false)}
@@ -649,7 +653,7 @@ export default function Practice() {
           isOpen={showBadgeNotification}
           onClose={() => setShowBadgeNotification(false)}
         />
-      </AnimatePresence>
+      </PageContainer>
     </div>
   );
 }
