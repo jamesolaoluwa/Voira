@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Zap } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function CreditsDisplay({ 
   credits = 45, 
@@ -8,6 +9,32 @@ export default function CreditsDisplay({
   compact = false,
   showWarning = true 
 }) {
+  const { isAdmin } = useAuth();
+
+  // Admin users see unlimited credits
+  if (isAdmin) {
+    if (compact) {
+      return (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1a1a24] rounded-full border border-white/5">
+          <Zap className={`w-3 h-3 text-violet-400`} />
+          <span className="text-xs text-zinc-400">Unlimited</span>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Zap className={`w-4 h-4 text-violet-400`} />
+            <span className="text-sm text-zinc-400">Credits</span>
+          </div>
+          <span className="text-sm font-medium text-zinc-300">Unlimited</span>
+        </div>
+      </div>
+    );
+  }
+
   const percentage = (credits / total) * 100;
   const isLow = credits < 20;
 

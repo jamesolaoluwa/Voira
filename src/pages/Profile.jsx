@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import BadgeCard from '@/components/badges/BadgeCard';
 import useSessionStore from '@/stores/useSessionStore';
+import CreditsDisplay from '@/components/ui/CreditsDisplay';
 
 export default function Profile() {
   const { user: authUser, isLoading, isAdmin } = useAuth();
@@ -153,8 +154,9 @@ export default function Profile() {
                 <span className="text-xs text-zinc-600 dark:text-zinc-500">Credits</span>
               </div>
               <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                {creditsRemaining}
-                <span className="text-sm font-normal text-zinc-600 dark:text-zinc-500"> / {totalCredits}</span>
+                <span className="align-middle">
+                  <CreditsDisplay credits={creditsRemaining} total={totalCredits} compact={false} showWarning />
+                </span>
               </p>
             </div>
 

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Shield, User, CreditCard, Loader2 } from 'lucide-react';
 import { auth, billing, credits } from '@/components/services/api';
+import CreditsDisplay from '@/components/ui/CreditsDisplay';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function Admin() {
@@ -143,7 +144,11 @@ export default function Admin() {
               </div>
               <div>
                 <Label className="text-zinc-600 dark:text-zinc-500">Credits</Label>
-                <p className="text-zinc-900 dark:text-zinc-100 font-medium">{user?.credits_remaining}</p>
+                <CreditsDisplay
+                  credits={user?.credits_remaining ?? 0}
+                  total={user?.role === 'premium_user' ? 200 : 60}
+                  compact
+                />
               </div>
             </div>
           </motion.div>

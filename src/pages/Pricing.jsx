@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,10 @@ import {
   Calendar,
   TrendingUp
 } from 'lucide-react';
+import CreditsDisplay from '@/components/ui/CreditsDisplay';
+import { useAuth } from '@/contexts/AuthContext';
+import { credits as creditsAPI } from '@/components/services/api';
+
 
 export default function Pricing() {
   const [billingCycle, setBillingCycle] = useState('monthly');
@@ -51,12 +55,37 @@ export default function Pricing() {
     },
   };
 
-  const usage = {
-    creditsRemaining: 45,
-    totalCredits: 200,
-    sessionsUsed: 12,
-    resetDate: 'Jan 1, 2025',
-  };
+  const { user: authUser } = useAuth();
+  const [usage, setUsage] = useState({
+    creditsRemaining: authUser?.credits_remaining ?? 0,
+    totalCredits: authUser?.credits_total ?? (authUser?.role === 'premium_user' ? 200 : 60),
+    sessionsUsed: 0,
+    resetDate: authUser?.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : '—',
+  });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadCredits = async () => {
+      try {
+        if (creditsAPI && typeof creditsAPI.getCredits === 'function') {
+          const remote = await creditsAPI.getCredits();
+          if (mounted) setUsage(u => ({ ...u, creditsRemaining: remote }));
+        } else if (authUser) {
+          if (mounted) setUsage(u => ({ ...u, creditsRemaining: authUser.credits_remaining ?? u.creditsRemaining }));
+        }
+        if (authUser) {
+          if (mounted) setUsage(u => ({ ...u, totalCredits: authUser.credits_total ?? (authUser.role === 'premium_user' ? 200 : 60), resetDate: authUser.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : u.resetDate }));
+        }
+      } catch (e) {
+        console.warn('Unable to load credits for Pricing page', e);
+      }
+    };
+
+    loadCredits();
+
+    return () => { mounted = false; };
+  }, [authUser]);
 
   const handleUpgrade = () => {
     setShowUpgradeModal(true);
@@ -220,23 +249,9 @@ export default function Pricing() {
                 <Zap className="w-4 h-4 text-violet-600 dark:text-violet-400" />
                 <span className="text-sm text-zinc-600 dark:text-zinc-500">Credits Remaining</span>
               </div>
-              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                {usage.creditsRemaining}
-                <span className="text-sm font-normal text-zinc-600 dark:text-zinc-500"> / {usage.totalCredits}</span>
-              </p>
-              <div className="mt-2 h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${(usage.creditsRemaining / usage.totalCredits) * 100}%` }}
-                  transition={{ duration: 0.8, ease: 'easeOut' }}
-                  className="h-full bg-gradient-to-r from-violet-500 to-purple-500"
-                />
+              <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+                <CreditsDisplay credits={usage.creditsRemaining} total={usage.totalCredits} compact={false} showWarning />
               </div>
-              {usage.creditsRemaining < 20 && (
-                <p className="text-xs text-amber-400 mt-2">
-                  Running low? Premium gives you more room to practice.
-                </p>
-              )}
             </div>
 
             <div>

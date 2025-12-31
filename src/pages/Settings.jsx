@@ -18,6 +18,8 @@ import {
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import useSessionStore from '@/stores/useSessionStore';
+import CreditsDisplay from '@/components/ui/CreditsDisplay';
+import { useAuth } from '@/contexts/AuthContext';
 
 const cleanupOptions = [
   { value: 'light', label: 'Light', description: 'Minimal changes, keep more of your natural voice' },
@@ -38,6 +40,7 @@ const aiProviders = [
 
 export default function Settings() {
   const sessions = useSessionStore(state => state.sessions || []);
+  const { user: authUser } = useAuth();
   const stats = React.useMemo(() => {
     const total = sessions.length;
     if (total === 0) return { avgConfidence: 0, avgWPM: 0, avgFillers: 0 };
@@ -211,7 +214,7 @@ export default function Settings() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-600 dark:text-zinc-400">Credits Remaining</span>
-              <span className="font-semibold text-zinc-800 dark:text-zinc-200">120 / 200</span>
+              <span className="font-semibold text-zinc-800 dark:text-zinc-200"><CreditsDisplay credits={authUser?.credits_remaining ?? 0} total={authUser?.credits_total ?? (authUser?.role === 'premium_user' ? 200 : 60)} compact={true} /></span>
             </div>
           </div>
           {/* Small session stats */}

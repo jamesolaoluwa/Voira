@@ -11,7 +11,10 @@ export default defineConfig({
   // fail loudly if the port is already in use instead of trying another port.
   server: {
     allowedHosts: true,
-    port: 5173,
+  // Make the port configurable via environment variables so you can
+  // override the default 5173 in local runs when needed (eg. PORT=5174).
+  // Vite also accepts the CLI flag `--port` when running scripts.
+  port: Number(process.env.VITE_PORT || process.env.PORT || 5173),
     strictPort: true,
   },
   resolve: {

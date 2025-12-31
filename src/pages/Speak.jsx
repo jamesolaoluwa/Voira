@@ -47,7 +47,7 @@ export default function Speak() {
     uploadAndTranscribe,
   } = useAudioRecorder();
   
-  const { user: authUser, session, isLoading: authLoading } = useAuth();
+  const { user: authUser, session, isLoading: authLoading, isAdmin } = useAuth();
   const [user, setUser] = useState(null);
   const [userCredits, setUserCredits] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -327,9 +327,16 @@ export default function Speak() {
       setIsSaving(false);
       setRecordingState('idle');
       resetLive();
-      decrementCredits('recording_saved');
-      if (creditsAPI && typeof creditsAPI.decrement === 'function') {
-        creditsAPI.decrement(1).catch(err => console.warn('Remote decrement failed:', err));
+      // Only decrement for non-admin users. Admins should not lose credits
+      // so we skip both the local optimistic decrement and the remote call.
+      if (!isAdmin) {
+        // Decrement local optimistic credits for UI
+        decrementCredits('recording_saved');
+
+        // Remote decrement (persist) — use credits API when available
+        if (creditsAPI && typeof creditsAPI.decrement === 'function') {
+          creditsAPI.decrement(1).catch(err => console.warn('Remote decrement failed:', err));
+        }
       }
     } catch (error) {
       console.error('Error saving session:', error);

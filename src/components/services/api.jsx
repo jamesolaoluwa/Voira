@@ -420,6 +420,36 @@ export const credits = {
     return newCredits;
   },
 
+  // Backwards-compatible helper that decrements by an arbitrary amount
+  // amount: number of credits to remove (defaults to 1)
+  async decrement(amount = 1, reason = 'recording_saved') {
+    const user = await auth.getMe();
+    if (!user) throw new Error('Not authenticated');
+
+    const profiles = await base44.entities.UserProfile.filter({ user_id: user.id });
+
+    if (profiles.length === 0) {
+      // Create a profile with starting credits minus amount
+      const starting = Math.max(0, 60 - amount);
+      await base44.entities.UserProfile.create({
+        user_id: user.id,
+        full_name: user.full_name,
+        role: user.role,
+        credits_remaining: starting,
+      });
+      return starting;
+    }
+
+    const profile = profiles[0];
+    const newCredits = Math.max(0, (profile.credits_remaining || 60) - Number(amount));
+
+    await base44.entities.UserProfile.update(profile.id, {
+      credits_remaining: newCredits,
+    });
+
+    return newCredits;
+  },
+
   async getCredits() {
     const user = await auth.getMe();
     if (!user) return 0;

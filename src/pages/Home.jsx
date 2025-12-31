@@ -6,6 +6,7 @@ import { GraduationCap, Briefcase, MessageSquare, RefreshCw, Mic, Loader2 } from
 import { auth } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 import useSessionStore from '@/stores/useSessionStore';
+import CreditsDisplay from '@/components/ui/CreditsDisplay';
 
 const features = [
   {
@@ -182,13 +183,13 @@ export default function Home() {
         className="mt-16 p-6 rounded-2xl bg-white border border-zinc-200 shadow-sm dark:bg-[hsl(var(--card))] dark:border-white/5 dark:shadow-none max-w-5xl mx-auto"
       >
         <h2 className="text-lg font-semibold text-zinc-800 dark:text-zinc-300 mb-6">Your Progress</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
           <div>
             <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalSessions}</p>
             <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Recordings</p>
           </div>
           <div>
-            <p className="text-3xl font-bold text-violet-600 dark:text-violet-400">{user?.credits_remaining || 0}</p>
+            <p className="text-3xl font-bold text-violet-600 dark:text-violet-400"><CreditsDisplay credits={user?.credits_remaining || 0} total={user?.credits_total ?? 60} compact={true} /></p>
             <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Credits Left</p>
           </div>
           <div>
