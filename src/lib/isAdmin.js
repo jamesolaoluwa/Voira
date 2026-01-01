@@ -7,9 +7,8 @@
  * Frontend admin check using server-side Edge Function.
  *
  * Production behavior:
- * - Calls the deployed Supabase Edge Function at
- *   https://mxkssrtjueyknwdcpj.supabase.co/functions/v1/is-admin via POST
- *   with body { email: normalizedEmail }.
+ * - Calls the configured Supabase Edge Function (set via
+ *   `VITE_IS_ADMIN_URL`) via POST with body { email: normalizedEmail }.
  * - Returns true only if the function responds with JSON { isAdmin: true }.
  * - Fails closed: returns false on network error, non-200 status, or malformed payload.
  *
@@ -39,8 +38,22 @@ export async function isAdminByEmail(email) {
   }
 
   // Call the deployed Edge Function in production/dev to determine admin status.
-  // NOTE: keep URL fixed and do NOT embed any secrets in the client.
-  const EDGE_URL = 'https://mxkssrtjueyknwdcpj.supabase.co/functions/v1/is-admin';
+  // Use the runtime-configured URL so we don't hardcode endpoints in source.
+  // NOTE: do NOT embed any secrets in the client.
+  const EDGE_URL = import.meta.env.VITE_IS_ADMIN_URL;
+
+  // If the env var is missing, fail closed in production. In DEV we warn and
+  // return false (no Edge call) so developers aren't blocked.
+  if (!EDGE_URL) {
+    // eslint-disable-next-line no-console
+    if (!import.meta.env.DEV) {
+      console.error('VITE_IS_ADMIN_URL is not configured; failing closed.');
+      return false;
+    }
+    // eslint-disable-next-line no-console
+    console.warn('VITE_IS_ADMIN_URL not set; skipping Edge Function call in dev.');
+    return false;
+  }
 
   try {
     const res = await fetch(EDGE_URL, {

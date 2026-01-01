@@ -8,12 +8,12 @@ export const wordSchema = z.string()
   .trim()
   .min(1)
   .max(80)
-  .refine(s => !/\p{Cc}/u.test(s), { message: 'Invalid characters' });
+  .refine(s => !/[\x00-\x1F\x7F-\x9F]/.test(s), { message: 'Invalid characters' });
 
 export const freeTextSchema = z.string()
   .trim()
   .max(5000)
-  .refine(s => !/\p{Cc}/u.test(s), { message: 'Invalid control characters' });
+  .refine(s => !/[\x00-\x1F\x7F-\x9F]/.test(s), { message: 'Invalid control characters' });
 
 // helpers
 export function safeParseEmail(input: unknown) {
