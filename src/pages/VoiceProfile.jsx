@@ -10,6 +10,9 @@ import { Save, Plus, X, Sparkles, Crown, Loader2 } from 'lucide-react';
 import useSessionStore from '@/stores/useSessionStore';
 import PremiumGate from '@/components/premium/PremiumGate';
 import PageContainer from '@/components/layout/PageContainer';
+import { safeParseWord } from '@/lib/validation';
+import { normalizeWord } from '@/lib/sanitize';
+import { toast } from '@/components/ui/use-toast';
 
 const toneOptions = [
   { value: 'warm', label: 'Warm', description: 'Friendly and approachable' },
@@ -135,12 +138,24 @@ export default function VoiceProfile() {
   
   const addWord = (type) => {
     if (type === 'preferred' && newPreferred.trim()) {
-      const candidate = newPreferred.trim();
+      const candidateRaw = newPreferred;
+      const parsed = safeParseWord(candidateRaw);
+      if (!parsed.success) {
+        toast({ title: 'Invalid word', description: 'Words must be 1-80 characters and contain no control characters.', duration: 4000 });
+        return;
+      }
+      const candidate = normalizeWord(parsed.data);
       const merged = [...preferredWords, candidate];
       setPreferredWords(dedupeCaseInsensitive(merged));
       setNewPreferred('');
     } else if (type === 'avoided' && newAvoided.trim()) {
-      const candidate = newAvoided.trim();
+      const candidateRaw = newAvoided;
+      const parsed = safeParseWord(candidateRaw);
+      if (!parsed.success) {
+        toast({ title: 'Invalid word', description: 'Words must be 1-80 characters and contain no control characters.', duration: 4000 });
+        return;
+      }
+      const candidate = normalizeWord(parsed.data);
       const merged = [...avoidedWords, candidate];
       setAvoidedWords(dedupeCaseInsensitive(merged));
       setNewAvoided('');
@@ -167,6 +182,14 @@ export default function VoiceProfile() {
         avoided_words: avoidedWords,
         example_responses: exampleResponses,
       };
+      // Basic validation: ensure words meet frontend schema
+      const invalidPreferred = (preferredWords || []).some(w => !safeParseWord(w).success);
+      const invalidAvoided = (avoidedWords || []).some(w => !safeParseWord(w).success);
+      if (invalidPreferred || invalidAvoided) {
+        toast({ title: 'Unable to save profile', description: 'Your profile contains invalid words. Remove or fix them before saving.', duration: 5000 });
+        setIsSaving(false);
+        return;
+      }
       
       if (voiceProfile) {
         await base44.entities.VoiceProfile.update(voiceProfile.id, profileData);

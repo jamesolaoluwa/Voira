@@ -15,9 +15,9 @@ export default function CreditsDisplay({
   if (isAdmin) {
     if (compact) {
       return (
-        <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-[#1a1a24] rounded-full border border-white/5">
+        <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-zinc-50 dark:bg-[#1a1a24] rounded-full border border-zinc-200 dark:border-white/5">
           <Zap className={`w-3 h-3 text-violet-400`} />
-          <span className="text-xs text-zinc-400">Unlimited</span>
+          <span className="text-xs text-zinc-700 dark:text-zinc-400">Unlimited</span>
         </div>
       );
     }
@@ -29,7 +29,7 @@ export default function CreditsDisplay({
             <Zap className={`w-4 h-4 text-violet-400`} />
             <span className="text-sm text-zinc-400">Credits</span>
           </div>
-          <span className="text-sm font-medium text-zinc-300">Unlimited</span>
+          <span className="text-sm font-medium px-3 py-0.5 rounded-full bg-zinc-50 dark:bg-transparent text-zinc-700 dark:text-zinc-300">Unlimited</span>
         </div>
       </div>
     );

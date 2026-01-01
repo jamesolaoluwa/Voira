@@ -3,45 +3,61 @@
 // cannot be protected by RLS. This file provides a safe frontend-only check
 // and documents the correct server-side replacement (Edge Function).
 
-import { ADMIN_EMAILS } from '@/config/admins';
-
 /**
- * Frontend-safe admin check.
+ * Frontend admin check using server-side Edge Function.
  *
- * - Uses the static `ADMIN_EMAILS` frontend config (keeps behavior local and auditable).
- * - DOES NOT query the `admin_emails` table from the client. If you require a
- *   dynamic admin list, implement a server-side Edge Function that queries the
- *   database using the Supabase service role key and performs auth checks.
+ * Production behavior:
+ * - Calls the deployed Supabase Edge Function at
+ *   https://mxkssrtjueyknwdcpj.supabase.co/functions/v1/is-admin via POST
+ *   with body { email: normalizedEmail }.
+ * - Returns true only if the function responds with JSON { isAdmin: true }.
+ * - Fails closed: returns false on network error, non-200 status, or malformed payload.
  *
- * Security rationale:
- * - Never allow the browser to read sensitive tables such as `admin_emails`.
- * - Server-side code (Edge Function) should authenticate the caller, perform
- *   the DB lookup, and return only the boolean result.
- *
- * TODO: Replace with Edge Function call once the server endpoint exists.
+ * Development fallback:
+ * - When `import.meta.env.DEV` is true, a developer may still use a local
+ *   `ADMIN_EMAILS` list from `src/config/admins.js`. This fallback is strictly
+ *   DEV-only and will not be included in production bundles.
  */
 export async function isAdminByEmail(email) {
   if (!email) return false;
   const normalized = String(email).toLowerCase().trim();
 
-  // Fast, static check against compiled frontend admin list. This preserves
-  // functionality for development and small teams without exposing DB contents.
-  if (Array.isArray(ADMIN_EMAILS) && ADMIN_EMAILS.map(e => e.toLowerCase()).includes(normalized)) {
-    return true;
+  // DEV-only fallback: use the static list only when running in dev mode.
+  if (import.meta.env.DEV) {
+    try {
+      // Dynamically import to avoid bundling admin list into production builds.
+      // eslint-disable-next-line no-undef
+      const { ADMIN_EMAILS } = await import('@/config/admins');
+      if (Array.isArray(ADMIN_EMAILS) && ADMIN_EMAILS.map(e => e.toLowerCase()).includes(normalized)) {
+        return true;
+      }
+    } catch (e) {
+      // Ignore import errors in dev fallback; proceed to Edge Function call.
+      // eslint-disable-next-line no-console
+      console.warn('DEV fallback admin list unavailable', e);
+    }
   }
 
-  // If you need dynamic admin lists, implement an authenticated server-side
-  // endpoint (Edge Function) and call it here. Returning false by default
-  // avoids leaking whether an email exists in the DB from the client.
-  //
-  // Example edge flow (manual steps):
-  // - Create an Edge Function `/edge/is-admin?email=...` that validates the
-  //   incoming request (checks user's JWT), uses the Supabase service role to
-  //   query `admin_emails`, and returns `{ isAdmin: boolean }`.
-  // - Update this function to call that endpoint and return its result.
-  //
-  // NEVER add a service_role key to the frontend.
-  return false;
+  // Call the deployed Edge Function in production/dev to determine admin status.
+  // NOTE: keep URL fixed and do NOT embed any secrets in the client.
+  const EDGE_URL = 'https://mxkssrtjueyknwdcpj.supabase.co/functions/v1/is-admin';
+
+  try {
+    const res = await fetch(EDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normalized }),
+    });
+
+    if (!res.ok) return false;
+    const json = await res.json();
+    return Boolean(json && json.isAdmin === true);
+  } catch (err) {
+    // Fail closed on any error.
+    // eslint-disable-next-line no-console
+    console.error('isAdminByEmail error:', err);
+    return false;
+  }
 }
 
 export default isAdminByEmail;
