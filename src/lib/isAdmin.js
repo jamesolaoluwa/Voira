@@ -40,25 +40,46 @@ export async function isAdminByEmail(email) {
   // Call the deployed Edge Function in production/dev to determine admin status.
   // Use the runtime-configured URL so we don't hardcode endpoints in source.
   // NOTE: do NOT embed any secrets in the client.
-  const EDGE_URL = import.meta.env.VITE_IS_ADMIN_URL;
+  let EDGE_URL = import.meta.env.VITE_IS_ADMIN_URL;
 
-  // If the env var is missing, fail closed in production. In DEV we warn and
-  // return false (no Edge call) so developers aren't blocked.
+  // If the env var is missing, fail closed in production. In DEV, attempt a
+  // best-effort derived URL from VITE_SUPABASE_URL (functions host) so local
+  // developers can test against a deployed Edge Function without extra env vars.
   if (!EDGE_URL) {
-    // eslint-disable-next-line no-console
     if (!import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
       console.error('VITE_IS_ADMIN_URL is not configured; failing closed.');
       return false;
     }
-    // eslint-disable-next-line no-console
-    console.warn('VITE_IS_ADMIN_URL not set; skipping Edge Function call in dev.');
-    return false;
+
+    // Try to derive functions URL from VITE_SUPABASE_URL (dev convenience only)
+    try {
+      const supaUrl = import.meta.env.VITE_SUPABASE_URL;
+      if (supaUrl && typeof supaUrl === 'string') {
+        // Example: https://<REF>.supabase.co -> https://<REF>.functions.supabase.co/is-admin
+        EDGE_URL = supaUrl.replace('.supabase.co', '.functions.supabase.co').replace(/\/$/, '') + '/is-admin';
+        // eslint-disable-next-line no-console
+        console.debug('Derived EDGE_URL for DEV from VITE_SUPABASE_URL:', EDGE_URL);
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('VITE_IS_ADMIN_URL not set and VITE_SUPABASE_URL unavailable; skipping Edge Function call in dev.');
+        return false;
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('Failed to derive EDGE_URL in DEV; skipping Edge Function call.', e);
+      return false;
+    }
   }
 
   try {
     const res = await fetch(EDGE_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
       body: JSON.stringify({ email: normalized }),
     });
 

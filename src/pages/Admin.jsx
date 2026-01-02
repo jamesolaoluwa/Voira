@@ -12,34 +12,16 @@ import { useAuth } from '@/contexts/AuthContext';
 
 export default function Admin() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { user, isAdmin, isLoading } = useAuth();
   const [selectedRole, setSelectedRole] = useState('free_user');
   const [creditAmount, setCreditAmount] = useState(60);
   const [isUpdating, setIsUpdating] = useState(false);
   const [message, setMessage] = useState('');
 
+  // Keep selectedRole in sync with user role
   useEffect(() => {
-  checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
-    try {
-      const currentUser = await auth.getMe();
-      const { isAdmin: ctxIsAdmin } = useAuth();
-      if (!currentUser || !ctxIsAdmin) {
-        setUser(null);
-        setIsLoading(false);
-        return;
-      }
-      setUser(currentUser);
-      setSelectedRole(currentUser.role);
-    } catch (error) {
-      setUser(null);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    if (user && user.role) setSelectedRole(user.role);
+  }, [user?.role]);
 
   const handleRoleChange = async () => {
     setIsUpdating(true);
@@ -48,7 +30,7 @@ export default function Admin() {
       await billing.setPlan(selectedRole);
       setMessage('Role updated successfully!');
       setTimeout(() => setMessage(''), 3000);
-      await checkAuth();
+  // After role update, refresh user via existing auth flows (AuthContext handles session/profile updates)
     } catch (error) {
       setMessage(`Error: ${error.message}`);
     } finally {
@@ -63,7 +45,7 @@ export default function Admin() {
       await credits.resetCredits(parseInt(creditAmount));
       setMessage('Credits updated successfully!');
       setTimeout(() => setMessage(''), 3000);
-      await checkAuth();
+  // AuthContext will update user/profile via existing auth flows
     } catch (error) {
       setMessage(`Error: ${error.message}`);
     } finally {
@@ -78,7 +60,7 @@ export default function Admin() {
       </div>
     );
   }
-  if (!user) {
+  if (!user || !isAdmin) {
     return (
       <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10 flex items-center justify-center">
         <div className="text-center">
