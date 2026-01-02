@@ -15,9 +15,9 @@ export default function CreditsDisplay({
   if (isAdmin) {
     if (compact) {
       return (
-        <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-zinc-50 dark:bg-[#1a1a24] rounded-full border border-zinc-200 dark:border-white/5">
-          <Zap className={`w-3 h-3 text-violet-400`} />
-          <span className="text-xs text-zinc-700 dark:text-zinc-400">Unlimited</span>
+        <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
+          <Zap className={`w-3 h-3 text-violet-600 dark:text-violet-400`} />
+          <span className="text-xs text-zinc-600 dark:text-zinc-400">Unlimited</span>
         </div>
       );
     }
@@ -40,9 +40,9 @@ export default function CreditsDisplay({
 
   if (compact) {
     return (
-      <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-[#1a1a24] rounded-full border border-white/5">
-        <Zap className={`w-3 h-3 ${isLow ? 'text-amber-400' : 'text-violet-400'}`} />
-        <span className="text-xs text-zinc-400">
+      <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
+        <Zap className={`w-3 h-3 ${isLow ? 'text-amber-400' : 'text-violet-600 dark:text-violet-400'}`} />
+        <span className="text-xs text-zinc-600 dark:text-zinc-400">
           {credits} / {total}
         </span>
       </div>
