@@ -23,7 +23,7 @@ function walk(dir, cb) {
 const patterns = [
   { name: 'admin_emails', re: /admin_emails/i },
   // generic email-like matches for admin or example domains; tweakable
-  { name: 'suspicious_email', re: /@[A-Za-z0-9._%+-]*(?:example|admin|test)[A-Za-z0-9._%+-]*\.[A-Za-z]{2,}/i },
+  { name: 'suspicious_email', re: /@[A-Za-z0-9._%+-]*(?:admin|test)[A-Za-z0-9._%+-]*\.[A-Za-z]{2,}/i },
   { name: 'suspicious_email_simple', re: /@admin\b/i },
 ];
 
