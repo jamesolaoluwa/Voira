@@ -7,7 +7,8 @@
   "dev": "vite",
   "dev:clean": "./scripts/kill-vite.sh",
   "dev:strict": "PORT=5173 vite",
-    "build": "vite build",
+  "build": "vite build",
+  "ci:scan": "node ./scripts/ci-scan-build/scan-build.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

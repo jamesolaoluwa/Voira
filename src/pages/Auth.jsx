@@ -11,6 +11,8 @@ import { auth } from '@/components/services/api';
 import { Loader2 } from 'lucide-react';
 import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/components/lib/supabase';
+import { safeParseEmail, safeParsePassword } from '@/lib/validation';
+import { normalizeEmail } from '@/lib/sanitize';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -33,10 +35,18 @@ export default function Auth() {
     setIsLoading(true);
 
     try {
+      // Validate and normalize inputs before calling auth
+      const emailResult = safeParseEmail(email);
+      if (!emailResult.success) throw new Error('Please enter a valid email address');
+      const normalizedEmail = normalizeEmail(emailResult.data);
+
+      const pwResult = safeParsePassword(password);
+      if (!pwResult.success) throw new Error('Password must be at least 10 characters');
+
       if (isSignUp) {
-        await auth.signUp(email, password, name);
+        await auth.signUp(normalizedEmail, password, name);
       } else {
-        await auth.signIn(email, password);
+        await auth.signIn(normalizedEmail, password);
       }
       navigate(createPageUrl('Home'));
     } catch (err) {

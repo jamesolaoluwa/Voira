@@ -10,6 +10,7 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const lastCheckedEmailRef = React.useRef(null);
 
   useEffect(() => {
     let mounted = true;
@@ -53,11 +54,6 @@ export function AuthProvider({ children }) {
               role: s.user.user_metadata?.role || 'free_user',
             };
             setUser(finalUser);
-            // determine admin status via Supabase table
-            try {
-              const adminCheck = await isAdminByEmail(finalUser.email);
-              if (mounted) setIsAdmin(Boolean(adminCheck));
-            } catch (e) { if (mounted) setIsAdmin(false); }
           } catch (e) {
             console.warn('[AuthContext] getMe failed', e);
             const fallbackUser = {
@@ -67,10 +63,7 @@ export function AuthProvider({ children }) {
               role: s.user.user_metadata?.role || 'free_user',
             };
             setUser(fallbackUser);
-            try {
-              const adminCheck = await isAdminByEmail(fallbackUser.email);
-              if (mounted) setIsAdmin(Boolean(adminCheck));
-            } catch (e) { if (mounted) setIsAdmin(false); }
+            setUser(fallbackUser);
           }
         } else {
           setUser(null);
@@ -93,14 +86,9 @@ export function AuthProvider({ children }) {
             const richer = await apiAuth.getMe();
             const finalUser = richer || { id: session.user.id, email: session.user.email };
             setUser(finalUser);
-            try {
-              const adminCheck = await isAdminByEmail(finalUser.email);
-              setIsAdmin(Boolean(adminCheck));
-            } catch (e) { setIsAdmin(false); }
           } catch (e) {
             const fallbackUser = { id: session.user.id, email: session.user.email };
             setUser(fallbackUser);
-            try { const adminCheck = await isAdminByEmail(fallbackUser.email); setIsAdmin(Boolean(adminCheck)); } catch (e) { setIsAdmin(false); }
           }
         } else {
           setUser(null);
@@ -117,6 +105,65 @@ export function AuthProvider({ children }) {
     const cleanup = init();
     return () => { if (cleanup && typeof cleanup.then === 'function') cleanup.then(fn => fn).catch(()=>{}); };
   }, []);
+
+  // Ensure admin check runs only when a fully-hydrated session user email is available
+  // This guarantees we don't call isAdminByEmail with null/undefined and that the
+  // check re-runs whenever the authenticated user changes (login/logout/refresh).
+  useEffect(() => {
+    let mounted = true;
+
+    // If session is explicitly null (signed out), clear admin flag.
+    if (session === null) {
+      if (mounted) {
+        setIsAdmin(false);
+        lastCheckedEmailRef.current = null;
+      }
+      return () => { mounted = false; };
+    }
+
+    // Prefer the richer `user` email (from getMe) falling back to session.user.email
+    const rawEmail = user?.email || session?.user?.email;
+    const email = rawEmail ? String(rawEmail).toLowerCase().trim() : null;
+
+    if (!email) {
+      // No email available yet; do not modify isAdmin (avoid stomping existing true value).
+      return () => { mounted = false; };
+    }
+
+    (async () => {
+      try {
+        const adminCheck = await isAdminByEmail(email);
+        if (!mounted) return;
+
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.debug(`[AuthContext] isAdmin check for ${email}:`, adminCheck);
+        }
+
+        // If result is true, set admin and record the checked email.
+        if (adminCheck === true) {
+          setIsAdmin(true);
+          lastCheckedEmailRef.current = email;
+          return;
+        }
+
+        // If result is false, only clear admin if this is a different email than
+        // the one we previously marked as admin (prevents overwriting true for same email).
+        if (lastCheckedEmailRef.current !== email) {
+          setIsAdmin(false);
+          lastCheckedEmailRef.current = email;
+        }
+      } catch (e) {
+        // On error, avoid clearing a previously-true admin flag.
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.warn('[AuthContext] isAdmin check failed for', email, e);
+        }
+      }
+    })();
+
+    return () => { mounted = false; };
+  }, [user?.email, session?.user?.email, session]);
 
   const signOut = async () => {
     try {

@@ -29,7 +29,7 @@ export default function CreditsDisplay({
             <Zap className={`w-4 h-4 text-violet-400`} />
             <span className="text-sm text-zinc-400">Credits</span>
           </div>
-          <span className="text-sm font-medium text-zinc-300">Unlimited</span>
+          <span className="text-sm font-medium px-3 py-0.5 rounded-full bg-zinc-50 dark:bg-transparent text-zinc-700 dark:text-zinc-300">Unlimited</span>
         </div>
       </div>
     );
