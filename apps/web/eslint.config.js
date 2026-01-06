@@ -35,4 +35,23 @@ export default [
       ],
     },
   },
+  {
+    files: ['**/*.config.{js,ts}', 'scripts/**/*.js', 'vite.config.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+      },
+    },
+  },
+  {
+    files: ['tailwind.config.js'],
+    languageOptions: {
+      globals: globals.node,
+      parserOptions: {
+        ecmaVersion: 2020,
+        sourceType: 'script',
+      },
+    },
+  },
 ]

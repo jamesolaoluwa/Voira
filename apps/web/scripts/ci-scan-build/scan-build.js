@@ -44,7 +44,9 @@ envFiles.forEach(f => {
       const m = l.match(/^\s*VITE_SUPABASE_ANON_KEY\s*=\s*(.+)\s*$/i);
       if (m && m[1]) anonKeys.add(stripQuotes(m[1].trim()));
     });
-  } catch (e) {}
+  } catch {
+    // Ignore errors reading .env files
+  }
 });
 
 // Helper to strip surrounding quotes
@@ -73,7 +75,7 @@ walk(distDir, (file) => {
         failures.push({ file, match: 'supabase_service_role_key', snippet: firstMatchSnippet(content, serviceRoleRe) });
       }
     }
-  } catch (err) {
+  } catch {
     // ignore binary files
   }
 });
