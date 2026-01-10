@@ -84,5 +84,7 @@ class TranscribeRequest(BaseModel):
 class TranscribeResponse(BaseModel):
     """Response model for transcription."""
     transcript: str
-    confidence: Optional[float] = None
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score (0-1)")
+    duration: Optional[float] = Field(None, ge=0.0, description="Audio duration in seconds")
+    word_count: Optional[int] = Field(None, ge=0, description="Number of words in transcript")
 

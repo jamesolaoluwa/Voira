@@ -1,4 +1,5 @@
 """Configuration and environment variables."""
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +12,9 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_service_role_key: str
     supabase_anon_key: str
+    
+    # Deepgram API key for transcription
+    deepgram_api_key: Optional[str] = None
     
     # Environment (development, staging, production)
     # Reads from ENV environment variable, defaults to "development"

@@ -4,19 +4,25 @@ Handles authentication, sessions, admin checks, and transcription.
 """
 
 import logging
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
-from typing import List
+from typing import List, Optional
 from auth import get_current_user, check_is_admin, security
 from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
-    TranscribeRequest, TranscribeResponse
+    TranscribeResponse
 )
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
 from rate_limit import rate_limit_middleware
 from db import supabase
 from config import settings
+from transcription import (
+    transcribe_audio,
+    UnsupportedFileTypeError,
+    FileTooLargeError,
+    TranscriptionProviderError
+)
 from datetime import datetime
 
 # Configure logging
@@ -225,14 +231,27 @@ async def list_sessions(user: dict = Depends(get_current_user)):
 
 
 @app.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe_audio(
-    request: TranscribeRequest,
+async def transcribe_audio_endpoint(
+    file: UploadFile = File(..., description="Audio file to transcribe"),
+    language: Optional[str] = Form(default="en", description="Language code (en, es, fr, etc.)"),
     user: dict = Depends(get_current_user)
 ):
     """
-    Transcribe audio (placeholder).
-    TODO: Integrate Deepgram/OpenAI transcription.
-    Enforces credits server-side.
+    Transcribe audio file using Deepgram.
+    
+    - **file**: Audio file (max 15MB, formats: webm, wav, mp3, m4a, ogg, opus)
+    - **language**: Language code (default: "en")
+    
+    Enforces:
+    - Authentication required
+    - Max file size: 15MB
+    - 1 credit deducted ONLY after successful transcription
+    
+    Returns:
+    - transcript: The transcribed text
+    - confidence: Confidence score (0-1)
+    - duration: Audio duration in seconds
+    - word_count: Number of words in transcript
     """
     # Rate limit by user ID
     rate_limit_middleware(f"transcribe:{user['id']}")
@@ -240,7 +259,8 @@ async def transcribe_audio(
     # Check if user is admin
     is_admin = await check_is_admin(user)
     
-    # Check and enforce credits (unless admin)
+    # Check credits BEFORE processing (unless admin)
+    # Credit is deducted AFTER successful transcription
     has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
     if not has_credits:
         raise HTTPException(
@@ -248,10 +268,67 @@ async def transcribe_audio(
             detail="Insufficient credits for transcription."
         )
     
-    # TODO: Implement actual transcription (Deepgram/OpenAI)
-    # For now, return placeholder
+    # Read file content into memory
+    try:
+        file_content = await file.read()
+        mime_type = file.content_type or "application/octet-stream"
+    except Exception as e:
+        logger.error(f"Error reading uploaded file: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to read uploaded file."
+        )
+    
+    # Perform transcription with error handling
+    try:
+        result = await transcribe_audio(
+            audio_file=file_content,
+            mime_type=mime_type,
+            language=language
+        )
+    except UnsupportedFileTypeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+    except FileTooLargeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+    except TranscriptionProviderError as e:
+        # Don't expose internal errors to client
+        logger.error(f"Transcription failed for user {user['id']}: {str(e)}")
+        raise HTTPException(
+            status_code=503,
+            detail="Transcription service is currently unavailable. Please try again later."
+        )
+    except Exception as e:
+        # Catch-all for unexpected errors
+        logger.error(f"Unexpected transcription error for user {user['id']}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred during transcription. Please try again."
+        )
+    
+    # Deduct credit ONLY after successful transcription (unless admin)
+    if not is_admin:
+        try:
+            await decrement_credits(
+                user["id"],
+                amount=1,
+                reason="transcription",
+                is_admin=False
+            )
+        except Exception as e:
+            # Log but don't fail the request - transcription was successful
+            logger.error(f"Failed to deduct credits for user {user['id']} after transcription: {str(e)}")
+    
+    # Return transcription result
     return TranscribeResponse(
-        transcript="[Placeholder transcription - integrate Deepgram/OpenAI]",
-        confidence=0.95
+        transcript=result["transcript"],
+        confidence=result.get("confidence"),
+        duration=result.get("duration"),
+        word_count=result.get("word_count")
     )
 
