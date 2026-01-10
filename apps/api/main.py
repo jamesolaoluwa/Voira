@@ -3,6 +3,7 @@ FastAPI Backend for Voira
 Handles authentication, sessions, admin checks, and transcription.
 """
 
+import logging
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
@@ -15,13 +16,46 @@ from models import (
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
 from rate_limit import rate_limit_middleware
 from db import supabase
+from config import settings
 from datetime import datetime
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Voira API",
     description="Backend API for Voira voice coaching platform",
     version="1.0.0",
 )
+
+
+@app.on_event("startup")
+async def startup_validation():
+    """
+    Validate required environment variables on application startup.
+    This ensures the app fails fast with clear errors if configuration is missing.
+    NEVER log or print secret values (keys, tokens, etc.)
+    """
+    missing_vars = []
+    
+    # Check required Supabase configuration
+    if not settings.supabase_url:
+        missing_vars.append("SUPABASE_URL")
+    if not settings.supabase_service_role_key:
+        missing_vars.append("SUPABASE_SERVICE_ROLE_KEY")
+    
+    if missing_vars:
+        error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+    
+    # Log environment (safe to log - not a secret)
+    logger.info(f"Application starting in {settings.env} environment")
+    
+    # Validate Supabase URL format (basic check, no secrets logged)
+    if settings.supabase_url and not settings.supabase_url.startswith(("http://", "https://")):
+        logger.warning("SUPABASE_URL should start with http:// or https://")
 
 # CORS configuration - must be added before other middleware
 app.add_middleware(
