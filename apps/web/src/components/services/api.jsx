@@ -277,6 +277,44 @@ export const audio = {
     return true;
   },
 
+  /**
+   * Transcribe audio file using backend /transcribe endpoint
+   * @param {File|Blob} audioFile - Audio file to transcribe
+   * @param {string} language - Language code (default: 'en')
+   * @returns {Promise<{transcript: string, confidence?: number, duration?: number, word_count?: number}>}
+   */
+  async transcribeAudio(audioFile, language = 'en') {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      
+      // Create FormData for multipart/form-data upload
+      const formData = new FormData();
+      formData.append('file', audioFile);
+      formData.append('language', language);
+      
+      // Send to backend /transcribe endpoint
+      const result = await apiClient.post('/transcribe', formData);
+      
+      return {
+        transcript: result.transcript,
+        confidence: result.confidence,
+        duration: result.duration,
+        word_count: result.word_count,
+      };
+    } catch (error) {
+      // Handle specific HTTP status codes with user-friendly messages
+      if (error.status === 402) {
+        throw new Error('You are out of credits. Please upgrade.');
+      } else if (error.status === 400) {
+        throw new Error('Invalid or unsupported audio file.');
+      } else if (error.status === 503) {
+        throw new Error('Transcription service temporarily unavailable.');
+      }
+      // Re-throw other errors as-is
+      throw error;
+    }
+  },
+
   async startTranscriptionStream(audioBlob, onChunkUpdate) {
     const simulateChunks = async () => {
       const chunks = [

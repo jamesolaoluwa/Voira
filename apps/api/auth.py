@@ -75,3 +75,57 @@ async def check_is_admin(user: dict) -> bool:
     except Exception:
         return False
 
+
+async def get_user_from_websocket_token(token: str):
+    """
+    Validate Supabase JWT token from WebSocket connection.
+    Used for authenticating WebSocket connections (can't use HTTPBearer).
+    
+    Args:
+        token: JWT token from WebSocket query param or header
+    
+    Returns:
+        User dictionary with id, email, role, etc.
+    
+    Raises:
+        HTTPException: If token is invalid
+    """
+    try:
+        # Verify token with Supabase REST API
+        async with httpx.AsyncClient() as client:
+            verify_response = await client.get(
+                f"{settings.supabase_url}/auth/v1/user",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "apikey": settings.supabase_anon_key
+                },
+                timeout=10.0
+            )
+            
+            if verify_response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+            
+            user_data = verify_response.json()
+            user_id = user_data.get("id")
+            if not user_id:
+                raise HTTPException(status_code=401, detail="Invalid user data")
+        
+        # Get user profile
+        profile_response = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
+        profile = profile_response.data[0] if profile_response.data else None
+        
+        user_metadata = user_data.get("user_metadata", {})
+        
+        return {
+            "id": user_id,
+            "email": user_data.get("email"),
+            "full_name": user_metadata.get("full_name"),
+            "role": user_metadata.get("role", "free_user"),
+            "credits_remaining": profile.get("credits_remaining") if profile else 10,
+            "credits_reset_at": profile.get("credits_reset_at") if profile else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+

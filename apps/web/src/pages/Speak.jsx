@@ -20,7 +20,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/use-toast';
 import { saveLocalRecording } from '@/lib/localRecordings';
 import useSessionStore from '@/stores/useSessionStore';
-import useLiveTranscription from '@/hooks/useLiveTranscription';
 import LiveTranscription from '@/components/transcription/LiveTranscription';
 
 const typeLabels = {
@@ -40,6 +39,7 @@ export default function Speak() {
     isPaused: audioIsPaused,
     amplitude: audioAmplitude,
     error: audioError,
+    liveTranscript: audioLiveTranscript, // Real-time transcript from WebSocket
     startRecording: audioStartRecording,
     pauseRecording: audioPauseRecording,
     resumeRecording: audioResumeRecording,
@@ -118,8 +118,13 @@ export default function Speak() {
     };
   }, [audioIsRecording, audioIsPaused]);
 
-  const { liveTranscript, isStreaming, reset: resetLive } = useLiveTranscription(audioIsRecording && !audioIsPaused, { cadence: 1200 });
-  
+  // Debug: Log liveTranscript updates for debugging
+  useEffect(() => {
+    if (audioIsRecording) {
+      console.log('[Speak.jsx] liveTranscript value:', audioLiveTranscript?.substring(0, 100) || '(empty)', `[length: ${audioLiveTranscript?.length || 0}]`);
+    }
+  }, [audioLiveTranscript, audioIsRecording]);
+
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -129,14 +134,13 @@ export default function Speak() {
   const handleStart = async () => {
   // Start recording (credits will be decremented after a successful save)
     
-    setDuration(0);
-    setTranscript('');
-    setFillerCount(0);
-    setConfidenceLevel(0);
-  // reset live transcript and chunks for fresh session
-  resetLive();
-  setRecordingState('recording');
-  await audioStartRecording();
+      setDuration(0);
+      setTranscript('');
+      setFillerCount(0);
+      setConfidenceLevel(0);
+      // liveTranscript is cleared by useAudioRecorder when starting a NEW recording
+      setRecordingState('recording');
+      await audioStartRecording();
   };
   
   const handlePause = () => {
@@ -172,8 +176,8 @@ export default function Speak() {
       const resp = await uploadAndTranscribe((partialTranscript) => {
         setTranscript(partialTranscript);
       }, finalBlob);
-  // Use backend transcript if present; otherwise fall back to accumulated live transcript
-  const transcribedText = resp?.transcript || (liveTranscript || '');
+  // Use backend transcript from final transcription
+  const transcribedText = resp?.transcript || '';
       const audioUrl = resp?.file_url ?? null;
 
       setTranscript(transcribedText);
@@ -236,10 +240,10 @@ export default function Speak() {
       setIsGenerating(false);
       setRecordingState('error');
 
-      // Fallback – use whatever partial transcript exists (or empty)
+      // Use final transcript only (liveTranscript is cleared after recording stops)
       setSessionData({
-        transcript: transcript || liveTranscript || '',
-        refinedDraft: transcript || liveTranscript || '',
+        transcript: transcript || '',
+        refinedDraft: transcript || '',
         clarityScore: 75,
         confidenceScore: 70,
         fillerCount: 0,
@@ -259,7 +263,7 @@ export default function Speak() {
   try {
       const payload = {
         title: sessionName || `${typeLabels[type]} Response`,
-        transcript: sessionData.transcript || liveTranscript || '',
+        transcript: sessionData.transcript || '',
         refined_draft: sessionData.refinedDraft || '',
         type,
         question: sessionData.question,
@@ -343,7 +347,7 @@ export default function Speak() {
   try { savingToast.update({ title: 'Saved', description: 'Session saved to Library', duration: 4000 }); } catch (e) {}
       setIsSaving(false);
       setRecordingState('idle');
-      resetLive();
+      // Live transcript will be cleared when starting a new recording
       // Credits are now decremented server-side by the backend
       // Backend /sessions endpoint handles credit enforcement
       // Only update local UI state for non-admin users
@@ -381,7 +385,7 @@ export default function Speak() {
     return () => {
       // ensure any active recording is stopped
       try { audioStopRecording(); } catch (e) {}
-      try { resetLive(); } catch (e) {}
+      // Live transcript will be cleared when component unmounts or new recording starts
     };
   }, []);
   
@@ -604,8 +608,12 @@ export default function Speak() {
           )}
         </motion.div>
         
-  {/* Live Transcription */}
-  <LiveTranscription text={(isStreaming && liveTranscript) ? liveTranscript : transcript} isActive={audioIsRecording} />
+  {/* Live Transcription - Only show when recording is active and enabled */}
+  {showTranscription && audioIsRecording && (
+    <LiveTranscription 
+      transcript={audioLiveTranscript || ''}
+    />
+  )}
       </div>
       
       {/* Toggle Options */}

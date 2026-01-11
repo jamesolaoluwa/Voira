@@ -4,11 +4,13 @@ Handles authentication, sessions, admin checks, and transcription.
 """
 
 import logging
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+import json
+import asyncio
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from typing import List, Optional
-from auth import get_current_user, check_is_admin, security
+from auth import get_current_user, check_is_admin, security, get_user_from_websocket_token
 from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
     TranscribeResponse
@@ -23,6 +25,8 @@ from transcription import (
     FileTooLargeError,
     TranscriptionProviderError
 )
+from providers.deepgram_streaming import DeepgramStreamingProvider
+from providers.deepgram_webm import DeepgramWebmProvider
 from datetime import datetime
 
 # Configure logging
@@ -331,4 +335,282 @@ async def transcribe_audio_endpoint(
         duration=result.get("duration"),
         word_count=result.get("word_count")
     )
+
+
+@app.websocket("/ws/live-transcribe")
+async def websocket_live_transcribe(
+    websocket: WebSocket,
+    token: Optional[str] = Query(None, description="JWT authentication token"),
+    language: str = Query("en", description="Language code for transcription")
+):
+    """
+    WebSocket endpoint for live transcription streaming.
+    
+    Real-time speech-to-text: streams audio chunks from client, returns partial transcripts.
+    
+    Why WebSockets are required:
+    - Real-time streaming requires bidirectional communication
+    - HTTP/REST cannot push updates from server to client
+    - WebSockets enable continuous audio chunk streaming and partial transcript delivery
+    - Essential for live transcription where users see text appear as they speak
+    
+    Why live transcription is display-only for now:
+    - Live transcripts are provisional and may contain errors
+    - Final accurate transcript comes from POST /transcribe after recording completes
+    - Avoids duplicate credit charges (credits deducted only on final transcription)
+    - Keeps costs low during active recording sessions
+    - Users get immediate feedback without financial penalty
+    
+    Authentication:
+    - Token must be provided via query parameter: ?token=YOUR_JWT_TOKEN
+    - Example: ws://localhost:8000/ws/live-transcribe?token=xxx&language=en
+    
+    Protocol:
+    - Client sends binary audio chunks (bytes)
+    - Server sends JSON messages with transcript events:
+      {
+        "type": "partial" | "final" | "error",
+        "text": "transcribed text",
+        "confidence": 0.95,
+        "start_time": 0.0,
+        "end_time": 1.23
+      }
+    """
+    await websocket.accept()
+    
+    # Authenticate user
+    if not token:
+        await websocket.close(code=1008, reason="Missing authentication token")
+        return
+    
+    try:
+        user = await get_user_from_websocket_token(token)
+        logger.info(f"Live transcription session started for user {user['id']}")
+    except HTTPException as e:
+        await websocket.close(code=1008, reason="Authentication failed")
+        return
+    except Exception as e:
+        logger.error(f"WebSocket authentication error: {e}")
+        await websocket.close(code=1011, reason="Internal server error")
+        return
+    
+    # Initialize transcription provider
+    # Using Deepgram for now, but provider abstraction allows easy swapping
+    provider = DeepgramStreamingProvider()
+    
+    try:
+        # Start transcription stream
+        # Browser AudioContext typically uses 48000 Hz (or 44100 Hz on some browsers)
+        # Deepgram requires sample_rate to match the actual audio sample rate (no auto-resampling)
+        sample_rate = 48000  # Most modern browsers use 48000 Hz
+        stream = provider.start_stream(
+            language=language,
+            sample_rate=sample_rate,
+            channels=1,
+            encoding="linear16"
+        )
+        
+        # Task to forward transcript events to client
+        async def send_transcripts():
+            try:
+                async for event in stream:
+                    # Send transcript event as JSON to client
+                    await websocket.send_json(event)
+                    
+                    # Log for debugging (truncated to avoid log spam)
+                    if event.get("type") in ("partial", "final"):
+                        text_preview = event.get("text", "")[:50]
+                        logger.debug(f"Transcribed for user {user['id']}: {text_preview}...")
+                    
+                    # Stop on error or close event
+                    if event.get("type") == "error":
+                        logger.error(f"Transcription error: {event.get('message')}")
+                        break
+            except Exception as e:
+                logger.error(f"Error in transcript forwarding: {e}")
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Transcription stream error"
+                })
+        
+        send_task = asyncio.create_task(send_transcripts())
+        
+        # Main loop: receive audio chunks from client and forward to provider
+        try:
+            while True:
+                # Receive binary audio chunk from client
+                data = await websocket.receive_bytes()
+                
+                # Forward audio chunk to Deepgram
+                try:
+                    await provider.send_audio_chunk(data)
+                except RuntimeError as e:
+                    # Stream disconnected
+                    logger.warning(f"Stream disconnected: {e}")
+                    break
+                except Exception as e:
+                    logger.error(f"Error sending audio chunk: {e}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Failed to process audio chunk"
+                    })
+        
+        except WebSocketDisconnect:
+            logger.info(f"Client disconnected for user {user['id']}")
+        except Exception as e:
+            logger.error(f"WebSocket error for user {user['id']}: {e}")
+        finally:
+            # Cleanup: cancel send task and close provider
+            send_task.cancel()
+            try:
+                await send_task
+            except asyncio.CancelledError:
+                pass
+            
+            await provider.close()
+            logger.info(f"Live transcription session ended for user {user['id']}")
+    
+    except Exception as e:
+        logger.error(f"Error setting up live transcription: {e}")
+        error_msg = str(e)
+        # Never expose API keys in error messages
+        if settings.deepgram_api_key and settings.deepgram_api_key in error_msg:
+            error_msg = "Transcription service configuration error"
+        
+        await websocket.send_json({
+            "type": "error",
+            "message": f"Failed to start transcription: {error_msg}"
+        })
+        await websocket.close(code=1011, reason="Internal server error")
+
+
+@app.websocket("/ws/listen")
+async def websocket_listen(
+    websocket: WebSocket,
+    token: Optional[str] = Query(None, description="JWT authentication token")
+):
+    """
+    WebSocket endpoint for live transcription using MediaRecorder (audio/webm).
+    
+    Accepts binary audio chunks in WebM format from browser MediaRecorder,
+    forwards to Deepgram for transcription, and streams transcripts back.
+    
+    Configuration:
+    - model: nova-2
+    - language: en-US
+    - smart_format: true
+    - interim_results: true
+    
+    Authentication:
+    - Token must be provided via query parameter: ?token=YOUR_JWT_TOKEN
+    - Example: ws://localhost:8000/ws/listen?token=xxx
+    
+    Protocol:
+    - Client sends binary audio chunks (audio/webm)
+    - Server sends JSON messages with transcript events:
+      {
+        "type": "partial" | "final" | "error",
+        "text": "transcribed text",
+        "confidence": 0.95
+      }
+    """
+    await websocket.accept()
+    
+    # Authenticate user
+    if not token:
+        await websocket.close(code=1008, reason="Missing authentication token")
+        return
+    
+    try:
+        user = await get_user_from_websocket_token(token)
+        logger.info(f"Live transcription session started for user {user['id']}")
+    except HTTPException as e:
+        await websocket.close(code=1008, reason="Authentication failed")
+        return
+    except Exception as e:
+        logger.error(f"WebSocket authentication error: {e}")
+        await websocket.close(code=1011, reason="Internal server error")
+        return
+    
+    # Initialize Deepgram provider
+    provider = DeepgramWebmProvider()
+    
+    try:
+        # Connect to Deepgram first
+        await provider.connect()
+        
+        # Start transcription stream (WebM format, Deepgram auto-detects)
+        stream = provider.start_stream()
+        
+        # Task to forward transcript events to client
+        async def send_transcripts():
+            try:
+                async for event in stream:
+                    # Send transcript event as JSON to client
+                    await websocket.send_json(event)
+                    
+                    # Log for debugging
+                    if event.get("type") in ("partial", "final"):
+                        text_preview = event.get("text", "")[:50]
+                        logger.debug(f"Transcribed for user {user['id']}: {text_preview}...")
+                    
+                    # Stop on error or close event
+                    if event.get("type") == "error":
+                        logger.error(f"Transcription error: {event.get('message')}")
+                        break
+            except Exception as e:
+                logger.error(f"Error in transcript forwarding: {e}")
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Transcription stream error"
+                })
+        
+        send_task = asyncio.create_task(send_transcripts())
+        
+        # Main loop: receive audio chunks from client and forward to provider
+        try:
+            while True:
+                # Receive binary audio chunk (audio/webm) from client
+                data = await websocket.receive_bytes()
+                
+                # Relay binary audio bytes directly to Deepgram connection
+                try:
+                    await provider.send_audio_chunk(data)
+                except RuntimeError as e:
+                    logger.warning(f"Stream disconnected: {e}")
+                    break
+                except Exception as e:
+                    logger.error(f"Error sending audio chunk to Deepgram: {e}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Failed to process audio chunk"
+                    })
+        
+        except WebSocketDisconnect:
+            logger.info(f"Client disconnected for user {user['id']}")
+        except Exception as e:
+            logger.error(f"WebSocket error for user {user['id']}: {e}")
+        finally:
+            # Cleanup: cancel send task and close provider
+            send_task.cancel()
+            try:
+                await send_task
+            except asyncio.CancelledError:
+                pass
+            
+            await provider.close()
+            logger.info(f"Live transcription session ended for user {user['id']}")
+    
+    except Exception as e:
+        logger.error(f"Error setting up live transcription: {e}")
+        error_msg = str(e)
+        # Never expose API keys in error messages
+        if settings.deepgram_api_key and settings.deepgram_api_key in error_msg:
+            error_msg = "Transcription service configuration error"
+        
+        await websocket.send_json({
+            "type": "error",
+            "message": f"Failed to start transcription: {error_msg}"
+        })
+        await websocket.close(code=1011, reason="Internal server error")
 
