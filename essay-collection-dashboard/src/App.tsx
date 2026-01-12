@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from './lib/supabase';
 
 function App() {
   const [formData, setFormData] = useState({
@@ -7,7 +8,19 @@ function App() {
     source: ''
   });
   const [status, setStatus] = useState<'idle' | 'success' | 'error' | 'submitting'>('idle');
-  const [count, setCount] = useState(1243);
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const fetchCount = async () => {
+      const { count } = await supabase
+        .from('essays')
+        .select('*', { count: 'exact', head: true });
+      
+      if (count !== null) setCount(count);
+    };
+    
+    fetchCount();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,16 +29,34 @@ function App() {
     setStatus('submitting');
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      console.log('Submitting:', formData);
+      if (!formData.prompt || !formData.essay) {
+        throw new Error('Missing required fields');
+      }
+
+      console.log('Submitting to Supabase:', formData);
+
+      const { error } = await supabase
+        .from('essays')
+        .insert([
+          { 
+            prompt: formData.prompt, 
+            content: formData.essay, 
+            source: formData.source,
+            is_golden: true
+          }
+        ]);
+
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
       
       setStatus('success');
       setCount(c => c + 1);
       setFormData({ prompt: '', essay: '', source: '' });
       setTimeout(() => setStatus('idle'), 3000);
     } catch (err) {
-      console.error(err);
+      console.error('Submission failed:', err);
       setStatus('error');
     }
   };
@@ -130,25 +161,36 @@ function App() {
             )}
           </button>
 
-          {status === 'success' && (
-            <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-fade-in z-50">
-              <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              <span className="font-medium text-sm">Successfully archived essay</span>
-            </div>
-          )}
-          
-          {status === 'error' && (
-            <div className="p-4 rounded-lg bg-red-50 text-red-700 border border-red-200 flex items-center animate-fade-in font-mono text-sm">
-              <svg className="w-5 h-5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-              </svg>
-              Failed to save data. Check console.
-            </div>
-          )}
         </form>
       </div>
+
+      {status === 'success' && (
+        <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[100]">
+          <div className="bg-gray-900 text-white px-8 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-2 animate-fade-in min-w-[300px]">
+            <div className="rounded-full bg-green-500/20 p-2 mb-1">
+              <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <span className="font-bold text-lg">Success</span>
+            <span className="text-gray-400 text-sm font-mono">Essay archived to database</span>
+          </div>
+        </div>
+      )}
+      
+      {status === 'error' && (
+        <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[100]">
+          <div className="bg-gray-900 text-white px-8 py-4 rounded-2xl shadow-2xl flex flex-col items-center gap-2 animate-fade-in min-w-[300px]">
+            <div className="rounded-full bg-red-500/20 p-2 mb-1">
+              <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </div>
+            <span className="font-bold text-lg">Error</span>
+            <span className="text-gray-400 text-sm font-mono">Failed to save data</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
