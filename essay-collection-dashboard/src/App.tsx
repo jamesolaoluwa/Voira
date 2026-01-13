@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
+import { generateEmbedding, loadEmbeddingModel } from './lib/embeddings';
 
 function App() {
   const [formData, setFormData] = useState({
@@ -20,6 +21,8 @@ function App() {
     };
     
     fetchCount();
+    // Preload embedding model
+    loadEmbeddingModel().catch(err => console.error('Failed to load embedding model:', err));
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -33,7 +36,9 @@ function App() {
         throw new Error('Missing required fields');
       }
 
-      console.log('Submitting to Supabase:', formData);
+      console.log('Generating embedding...');
+      const embedding = await generateEmbedding(formData.essay);
+      console.log('Embedding generated, submitting to Supabase...');
 
       const { error } = await supabase
         .from('essays')
@@ -42,7 +47,8 @@ function App() {
             prompt: formData.prompt, 
             content: formData.essay, 
             source: formData.source,
-            is_golden: true
+            is_golden: true,
+            embedding: embedding
           }
         ]);
 

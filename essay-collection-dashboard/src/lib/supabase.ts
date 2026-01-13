@@ -21,4 +21,5 @@ export type Essay = {
   prompt: string;
   content: string;
   source: string;
+  embedding?: number[]; // Vector embedding for semantic search
 };
