@@ -54,25 +54,33 @@ WORD_LIMIT_REGEX = re.compile(
     r'(\b\d{2,4}\b)\s*(?:word|words)\b', re.IGNORECASE
 )
 
+# Minimum reasonable word limit (prevents broken outputs from accidental tiny limits)
+MIN_REASONABLE_WORD_LIMIT = 50
+
 
 def extract_word_limit(*texts) -> Optional[int]:
     """
     Extract word limit from user input (question, user_context, goal).
     Looks for patterns like "500 words", "1000 word", etc.
     
+    Extracts ALL word limits and returns the smallest (most conservative) value.
+    This handles cases like "500 words max, ideally closer to 300 words" correctly.
+    
     Args:
         *texts: Variable number of text strings to search
         
     Returns:
-        Word limit as integer if found, None otherwise
+        Smallest word limit as integer if found, None otherwise
     """
+    limits = []
     for text in texts:
         if not text:
             continue
-        match = WORD_LIMIT_REGEX.search(text)
-        if match:
-            return int(match.group(1))
-    return None
+        limits.extend(
+            int(match.group(1))
+            for match in WORD_LIMIT_REGEX.finditer(text)
+        )
+    return min(limits) if limits else None
 
 
 def estimate_tokens(text: str, model: str = "gpt-4o-mini") -> int:
@@ -609,6 +617,13 @@ async def refine_transcript(
         
         word_limit = extract_word_limit(question, user_context, goal)
         
+        # Clamp unreasonably low word limits to prevent broken outputs
+        if word_limit and word_limit < MIN_REASONABLE_WORD_LIMIT:
+            word_limit = MIN_REASONABLE_WORD_LIMIT
+        
+        # NOTE:
+        # max_tokens is dynamically derived to respect explicit word limits
+        # and prevent unnecessary token usage while staying under feature caps.
         if word_limit:
             max_tokens = min(
                 words_to_tokens(word_limit + 20),  # Small buffer (20 words)
