@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { removeLocalRecording, saveLocalRecording } from '@/lib/localRecordings';
+import { removeLocalRecording, saveLocalRecording, clearLocalRecordings } from '@/lib/localRecordings';
 import { toast } from '@/components/ui/use-toast';
 import useSessionStore from '@/stores/useSessionStore';
 import { getLocalRecordings } from '@/lib/localRecordings';
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { sessions as sessionsApi } from '@/components/services/api';
 import { 
   Search, 
   Filter, 
@@ -32,7 +33,8 @@ import {
   MessageSquare,
   ChevronRight,
   Trash2,
-  Loader2
+  Loader2,
+  Trash2 as TrashIcon
 } from 'lucide-react';
 
 const typeIcons = {
@@ -54,11 +56,12 @@ const filterOptions = ['All', 'Application', 'Interview', 'Free Speak'];
 export default function Library() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
+  const [isLoading, setIsLoading] = useState(true);
   const queryClient = useQueryClient();
   
   // Use unified session store as authoritative source
   const sessions = useSessionStore(state => state.sessions || []);
-  const isLoading = false; // store is synchronous
+  const setSessions = useSessionStore(state => state.setSessions);
   const safeRecordings = Array.isArray(sessions) ? sessions : [];
   
   const deleteMutation = useMutation({
@@ -77,6 +80,71 @@ export default function Library() {
   });
 
   const [deleteTarget, setDeleteTarget] = React.useState(null);
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = React.useState(false);
+  
+  // Fetch sessions on mount
+  useEffect(() => {
+    const fetchSessions = async () => {
+      try {
+        setIsLoading(true);
+        const fetchedSessions = await sessionsApi.listSessions();
+        
+        // Normalize backend session data to store format
+        const normalizedSessions = fetchedSessions.map(session => {
+          const transcript = session.transcript || '';
+          const durationSec = session.duration_seconds || 0;
+          // Calculate wordsCount from transcript (same logic as store's addSession)
+          const wordsCount = Math.max(0, Math.round((transcript.split(/\s+/) || []).filter(Boolean).length));
+          const wordsPerMinute = wordsCount && durationSec ? Math.round((wordsCount / (durationSec / 60))) : 0;
+          
+          return {
+            id: session.id,
+            title: session.title || '',
+            type: session.type || 'free',
+            question: session.question || '',
+            transcript: transcript,
+            durationSec: durationSec,
+            duration_seconds: durationSec,
+            wordsCount: wordsCount,
+            words_count: wordsCount,
+            confidenceScore: session.confidence_score || session.clarity_score || 0,
+            confidence_score: session.confidence_score || 0,
+            clarity_score: session.clarity_score || 0,
+            fillerCount: session.filler_count || 0,
+            filler_count: session.filler_count || 0,
+            wordsPerMinute: session.words_per_minute || wordsPerMinute || 0,
+            words_per_minute: session.words_per_minute || wordsPerMinute || 0,
+            createdAt: session.created_at || new Date().toISOString(),
+            created_at: session.created_at || new Date().toISOString(),
+            created_date: session.created_at || new Date().toISOString(),
+          };
+        });
+        
+        // Update store with fetched sessions from backend
+        // If backend returns empty array, that means user has no sessions (clear store)
+        // If backend returns sessions, update store with those sessions
+        setSessions(normalizedSessions);
+      } catch (error) {
+        console.error('Error fetching sessions:', error);
+        // Don't overwrite store on error - keep existing sessions in store
+        // Only show toast for network/CORS errors, not for auth errors (which are expected)
+        if (error.message?.includes('CORS') || error.message?.includes('Failed to fetch')) {
+          console.warn('Backend unavailable - using local sessions only');
+          // Don't show error toast if backend is just unavailable - user can still see local sessions
+        } else {
+          toast({
+            title: 'Failed to load sessions',
+            description: error.message || 'Could not load your sessions',
+            variant: 'destructive',
+          });
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchSessions();
+  }, [setSessions]);
   
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -98,6 +166,39 @@ export default function Library() {
                          (rec && typeLabels[rec.type] && typeLabels[rec.type].toLowerCase() === activeFilter.toLowerCase());
     return matchesSearch && matchesFilter;
   });
+  
+  const deleteAllMutation = useMutation({
+    mutationFn: () => sessionsApi.deleteAllSessions(),
+    onSuccess: () => {
+      // Clear store
+      setSessions([]);
+      // Clear localStorage
+      try { clearLocalRecordings(); } catch (e) {}
+      // Clear query cache
+      try {
+        queryClient.setQueryData(['recordings'], []);
+      } catch (e) {}
+      queryClient.invalidateQueries({ queryKey: ['recordings'] });
+      
+      toast({
+        title: 'All sessions deleted',
+        description: 'All your sessions have been permanently deleted.',
+      });
+      setShowDeleteAllDialog(false);
+    },
+    onError: (error) => {
+      console.error('Error deleting all sessions:', error);
+      toast({
+        title: 'Failed to delete sessions',
+        description: error.message || 'Could not delete all sessions',
+        variant: 'destructive',
+      });
+    },
+  });
+  
+  const handleDeleteAll = () => {
+    deleteAllMutation.mutate();
+  };
   
   // undo-capable delete: remove from store immediately and show undo toast
   const handleDelete = (id) => {
@@ -142,12 +243,37 @@ export default function Library() {
         animate={{ opacity: 1, y: 0 }}
         className="mb-8"
       >
-        <h1 className="text-3xl lg:text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
-          Library
-        </h1>
-        <p className="text-zinc-600 dark:text-zinc-500 text-lg">
-          Your collection of recordings and drafts
-        </p>
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h1 className="text-3xl lg:text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
+              Library
+            </h1>
+            <p className="text-zinc-600 dark:text-zinc-500 text-lg">
+              Your collection of recordings and drafts
+            </p>
+          </div>
+          {safeRecordings.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDeleteAllDialog(true)}
+              disabled={deleteAllMutation.isPending}
+              className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/20 border-rose-200 dark:border-rose-800"
+            >
+              {deleteAllMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <TrashIcon className="w-4 h-4 mr-2" />
+                  Delete All
+                </>
+              )}
+            </Button>
+          )}
+        </div>
       </motion.div>
       
       {/* Search and Filters */}
@@ -325,6 +451,38 @@ export default function Library() {
               deleteMutation.mutate(deleteTarget);
               setDeleteTarget(null);
             }} className="bg-rose-600">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      
+      {/* Delete All confirmation dialog */}
+      <AlertDialog open={showDeleteAllDialog} onOpenChange={(open) => { if (!open) setShowDeleteAllDialog(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all sessions</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete all {safeRecordings.length} session{safeRecordings.length !== 1 ? 's' : ''}? 
+              This action cannot be undone and all your recordings and drafts will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowDeleteAllDialog(false)} disabled={deleteAllMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteAll} 
+              disabled={deleteAllMutation.isPending}
+              className="bg-rose-600 hover:bg-rose-700"
+            >
+              {deleteAllMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete All'
+              )}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

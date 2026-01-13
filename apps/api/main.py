@@ -6,6 +6,7 @@ Handles authentication, sessions, admin checks, and transcription.
 import logging
 import json
 import asyncio
+import re
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
@@ -204,10 +205,26 @@ async def list_sessions(user: dict = Depends(get_current_user)):
     rate_limit_middleware(f"list_sessions:{user['id']}")
     
     # Query recordings (RLS ensures user only sees their own)
+    # Note: Supabase Python client v2 uses desc as keyword argument
     response = supabase.table("recordings").select("*").eq("user_id", user["id"]).order("created_at", desc=True).execute()
     
     sessions = []
     for rec in response.data:
+        # Parse datetime strings - handle both Z and +00:00 timezone formats
+        # Python 3.9 fromisoformat() doesn't handle microseconds with timezone offsets
+        def parse_datetime(dt_str):
+            if not dt_str:
+                return datetime.now()
+            # Normalize Z to +00:00
+            dt_str = dt_str.replace("Z", "+00:00")
+            # Try parsing as-is first
+            try:
+                return datetime.fromisoformat(dt_str)
+            except ValueError:
+                # If it fails, strip microseconds (format: 2026-01-11T03:51:05.87728+00:00 -> 2026-01-11T03:51:05+00:00)
+                dt_str_no_micro = re.sub(r'\.\d+(?=[+-])', '', dt_str)
+                return datetime.fromisoformat(dt_str_no_micro)
+        
         sessions.append(SessionResponse(
             id=rec["id"],
             user_id=rec["user_id"],
@@ -227,11 +244,30 @@ async def list_sessions(user: dict = Depends(get_current_user)):
             filler_count=rec.get("filler_count", 0),
             words_per_minute=rec.get("words_per_minute", 0),
             highlights=rec.get("highlights", []),
-            created_at=datetime.fromisoformat(rec["created_at"].replace("Z", "+00:00")),
-            updated_at=datetime.fromisoformat(rec["updated_at"].replace("Z", "+00:00")),
+            created_at=parse_datetime(rec["created_at"]),
+            updated_at=parse_datetime(rec["updated_at"]),
         ))
     
     return sessions
+
+
+@app.delete("/sessions")
+async def delete_all_sessions(user: dict = Depends(get_current_user)):
+    """
+    Delete all sessions for the current user.
+    Ownership enforced by RLS, but we also filter server-side for extra security.
+    """
+    # Rate limit by user ID
+    rate_limit_middleware(f"delete_all_sessions:{user['id']}")
+    
+    # Delete all recordings for the user (RLS ensures user can only delete their own)
+    response = supabase.table("recordings").delete().eq("user_id", user["id"]).execute()
+    
+    deleted_count = len(response.data) if response.data else 0
+    
+    logger.info(f"Deleted {deleted_count} sessions for user {user['id']}")
+    
+    return {"deleted_count": deleted_count, "message": f"Deleted {deleted_count} session(s)"}
 
 
 @app.post("/transcribe", response_model=TranscribeResponse)

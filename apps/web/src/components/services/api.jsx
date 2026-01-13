@@ -212,8 +212,13 @@ export const sessions = {
         user_id: session.user_id,
         title: session.title,
         type: session.type,
+        question: session.question || '',
+        transcript: session.transcript || '',
         duration_seconds: session.duration_seconds || 0,
+        confidence_score: session.confidence_score || 0,
         clarity_score: session.clarity_score || 0,
+        filler_count: session.filler_count || 0,
+        words_per_minute: session.words_per_minute || 0,
         tags: session.tags || [],
         created_at: session.created_at,
       }));
@@ -226,8 +231,13 @@ export const sessions = {
         user_id: recording.created_by,
         title: recording.title,
         type: recording.type,
+        question: recording.question || '',
+        transcript: recording.transcript || '',
         duration_seconds: recording.duration_seconds || 0,
+        confidence_score: recording.confidence_score || 0,
         clarity_score: recording.clarity_score || 0,
+        filler_count: recording.filler_count || 0,
+        words_per_minute: recording.words_per_minute || 0,
         tags: recording.tags || [],
         created_at: recording.created_date,
       }));
@@ -236,6 +246,23 @@ export const sessions = {
 
   async deleteSession(id) {
     await base44.entities.Recording.delete(id);
+  },
+
+  async deleteAllSessions() {
+    // Try backend first
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.delete('/sessions');
+    } catch (error) {
+      // Fallback to direct Supabase (delete all for current user)
+      console.warn('Backend DELETE /sessions failed, falling back to direct Supabase:', error);
+      const recordings = await base44.entities.Recording.list('-created_date');
+      // Delete all recordings one by one (Supabase doesn't have bulk delete via client)
+      for (const recording of recordings) {
+        await base44.entities.Recording.delete(recording.id);
+      }
+      return { deleted_count: recordings.length, message: `Deleted ${recordings.length} session(s)` };
+    }
   },
 
   async updateSession(id, patch) {
