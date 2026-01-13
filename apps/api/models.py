@@ -1,6 +1,6 @@
 """Pydantic models for request/response validation."""
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 
 
@@ -87,4 +87,59 @@ class TranscribeResponse(BaseModel):
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score (0-1)")
     duration: Optional[float] = Field(None, ge=0.0, description="Audio duration in seconds")
     word_count: Optional[int] = Field(None, ge=0, description="Number of words in transcript")
+
+
+# ============================================
+# LLM Refinement Models
+# ============================================
+
+class RefineRequest(BaseModel):
+    """Request model for transcript refinement."""
+    raw_transcript: str = Field(..., min_length=1, max_length=50000, description="Verbatim user speech (includes filler words)")
+    session_type: str = Field(default="free", pattern="^(free|application|interview|practice|refine)$", description="Type of session")
+    desired_tone: Optional[str] = Field(None, max_length=50, description="Desired tone (confident, concise, reflective, etc.)")
+    user_context: Optional[str] = Field(None, max_length=5000, description="Optional context from prompt input (company info, role details, etc.)")
+    reference_text: Optional[str] = Field(None, max_length=10000, description="Optional example text user likes or reference material")
+    reference_file_url: Optional[str] = Field(None, max_length=500, description="URL of uploaded reference file (for images, use Vision API)")
+    reference_file_type: Optional[str] = Field(None, max_length=100, description="MIME type of reference file (e.g., image/jpeg, application/pdf)")
+    question: Optional[str] = Field(None, max_length=1000, description="Optional question/prompt the user is responding to")
+    goal: Optional[str] = Field(None, max_length=500, description="Optional user's goal for the session")
+    company_name: Optional[str] = Field(None, max_length=100, description="Company name for interview responses (used for research when context is empty)")
+
+
+class RefineResponse(BaseModel):
+    """Response model for transcript refinement."""
+    refined_text: str = Field(..., description="Polished response")
+
+
+class AnalyzeRequest(BaseModel):
+    """Request model for transcript analysis and refinement."""
+    raw_transcript: str = Field(..., min_length=1, max_length=50000, description="Verbatim user speech (includes filler words)")
+    session_type: str = Field(default="free", pattern="^(free|application|interview|practice|refine)$", description="Type of session")
+    desired_tone: Optional[str] = Field(None, max_length=50, description="Desired tone (confident, concise, reflective, etc.)")
+    user_context: Optional[str] = Field(None, max_length=5000, description="Optional context from prompt input (company info, role details, etc.)")
+    reference_text: Optional[str] = Field(None, max_length=10000, description="Optional example text user likes or reference material")
+    reference_file_url: Optional[str] = Field(None, max_length=500, description="URL of uploaded reference file (for images, use Vision API)")
+    reference_file_type: Optional[str] = Field(None, max_length=100, description="MIME type of reference file (e.g., image/jpeg, application/pdf)")
+    question: Optional[str] = Field(None, max_length=1000, description="Optional question/prompt the user is responding to")
+    goal: Optional[str] = Field(None, max_length=500, description="Optional user's goal for the session")
+    company_name: Optional[str] = Field(None, max_length=100, description="Company name for interview responses (used for research when context is empty)")
+
+
+class AnalyzeResponse(BaseModel):
+    """Response model for transcript analysis and refinement."""
+    refined_text: str = Field(..., description="Polished response")
+    confidence_score: int = Field(..., ge=0, le=100, description="Confidence score (0-100)")
+    clarity_score: int = Field(..., ge=0, le=100, description="Clarity score (0-100)")
+    filler_word_count: int = Field(..., ge=0, description="Total number of filler words detected")
+    filler_word_frequency: float = Field(..., ge=0.0, description="Filler word frequency as percentage")
+    filler_word_breakdown: Dict[str, int] = Field(default_factory=dict, description="Breakdown of filler words by type")
+
+
+class FileUploadResponse(BaseModel):
+    """Response model for file upload."""
+    file_url: str = Field(..., description="URL of the uploaded file")
+    file_type: str = Field(..., description="MIME type of the uploaded file")
+    file_size: int = Field(..., ge=0, description="Size of the file in bytes")
+    extracted_text: Optional[str] = Field(None, description="Extracted text content (for non-image files)")
 

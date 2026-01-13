@@ -7,13 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
 import FileUpload from '@/components/ui/FileUpload';
 import RecordButton from '@/components/ui/RecordButton';
 import SessionNamingModal from '@/components/ui/SessionNamingModal';
 import CreditsDisplay from '@/components/ui/CreditsDisplay';
 import { Mic, Pause, Square, Clock, Type, ArrowLeft, Loader2 } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -55,8 +55,12 @@ export default function Speak() {
   // recordingState: 'idle' | 'recording' | 'processing' | 'finished' | 'error'
   const [showTranscription, setShowTranscription] = useState(true);
   const [showTimer, setShowTimer] = useState(true);
-  const [transcript, setTranscript] = useState('');
-  const [contextPrompt, setContextPrompt] = useState('');
+  const [rawTranscript, setRawTranscript] = useState(''); // Raw verbatim transcript (includes filler words, from WebSocket)
+  const [refinedTranscript, setRefinedTranscript] = useState(''); // LLM-refined transcript (generated only after Finish)
+  const [transcript, setTranscript] = useState(''); // Deprecated: kept for backward compatibility, will use rawTranscript
+  const [contextPrompt, setContextPrompt] = useState(''); // Interview question or application question
+  const [companyName, setCompanyName] = useState(''); // Company name for interviews (for research when context is empty)
+  const [companyContext, setCompanyContext] = useState(''); // Company/role context for interviews
   const [fillerCount, setFillerCount] = useState(0);
   const [confidenceLevel, setConfidenceLevel] = useState(0);
   const [sessionIntent, setSessionIntent] = useState('');
@@ -67,6 +71,8 @@ export default function Speak() {
   const [isSaving, setIsSaving] = useState(false);
   const [sessionData, setSessionData] = useState(null);
   const [uploadedFileUrl, setUploadedFileUrl] = useState(null);
+  const [uploadedFileType, setUploadedFileType] = useState(null); // MIME type of uploaded file
+  const [referenceText, setReferenceText] = useState(''); // Extracted text from reference file
   
   const intervalRef = useRef(null);
   const queryClient = useQueryClient();
@@ -118,6 +124,13 @@ export default function Speak() {
     };
   }, [audioIsRecording, audioIsPaused]);
 
+  // Update rawTranscript from audioLiveTranscript during recording
+  useEffect(() => {
+    if (audioIsRecording && audioLiveTranscript) {
+      setRawTranscript(audioLiveTranscript);
+    }
+  }, [audioLiveTranscript, audioIsRecording]);
+
   // Debug: Log liveTranscript updates for debugging
   useEffect(() => {
     if (audioIsRecording) {
@@ -135,10 +148,12 @@ export default function Speak() {
   // Start recording (credits will be decremented after a successful save)
     
       setDuration(0);
-      setTranscript('');
+      setRawTranscript(''); // Clear raw transcript (verbatim speech)
+      setRefinedTranscript(''); // Clear refined transcript (LLM output)
+      setTranscript(''); // Deprecated: kept for backward compatibility
       setFillerCount(0);
       setConfidenceLevel(0);
-      // liveTranscript is cleared by useAudioRecorder when starting a NEW recording
+      // audioLiveTranscript is cleared by useAudioRecorder when starting a NEW recording
       setRecordingState('recording');
       await audioStartRecording();
   };
@@ -160,6 +175,10 @@ export default function Speak() {
       // Stop and get final blob
       const finalBlob = await audioStopRecording();
 
+      // Freeze rawTranscript (verbatim speech from WebSocket)
+      // This is the raw transcript that includes filler words, false starts, etc.
+      const frozenRawTranscript = rawTranscript || audioLiveTranscript || '';
+      
       // Validate recording exists and duration
       if (!finalBlob || finalBlob.size === 0 || duration < 2) {
         // Show user-friendly error and bail out (non-blocking toast)
@@ -167,66 +186,91 @@ export default function Speak() {
         setIsGenerating(false);
         // Refund local decrement if we removed credits earlier
         setUserCredits(prev => prev + 0); // no-op if we didn't decrement
+        setRawTranscript('');
+        setRefinedTranscript('');
         setTranscript('');
         toast({ title: 'Recording too short', description: 'Please record at least 2 seconds.' });
         return;
       }
 
-  // Transcribe/upload the audio
+  // Transcribe/upload the audio (for backup/archival, but we use rawTranscript for refinement)
       const resp = await uploadAndTranscribe((partialTranscript) => {
-        setTranscript(partialTranscript);
+        setTranscript(partialTranscript); // Deprecated: kept for backward compatibility
       }, finalBlob);
-  // Use backend transcript from final transcription
-  const transcribedText = resp?.transcript || '';
+  // Use backend transcript from final transcription (for backup)
+  const transcribedText = resp?.transcript || frozenRawTranscript; // Fallback to rawTranscript if backend transcript is empty
       const audioUrl = resp?.file_url ?? null;
 
-      setTranscript(transcribedText);
+      setTranscript(transcribedText); // Deprecated: kept for backward compatibility
       setIsTranscribing(false);
       setIsGenerating(true);
       
-      // Calculate filler words
-      const fillerWords = ['um', 'uh', 'like', 'you know', 'basically', 'actually', 'literally'];
-      const detectedFillers = fillerWords.reduce((count, word) => {
-        const regex = new RegExp(`\\b${word}\\b`, 'gi');
-        return count + (transcribedText.match(regex) || []).length;
-      }, 0);
+      // Use frozen rawTranscript (verbatim speech) for analysis
+      const rawTextForAnalysis = frozenRawTranscript || transcribedText;
       
-      setFillerCount(detectedFillers);
+      // Call backend /analyze endpoint (combines analytics + LLM refinement)
+      const { apiClient } = await import('@/lib/apiClient');
       
-      // Generate AI analysis and refined draft
-      const analysisPrompt = `
-        Analyze this transcript and provide:
-        1. A confidence score (0-100) based on tone and word choice
-        2. A clarity score (0-100) based on structure and coherence
-        3. A refined version that removes fillers, improves clarity, and maintains the authentic voice
-        
-        Transcript: "${transcribedText}"
-        Context: ${contextPrompt || 'Free expression'}
-        Goal: ${sessionIntent || goalInput || 'Natural and clear'}
-        Type: ${typeLabels[type]}
-        
-        Return JSON with: { confidenceScore, clarityScore, refinedDraft }
-      `;
+      // Determine desired tone from user input
+      const desiredTone = sessionIntent || goalInput || 'natural';
+      // Normalize tone to common values
+      const toneMap = {
+        'confident': 'confident',
+        'concise': 'concise',
+        'reflective': 'reflective',
+        'natural': 'natural',
+        'clear': 'natural',
+      };
+      const normalizedTone = toneMap[desiredTone.toLowerCase()] || 'natural';
       
-      const analysis = await base44.integrations.Core.InvokeLLM({
-        prompt: analysisPrompt,
-        response_json_schema: {
-          type: 'object',
-          properties: {
-            confidenceScore: { type: 'number' },
-            clarityScore: { type: 'number' },
-            refinedDraft: { type: 'string' }
+      // For interviews, extract or use company name
+      let interviewCompanyName = undefined;
+      if (type === 'interview') {
+        // Use provided company name, or try to extract from question
+        if (companyName.trim()) {
+          interviewCompanyName = companyName.trim();
+        } else if (contextPrompt) {
+          // Try to extract company name from question (simple heuristic)
+          const questionLower = contextPrompt.toLowerCase();
+          // Look for patterns like "at [Company]", "for [Company]", "[Company] interview", etc.
+          const companyPatterns = [
+            /(?:at|for|with|from)\s+([A-Z][a-zA-Z0-9&\s]+?)(?:\s|,|\.|$)/,
+            /([A-Z][a-zA-Z0-9&\s]+?)\s+interview/,
+            /interview\s+(?:at|with)\s+([A-Z][a-zA-Z0-9&\s]+?)(?:\s|,|\.|$)/,
+          ];
+          for (const pattern of companyPatterns) {
+            const match = contextPrompt.match(pattern);
+            if (match && match[1] && match[1].trim().length > 2 && match[1].trim().length < 50) {
+              interviewCompanyName = match[1].trim();
+              break;
+            }
           }
         }
+      }
+      
+      const analysis = await apiClient.post('/analyze', {
+        raw_transcript: rawTextForAnalysis,
+        session_type: type, // Pass session type (free, application, interview, practice, refine)
+        desired_tone: normalizedTone,
+        user_context: type === 'interview' ? companyContext || undefined : contextPrompt || undefined, // Company/role context for interviews, question context for applications
+        reference_text: referenceText || undefined, // Extracted text content from reference file
+        reference_file_url: uploadedFileUrl || undefined, // URL of uploaded reference file (for Vision API)
+        reference_file_type: uploadedFileType || undefined, // MIME type of uploaded file (e.g., image/jpeg, application/pdf)
+        question: contextPrompt || undefined, // The interview/application question being answered
+        goal: sessionIntent || goalInput || undefined, // User's goal for the session (tone/style)
+        company_name: type === 'interview' ? interviewCompanyName : undefined, // Company name for research
       });
       
+      // Set refined transcript (LLM output)
+      setRefinedTranscript(analysis.refined_text || '');
+      
       setSessionData({
-        transcript: transcribedText,
+        transcript: frozenRawTranscript, // Raw verbatim transcript (includes filler words)
         audio_url: audioUrl,
-        refinedDraft: analysis.refinedDraft,
-        clarityScore: analysis.clarityScore,
-        confidenceScore: analysis.confidenceScore,
-        fillerCount: detectedFillers,
+        refinedDraft: analysis.refined_text,
+        clarityScore: analysis.clarity_score,
+        confidenceScore: analysis.confidence_score,
+        fillerCount: analysis.filler_word_count,
         question: contextPrompt,
         type,
       });
@@ -240,10 +284,11 @@ export default function Speak() {
       setIsGenerating(false);
       setRecordingState('error');
 
-      // Use final transcript only (liveTranscript is cleared after recording stops)
+      // On error: use frozen rawTranscript (or fallback to transcript)
+      const frozenRawTranscript = rawTranscript || transcript || '';
       setSessionData({
-        transcript: transcript || '',
-        refinedDraft: transcript || '',
+        transcript: frozenRawTranscript,
+        refinedDraft: '', // No refinement on error
         clarityScore: 75,
         confidenceScore: 70,
         fillerCount: 0,
@@ -444,12 +489,50 @@ export default function Speak() {
                   : 'Voira will refine your answer while keeping your authentic voice.'}
               </p>
             </div>
+            
+            {/* Company Name - Only for interviews */}
+            {type === 'interview' && (
+              <div>
+                <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">
+                  Company Name (Optional)
+                </Label>
+                <Input
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="e.g., Google, Microsoft, Apple..."
+                  className="bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 h-12"
+                />
+                <p className="text-xs text-zinc-600 dark:text-zinc-500 mt-2">
+                  If provided, Voira will research the company's culture, values, and hiring practices to tailor your response.
+                </p>
+              </div>
+            )}
+            
+            {/* Company/Role Context - Only for interviews */}
+            {type === 'interview' && (
+              <div>
+                <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">
+                  Company & Role Context (Optional)
+                </Label>
+                <Textarea
+                  value={companyContext}
+                  onChange={(e) => setCompanyContext(e.target.value)}
+                  placeholder="e.g., Role: Software Engineer, Values: Innovation, Collaboration, User-focused... (Leave empty to let Voira research the company)"
+                  className="bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 min-h-[100px]"
+                />
+                <p className="text-xs text-zinc-600 dark:text-zinc-500 mt-2">
+                  {companyContext ? 
+                    'Voira will use your provided context to align your response.' : 
+                    'Leave empty and Voira will research the company\'s culture, values, mission, recent initiatives, and hiring practices to tailor your response authentically.'}
+                </p>
+              </div>
+            )}
           </div>
         </motion.div>
       )}
 
       {/* Advanced Goal Definition */}
-      {!audioIsRecording && !sessionIntent && (
+      {!audioIsRecording && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -472,15 +555,62 @@ export default function Speak() {
 
             {/* Style Reference Upload */}
             <FileUpload
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif"
+              label="Upload Reference Material (Optional)"
+              helperText="Upload a PDF, Word document, or image that demonstrates the style you want. Voira will learn the tone and structure — not copy the content."
               onFileSelect={async (file) => {
+                if (!file) {
+                  setUploadedFileUrl(null);
+                  setUploadedFileType(null);
+                  setReferenceText('');
+                  return;
+                }
+                
                 try {
+                  setIsGenerating(true);
+                  const { base44 } = await import('@/api/base44Client');
+                  
+                  // Store file type
+                  setUploadedFileType(file.type);
+                  
+                  // Upload file
                   const { file_url } = await base44.integrations.Core.UploadFile({ file });
                   setUploadedFileUrl(file_url);
+                  
+                  // Extract text content from file for reference (only for non-image files)
+                  // Images will be analyzed via Vision API
+                  const isImage = file.type.startsWith('image/');
+                  
+                  if (!isImage) {
+                    try {
+                      const extraction = await base44.integrations.Core.ExtractDataFromUploadedFile({
+                        file_url,
+                        json_schema: {
+                          type: 'object',
+                          properties: {
+                            content: { type: 'string' }
+                          }
+                        }
+                      });
+                      
+                      if (extraction.status === 'success' && extraction.output?.content) {
+                        setReferenceText(extraction.output.content);
+                      }
+                    } catch (extractError) {
+                      console.warn('Error extracting text from reference file:', extractError);
+                      // Continue without extracted text - URL is still saved for Vision API
+                    }
+                  } else {
+                    // For images, clear any previous text (will use Vision API)
+                    setReferenceText('');
+                  }
                 } catch (error) {
                   console.error('Error uploading file:', error);
+                  toast({ title: 'Upload failed', description: 'Could not upload reference file', duration: 3000 });
+                } finally {
+                  setIsGenerating(false);
                 }
               }}
-              accept=".pdf,.doc,.docx,.txt"
             />
           </div>
         </motion.div>
@@ -609,9 +739,10 @@ export default function Speak() {
         </motion.div>
         
   {/* Live Transcription - Only show when recording is active and enabled */}
+  {/* Shows rawTranscript (verbatim speech, includes filler words) */}
   {showTranscription && audioIsRecording && (
     <LiveTranscription 
-      transcript={audioLiveTranscript || ''}
+      transcript={rawTranscript || ''}
     />
   )}
       </div>

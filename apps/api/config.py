@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Deepgram API key for transcription
     deepgram_api_key: Optional[str] = None
     
+    # OpenAI API key for LLM refinement
+    openai_api_key: Optional[str] = None
+    
     # Environment (development, staging, production)
     # Reads from ENV environment variable, defaults to "development"
     env: str = "development"

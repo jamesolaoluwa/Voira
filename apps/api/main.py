@@ -7,6 +7,8 @@ import logging
 import json
 import asyncio
 import re
+import os
+import uuid
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
@@ -14,7 +16,8 @@ from typing import List, Optional
 from auth import get_current_user, check_is_admin, security, get_user_from_websocket_token
 from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
-    TranscribeResponse
+    TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
+    FileUploadResponse
 )
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
 from rate_limit import rate_limit_middleware
@@ -29,6 +32,7 @@ from transcription import (
 from providers.deepgram_streaming import DeepgramStreamingProvider
 from providers.deepgram_webm import DeepgramWebmProvider
 from datetime import datetime
+from llm_refinement import refine_transcript, analyze_and_refine
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +52,15 @@ async def startup_validation():
     This ensures the app fails fast with clear errors if configuration is missing.
     NEVER log or print secret values (keys, tokens, etc.)
     """
+    # Warn if OpenAI API key is missing (non-blocking, as it's only needed for LLM features)
+    if not settings.openai_api_key:
+        logger.warning("OPENAI_API_KEY not set. LLM refinement features will not work. Set OPENAI_API_KEY in .env file.")
+    elif not settings.openai_api_key.strip():
+        logger.warning("OPENAI_API_KEY is empty. LLM refinement features will not work.")
+    else:
+        # Check if key looks valid (starts with 'sk-')
+        if not settings.openai_api_key.startswith('sk-'):
+            logger.warning("OPENAI_API_KEY does not appear to be in the correct format (should start with 'sk-'). Please verify your API key.")
     missing_vars = []
     
     # Check required Supabase configuration
@@ -650,3 +663,219 @@ async def websocket_listen(
         })
         await websocket.close(code=1011, reason="Internal server error")
 
+
+# ============================================
+# LLM Refinement Endpoints
+# ============================================
+
+@app.post("/refine", response_model=RefineResponse)
+async def refine_draft(
+    request: RefineRequest,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Refine a raw transcript into a polished response.
+    
+    This endpoint uses OpenAI to refine verbatim speech while preserving
+    the user's authentic voice and meaning. Uses context-aware prompts
+    based on session type and voice profile.
+    """
+    # Rate limit by user ID
+    rate_limit_middleware(f"refine:{user['id']}")
+    
+    try:
+        refined_text = await refine_transcript(
+            raw_transcript=request.raw_transcript,
+            session_type=request.session_type,
+            desired_tone=request.desired_tone,
+            user_context=request.user_context,
+            reference_text=request.reference_text,
+            reference_file_url=request.reference_file_url,
+            reference_file_type=request.reference_file_type,
+            question=request.question,
+            goal=request.goal,
+            user_id=user['id'],
+            company_name=request.company_name
+        )
+        
+        return RefineResponse(refined_text=refined_text)
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error refining transcript for user {user['id']}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to refine transcript: {str(e)}")
+
+
+@app.post("/analyze", response_model=AnalyzeResponse)
+async def analyze_transcript_endpoint(
+    request: AnalyzeRequest,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Analyze a raw transcript and generate a refined version.
+    
+    This endpoint:
+    1. Runs deterministic analytics (filler words, confidence, clarity)
+    2. Uses OpenAI to refine the transcript with context-aware prompts
+    
+    Uses voice profile data and session type to generate personalized,
+    context-aware refinements. Returns both analytics and refined text.
+    """
+    # Rate limit by user ID
+    rate_limit_middleware(f"analyze:{user['id']}")
+    
+    try:
+        result = await analyze_and_refine(
+            raw_transcript=request.raw_transcript,
+            session_type=request.session_type,
+            desired_tone=request.desired_tone,
+            user_context=request.user_context,
+            reference_text=request.reference_text,
+            reference_file_url=request.reference_file_url,
+            reference_file_type=request.reference_file_type,
+            question=request.question,
+            goal=request.goal,
+            user_id=user['id'],
+            company_name=request.company_name
+        )
+        
+        return AnalyzeResponse(
+            refined_text=result["refined_text"],
+            confidence_score=result["confidence_score"],
+            clarity_score=result["clarity_score"],
+            filler_word_count=result["filler_word_count"],
+            filler_word_frequency=result["filler_word_frequency"],
+            filler_word_breakdown=result["filler_word_breakdown"],
+        )
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error analyzing transcript for user {user['id']}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze transcript: {str(e)}")
+
+
+# ============================================
+# File Upload Endpoint
+# ============================================
+
+# Allowed file types for reference materials
+ALLOWED_REFERENCE_TYPES = {
+    # Documents
+    "application/pdf": [".pdf"],
+    "application/msword": [".doc"],
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+    # Images
+    "image/jpeg": [".jpg", ".jpeg"],
+    "image/png": [".png"],
+    "image/gif": [".gif"],
+    "image/webp": [".webp"],
+    "image/bmp": [".bmp"],
+    "image/tiff": [".tiff", ".tif"],
+}
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+def validate_file_type(content_type: str, filename: str) -> bool:
+    """Validate that the file type is allowed."""
+    if not content_type:
+        # Try to infer from filename
+        ext = os.path.splitext(filename)[1].lower()
+        return any(ext in exts for exts in ALLOWED_REFERENCE_TYPES.values())
+    
+    return content_type in ALLOWED_REFERENCE_TYPES
+
+
+@app.post("/upload-reference", response_model=FileUploadResponse)
+async def upload_reference_file(
+    file: UploadFile = File(..., description="Reference file to upload (PDF, Word doc, or image)"),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Upload a reference file (PDF, Word document, or image) for use in transcript refinement.
+    
+    Validates file type and size, uploads to Supabase Storage, and optionally extracts text.
+    Returns file URL and metadata.
+    """
+    rate_limit_middleware(f"upload_reference:{user['id']}")
+    
+    # Validate file type
+    if not validate_file_type(file.content_type, file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type not allowed. Supported types: PDF, Word documents (.doc, .docx), and images (JPEG, PNG, GIF, WebP, BMP, TIFF)"
+        )
+    
+    # Read file content
+    try:
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        # Validate file size
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024 * 1024):.0f}MB"
+            )
+        
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="File is empty")
+        
+    except Exception as e:
+        logger.error(f"Error reading file: {e}")
+        raise HTTPException(status_code=400, detail="Error reading file")
+    
+    try:
+        # Generate unique filename
+        file_ext = os.path.splitext(file.filename)[1]
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        storage_path = f"reference-files/{user['id']}/{unique_filename}"
+        
+        # Upload to Supabase Storage
+        # Using the 'reference-files' bucket (create it in Supabase if it doesn't exist)
+        storage_response = supabase.storage.from_("reference-files").upload(
+            storage_path,
+            file_content,
+            file_options={
+                "content-type": file.content_type or "application/octet-stream",
+                "upsert": False  # Don't overwrite existing files
+            }
+        )
+        
+        if not storage_response or "error" in str(storage_response):
+            logger.error(f"Supabase storage upload failed: {storage_response}")
+            raise HTTPException(status_code=500, detail="Failed to upload file to storage")
+        
+        # Get public URL
+        public_url_response = supabase.storage.from_("reference-files").get_public_url(storage_path)
+        file_url = public_url_response if isinstance(public_url_response, str) else public_url_response.get("publicUrl", "")
+        
+        if not file_url:
+            # Fallback: construct URL manually
+            supabase_url = settings.supabase_url.rstrip('/')
+            file_url = f"{supabase_url}/storage/v1/object/public/reference-files/{storage_path}"
+        
+        # Extract text for non-image files (optional, can be done async)
+        extracted_text = None
+        if file.content_type and not file.content_type.startswith('image/'):
+            # For PDF/Word docs, we could extract text here
+            # For now, we'll return None and let the frontend handle extraction if needed
+            # Or we could use a library like PyPDF2, python-docx, etc.
+            pass
+        
+        logger.info(f"File uploaded successfully: {storage_path} by user {user['id']}")
+        
+        return FileUploadResponse(
+            file_url=file_url,
+            file_type=file.content_type or "application/octet-stream",
+            file_size=file_size,
+            extracted_text=extracted_text
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error during file upload")

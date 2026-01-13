@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
@@ -24,6 +24,8 @@ export default function RefineDraft() {
   const [question, setQuestion] = useState('');
   const [existingDraft, setExistingDraft] = useState('');
   const [uploadedFile, setUploadedFile] = useState(null);
+  const [uploadedFileUrl, setUploadedFileUrl] = useState(null);
+  const [uploadedFileType, setUploadedFileType] = useState(null);
   const [voiceNotes, setVoiceNotes] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   
@@ -31,34 +33,62 @@ export default function RefineDraft() {
     isRecording,
     isPaused,
     amplitude,
+    liveTranscript, // Live transcript from WebSocket
     startRecording,
     pauseRecording,
     resumeRecording,
     stopRecording,
     uploadAndTranscribe,
   } = useAudioRecorder();
+  
+  // Update voice notes from live transcript
+  useEffect(() => {
+    if (isRecording && liveTranscript) {
+      setVoiceNotes(liveTranscript);
+    }
+  }, [isRecording, liveTranscript]);
 
   const handleFileSelect = async (file) => {
+    if (!file) {
+      setUploadedFile(null);
+      setUploadedFileUrl(null);
+      setUploadedFileType(null);
+      setExistingDraft('');
+      return;
+    }
+    
     setUploadedFile(file);
     setIsProcessing(true);
     
     try {
+      // Store file type
+      setUploadedFileType(file.type);
+      
       // Upload file
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setUploadedFileUrl(file_url);
       
-      // Extract text from file
-      const extraction = await base44.integrations.Core.ExtractDataFromUploadedFile({
-        file_url,
-        json_schema: {
-          type: 'object',
-          properties: {
-            content: { type: 'string' }
+      // Extract text from file (only for non-image files)
+      // Images will be analyzed via Vision API
+      const isImage = file.type.startsWith('image/');
+      
+      if (!isImage) {
+        const extraction = await base44.integrations.Core.ExtractDataFromUploadedFile({
+          file_url,
+          json_schema: {
+            type: 'object',
+            properties: {
+              content: { type: 'string' }
+            }
           }
+        });
+        
+        if (extraction.status === 'success') {
+          setExistingDraft(extraction.output.content);
         }
-      });
-      
-      if (extraction.status === 'success') {
-        setExistingDraft(extraction.output.content);
+      } else {
+        // For images, clear draft (will use Vision API for analysis)
+        setExistingDraft('');
       }
     } catch (error) {
       console.error('Error processing file:', error);
@@ -68,21 +98,14 @@ export default function RefineDraft() {
   };
 
   const handleStartRecording = async () => {
+    setVoiceNotes(''); // Clear previous voice notes
     await startRecording();
   };
 
   const handleStopRecording = async () => {
     stopRecording();
-    setIsProcessing(true);
-    
-    try {
-      const transcribedNotes = await uploadAndTranscribe();
-      setVoiceNotes(transcribedNotes);
-    } catch (error) {
-      console.error('Error transcribing:', error);
-    } finally {
-      setIsProcessing(false);
-    }
+    // Voice notes are already updated from liveTranscript via useEffect
+    // No need to call uploadAndTranscribe - live transcript is sufficient
   };
 
   const handleRefine = async () => {
@@ -94,66 +117,63 @@ export default function RefineDraft() {
     setIsProcessing(true);
     
     try {
-      const refinementPrompt = `
-        Refine the following draft based on the user's instructions:
-        
-        Question/Context: ${question || 'General refinement'}
-        
-        Existing Draft:
-        ${existingDraft}
-        
-        User's Voice Instructions:
-        ${voiceNotes || 'Make it clearer and more compelling'}
-        
-        Provide a refined version that:
-        1. Maintains the original voice and authenticity
-        2. Incorporates the requested changes
-        3. Improves clarity and impact
-        4. Keeps the core message intact
-        
-        Return JSON with: { refinedDraft, changesSummary }
-      `;
+      // Call backend /refine endpoint
+      const { apiClient } = await import('@/lib/apiClient');
       
-      const result = await base44.integrations.Core.InvokeLLM({
-        prompt: refinementPrompt,
-        response_json_schema: {
-          type: 'object',
-          properties: {
-            refinedDraft: { type: 'string' },
-            changesSummary: { type: 'string' }
-          }
-        }
+      // Build user context from question and voice notes
+      const userContext = [
+        question ? `Question/Context: ${question}` : null,
+        voiceNotes ? `User's Voice Instructions: ${voiceNotes}` : null,
+      ].filter(Boolean).join('\n\n') || undefined;
+      
+      const result = await apiClient.post('/refine', {
+        raw_transcript: existingDraft,
+        session_type: 'refine', // Mark as refine draft session
+        desired_tone: 'natural',
+        user_context: userContext, // Contains question and voice instructions
+        reference_text: undefined, // Could add reference text support later
+        reference_file_url: uploadedFileUrl || undefined,
+        reference_file_type: uploadedFileType || undefined,
+        question: question || undefined,
+        goal: voiceNotes || undefined, // User's voice instructions are the goal
       });
+      
+      // Transform response to match expected format
+      const refinedResult = {
+        refinedDraft: result.refined_text,
+        changesSummary: 'Draft refined to improve clarity and flow while maintaining your authentic voice.',
+      };
       
       // If an existing session id is provided (overwrite), update; otherwise create
       const urlParams = new URLSearchParams(window.location.search);
       const recordingId = urlParams.get('id') || location.state?.sessionData?.id;
+      const { sessions: sessionsApi } = await import('@/components/services/api');
       let recording;
       if (recordingId) {
         // update existing
-        await base44.entities.Recording.update(recordingId, {
+        await sessionsApi.updateSession(recordingId, {
           transcript: voiceNotes || 'Direct refinement',
-          refined_draft: result.refinedDraft,
+          refined_draft: refinedResult.refinedDraft,
         });
         recording = { id: recordingId };
         // optimistic cache update
           try {
           queryClient.setQueryData(['recordings'], (old = []) => {
-            return (old || []).map(r => r.id === recordingId ? { ...r, transcript: voiceNotes || r.transcript, refined_draft: result.refinedDraft } : r);
+            return (old || []).map(r => r.id === recordingId ? { ...r, transcript: voiceNotes || r.transcript, refined_draft: refinedResult.refinedDraft } : r);
           });
           // persist locally as fallback (normalized fields)
-          try { saveLocalRecording({ id: recordingId, title: 'Refined Draft', transcript: voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: new Date().toISOString() }); } catch (e) {}
+          try { saveLocalRecording({ id: recordingId, title: 'Refined Draft', transcript: voiceNotes || '', refined_draft: refinedResult.refinedDraft, type: 'refine', createdAt: new Date().toISOString() }); } catch (e) {}
         } catch (e) { try { queryClient.invalidateQueries({ queryKey: ['recordings'] }); } catch (ex) {} }
         } else {
         // create new
-        recording = await base44.entities.Recording.create({
+        recording = await sessionsApi.createSessionDraft({
           title: 'Refined Draft',
           transcript: voiceNotes || 'Direct refinement',
-          refined_draft: result.refinedDraft,
+          refined_draft: refinedResult.refinedDraft,
           type: 'refine',
           question,
         });
-  try { saveLocalRecording({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', transcript: recording.transcript || voiceNotes || '', refined_draft: result.refinedDraft, type: 'refine', createdAt: recording.created_date || new Date().toISOString() }); } catch (e) {}
+  try { saveLocalRecording({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', transcript: recording.transcript || voiceNotes || '', refined_draft: refinedResult.refinedDraft, type: 'refine', createdAt: recording.created_date || new Date().toISOString() }); } catch (e) {}
   try { useSessionStore.getState().addSession({ id: recording.id || `local-${Date.now()}`, title: recording.title || 'Refined Draft', createdAt: recording.created_date || new Date().toISOString(), type: 'refine', question, transcript: recording.transcript || voiceNotes || '', durationSec: 0, wordsCount: (voiceNotes || '').split(/\s+/).filter(Boolean).length, confidenceScore: 0, fillerCount: 0, wordsPerMinute: 0 }); } catch (e) {}
       }
 
@@ -164,7 +184,7 @@ export default function RefineDraft() {
             id: recording.id,
             title: 'Refined Draft',
             transcript: voiceNotes,
-            refinedDraft: result.refinedDraft,
+            refinedDraft: refinedResult.refinedDraft,
             type: 'refine',
             question,
           }
@@ -234,13 +254,13 @@ export default function RefineDraft() {
           {/* File Upload */}
           <div>
             <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">
-              Upload File (PDF, Word, or Text)
+              Upload File (PDF, Word, or Image)
             </Label>
             <FileUpload
               onFileSelect={handleFileSelect}
-              accept=".pdf,.doc,.docx,.txt"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif"
               label="Drop your draft here or click to upload"
-              helperText="Voira will extract the content and help you refine it"
+              helperText="Voira will extract the content from PDF, Word documents, or images and help you refine it"
             />
           </div>
 
