@@ -4,14 +4,152 @@ Handles transcript refinement with proper prompt engineering, voice profile inte
 and context-aware prompts for different session types.
 """
 import logging
+import os
 import re
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Callable
 from openai import OpenAI
 import tiktoken
 from config import settings
 from db import supabase
 
 logger = logging.getLogger(__name__)
+
+# ============================================
+# Prompt Block Caching (In-Memory, Per-Process)
+# ============================================
+
+# In-memory cache for prompt blocks (per-process, safe to clear on restart)
+_PROMPT_BLOCK_CACHE: dict[str, str] = {}
+
+# Feature flag for prompt caching (enabled only in DEV)
+ENABLE_PROMPT_CACHING = os.getenv("ENV", "prod") == "dev"
+
+# Redis feature flag (opt-in, disabled by default)
+ENABLE_REDIS_PROMPT_CACHE = os.getenv("ENABLE_REDIS_PROMPT_CACHE") == "true"
+
+# NOTE:
+# TTL exists for memory safety and automatic cleanup.
+# Prompt correctness relies on versioned cache keys, not TTL expiry.
+# Redis cache TTL (1 hour)
+REDIS_PROMPT_CACHE_TTL_SECONDS = 60 * 60
+
+# Maximum cache size (soft limit - clears cache when exceeded, in-memory only)
+MAX_PROMPT_CACHE_SIZE = 128
+
+# Cache metrics (in-memory counters for observability)
+_PROMPT_CACHE_METRICS = {
+    "hits": 0,
+    "misses": 0,
+    "sets": 0,
+    "redis_bypass": 0,
+}
+
+# Redis client (initialized lazily if Redis is enabled)
+redis_client = None
+
+if ENABLE_REDIS_PROMPT_CACHE:
+    try:
+        import redis
+        # decode_responses=True ensures cached prompt blocks are returned as strings,
+        # preventing downstream prompt assembly errors.
+        redis_client = redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+    except ImportError:
+        logger.warning("Redis module not available. Install redis>=5.0.0 to use Redis caching.")
+        redis_client = None
+    except Exception as e:
+        logger.warning(f"Failed to initialize Redis client: {e}. Falling back to in-memory cache.")
+        redis_client = None
+
+
+def get_or_cache_block(cache_key: str, builder: Callable[[], str]) -> str:
+    """
+    Get a prompt block from cache or build it if not cached.
+    
+    Cache priority:
+    Redis (shared, persistent) → In-memory (process-local) → Build fresh
+    
+    Args:
+        cache_key: Unique cache key for the prompt block
+        builder: Callable that builds the prompt block if not cached
+    
+    Returns:
+        Cached or newly built prompt block
+    """
+    if not ENABLE_PROMPT_CACHING:
+        return builder()
+    
+    # Try Redis cache first (if enabled)
+    if ENABLE_REDIS_PROMPT_CACHE:
+        if not redis_client:
+            # Redis enabled but client unavailable - track bypass and fall back
+            _PROMPT_CACHE_METRICS["redis_bypass"] += 1
+        else:
+            try:
+                cached = redis_client.get(cache_key)
+                if cached:
+                    _PROMPT_CACHE_METRICS["hits"] += 1
+                    return cached
+                
+                _PROMPT_CACHE_METRICS["misses"] += 1
+                value = builder()
+                redis_client.setex(
+                    cache_key,
+                    REDIS_PROMPT_CACHE_TTL_SECONDS,
+                    value,
+                )
+                _PROMPT_CACHE_METRICS["sets"] += 1
+                return value
+            except Exception as e:
+                logger.warning(f"Redis cache error (falling back to in-memory): {e}")
+                # Redis error - track bypass and fall through to in-memory cache
+                _PROMPT_CACHE_METRICS["redis_bypass"] += 1
+    
+    # Fallback: in-memory cache
+    if cache_key in _PROMPT_BLOCK_CACHE:
+        _PROMPT_CACHE_METRICS["hits"] += 1
+        return _PROMPT_BLOCK_CACHE[cache_key]
+    
+    _PROMPT_CACHE_METRICS["misses"] += 1
+    value = builder()
+    
+    # NOTE:
+    # Cache is cleared entirely when max size is reached to keep behavior
+    # deterministic and avoid partial-eviction bugs in early-phase caching.
+    if len(_PROMPT_BLOCK_CACHE) >= MAX_PROMPT_CACHE_SIZE:
+        _PROMPT_BLOCK_CACHE.clear()
+    
+    _PROMPT_BLOCK_CACHE[cache_key] = value
+    _PROMPT_CACHE_METRICS["sets"] += 1
+    return value
+
+
+def get_prompt_cache_metrics() -> dict:
+    """
+    Get current prompt cache metrics (dev use only).
+    
+    Returns:
+        Dictionary with cache metrics:
+        {
+            "enabled": bool,
+            "entries": int,
+            "hits": int,
+            "misses": int,
+            "sets": int,
+        }
+    """
+    return {
+        "enabled": ENABLE_PROMPT_CACHING,
+        "entries": len(_PROMPT_BLOCK_CACHE),
+        **_PROMPT_CACHE_METRICS,
+    }
+
+
+# ============================================
+# Prompt Configuration
+# ============================================
 
 # Feature-specific output caps (tokens)
 OUTPUT_CAPS = {
@@ -25,6 +163,7 @@ OUTPUT_CAPS = {
 # Maximum input tokens (safe margin below model limit)
 MAX_INPUT_TOKENS = 120_000  # GPT-4o-mini context limit is 128k
 
+# Cache key: sys_base:v1
 # Base system prompt for refinement (optimized for token efficiency)
 BASE_SYSTEM_PROMPT = """You are an expert writing coach refining spoken or draft content into polished, submission-ready writing.
 
@@ -132,24 +271,24 @@ def get_voice_profile(user_id: str) -> Optional[Dict]:
         return None
 
 
-def build_context_specific_system_prompt(
-    session_type: str,
-    voice_profile: Optional[Dict] = None
-) -> str:
+def build_session_context_prompt(session_type: str) -> str:
     """
-    Build context-specific system prompt based on session type.
+    Build session-specific context prompt block.
     
     Args:
         session_type: Type of session (free, application, interview, practice, refine)
-        voice_profile: Optional voice profile data
     
     Returns:
-        Context-specific system prompt
-    """
-    base = BASE_SYSTEM_PROMPT
+        Session context prompt block
     
+    Note:
+        Cache key: sys_ctx:{session_type}:{variant}:v1
+        Where variant indicates prompt variant (e.g., 'default', 'with_context', 'with_research')
+        Currently all variants use the same prompt block, but this may change in the future.
+    """
+    # Cache key: sys_ctx:{session_type}:default:v1
     if session_type == "interview":
-        context_prompt = """
+        return """
 ADDITIONAL CONTEXT FOR INTERVIEW RESPONSES:
 - You are refining responses for behavioral interviews
 - Consider the company culture, values, and role requirements provided by the user
@@ -160,7 +299,7 @@ ADDITIONAL CONTEXT FOR INTERVIEW RESPONSES:
 """
     
     elif session_type == "application":
-        context_prompt = """
+        return """
 ADDITIONAL CONTEXT FOR APPLICATION ESSAYS:
 - You are refining application essays (college admissions, scholarships, etc.)
 - Reference award-winning, non-AI written essays as style guides (maintain authentic voice, avoid generic phrasing)
@@ -172,7 +311,7 @@ ADDITIONAL CONTEXT FOR APPLICATION ESSAYS:
 """
     
     elif session_type == "practice":
-        context_prompt = """
+        return """
 ADDITIONAL CONTEXT FOR PRACTICE MODE:
 - You are refining practice responses for skill development
 - Provide clear, actionable feedback while maintaining the user's voice
@@ -182,7 +321,7 @@ ADDITIONAL CONTEXT FOR PRACTICE MODE:
 """
     
     elif session_type == "refine":
-        context_prompt = """
+        return """
 ADDITIONAL CONTEXT FOR DRAFT REFINEMENT:
 - You are refining an existing written draft based on user voice instructions
 - Incorporate the user's requested changes while maintaining the original voice
@@ -192,37 +331,140 @@ ADDITIONAL CONTEXT FOR DRAFT REFINEMENT:
 """
     
     else:  # free
-        context_prompt = """
+        return """
 ADDITIONAL CONTEXT FOR FREE SPEAK:
 - You are refining general speech into polished written content
 - Maintain a conversational yet polished tone
 - Keep the user's authentic voice and style
 - The output should be natural, clear, and engaging
 """
+
+
+def build_voice_profile_block(voice_profile: Dict) -> str:
+    """
+    Build voice profile guidance block.
     
-    # Add voice profile guidance if available
+    Args:
+        voice_profile: Voice profile data dictionary
+    
+    Returns:
+        Voice profile guidance block
+    
+    Note:
+        Cache key: sys_voice:{user_id}:v{voice_profile.version}
+        Uses explicit user_id and version for deterministic, human-readable cache keys.
+        The version field should be updated whenever the voice profile changes.
+    """
+    # Cache key: sys_voice:{user_id}:v{voice_profile.version}
+    voice_guidance = "VOICE PROFILE GUIDANCE:\n"
+    voice_guidance += f"- Tone: {voice_profile.get('tone', 'professional')}\n"
+    voice_guidance += f"- Confidence Level Target: {voice_profile.get('confidence_level', 65)}%\n"
+    voice_guidance += f"- Emotional Depth Target: {voice_profile.get('emotional_depth', 50)}%\n"
+    voice_guidance += f"- Sentence Length Preference: {voice_profile.get('sentence_length', 'medium')}\n"
+    
+    preferred = voice_profile.get('preferred_words', [])
+    if preferred:
+        voice_guidance += f"- Preferred Words (use naturally): {', '.join(preferred[:10])}\n"
+    
+    avoided = voice_profile.get('avoided_words', [])
+    if avoided:
+        voice_guidance += f"- Avoided Words (never use): {', '.join(avoided[:10])}\n"
+    
+    example_responses = voice_profile.get('example_responses', '')
+    if example_responses:
+        voice_guidance += f"\n- Example Response Style:\n{example_responses[:500]}\n"
+    
+    return voice_guidance
+
+
+def get_session_context_variant(
+    session_type: str,
+    user_context: Optional[str],
+    company_name: Optional[str],
+) -> str:
+    """
+    Determine session context variant for cache key.
+    
+    Args:
+        session_type: Type of session (free, application, interview, practice, refine)
+        user_context: Optional user-provided context
+        company_name: Optional company name (for interview research)
+    
+    Returns:
+        Variant identifier: 'default', 'with_context', or 'with_research'
+    """
+    if session_type != "interview":
+        return "default"
+    if user_context:
+        return "with_context"
+    if company_name:
+        return "with_research"
+    return "default"
+
+
+def build_context_specific_system_prompt(
+    session_type: str,
+    voice_profile: Optional[Dict] = None,
+    user_id: Optional[str] = None,
+    user_context: Optional[str] = None,
+    company_name: Optional[str] = None
+) -> str:
+    """
+    Build context-specific system prompt from modular blocks.
+    
+    Assembles system prompt using explicit block structure with optional caching.
+    
+    Args:
+        session_type: Type of session (free, application, interview, practice, refine)
+        voice_profile: Optional voice profile data
+        user_id: Optional user ID for voice profile cache key
+        user_context: Optional user-provided context (for variant detection)
+        company_name: Optional company name (for variant detection)
+    
+    Returns:
+        Context-specific system prompt
+    """
+    # Cache key: sys_base:v1
+    base_prompt = get_or_cache_block(
+        "sys_base:v1",
+        lambda: BASE_SYSTEM_PROMPT
+    )
+    
+    # Cache key: sys_ctx:{session_type}:{variant}:v1
+    # Variant-aware caching ensures interview variants (with_context, with_research) use distinct cache keys
+    variant = get_session_context_variant(session_type, user_context, company_name)
+    ctx_key = f"sys_ctx:{session_type}:{variant}:v1"
+    session_context = get_or_cache_block(
+        ctx_key,
+        lambda: build_session_context_prompt(session_type)
+    )
+    
+    # Build prompt blocks
+    system_blocks = [
+        base_prompt,
+        session_context,
+    ]
+    
     if voice_profile:
-        voice_guidance = "\nVOICE PROFILE GUIDANCE:\n"
-        voice_guidance += f"- Tone: {voice_profile.get('tone', 'professional')}\n"
-        voice_guidance += f"- Confidence Level Target: {voice_profile.get('confidence_level', 65)}%\n"
-        voice_guidance += f"- Emotional Depth Target: {voice_profile.get('emotional_depth', 50)}%\n"
-        voice_guidance += f"- Sentence Length Preference: {voice_profile.get('sentence_length', 'medium')}\n"
-        
-        preferred = voice_profile.get('preferred_words', [])
-        if preferred:
-            voice_guidance += f"- Preferred Words (use naturally): {', '.join(preferred[:10])}\n"
-        
-        avoided = voice_profile.get('avoided_words', [])
-        if avoided:
-            voice_guidance += f"- Avoided Words (never use): {', '.join(avoided[:10])}\n"
-        
-        example_responses = voice_profile.get('example_responses', '')
-        if example_responses:
-            voice_guidance += f"\n- Example Response Style:\n{example_responses[:500]}\n"
-        
-        context_prompt += voice_guidance
+        # Voice profile blocks are only cached when user_id and version are available.
+        # Anonymous or incomplete profiles bypass caching intentionally.
+        if user_id:
+            # Use a placeholder version (1) until voice_profile.version is implemented
+            voice_version = voice_profile.get("version", 1)
+            voice_key = f"sys_voice:{user_id}:v{voice_version}"
+            voice_block = get_or_cache_block(
+                voice_key,
+                lambda: build_voice_profile_block(voice_profile)
+            )
+            system_blocks.append(voice_block)
+        else:
+            # No user_id provided - build without caching (fallback for anonymous/incomplete profiles)
+            system_blocks.append(build_voice_profile_block(voice_profile))
     
-    return base + context_prompt
+    # Assemble system prompt from blocks
+    system_prompt = "\n\n".join(system_blocks)
+    
+    return system_prompt
 
 
 def smart_truncate_text(text: str, max_length: int = 2000) -> str:
@@ -546,10 +788,13 @@ async def refine_transcript(
     
     client = OpenAI(api_key=settings.openai_api_key)
     
-    # Build context-specific system prompt
+    # Build context-specific system prompt (with optional caching)
     system_prompt = build_context_specific_system_prompt(
         session_type=session_type,
-        voice_profile=voice_profile
+        voice_profile=voice_profile,
+        user_id=user_id,
+        user_context=user_context,
+        company_name=company_name
     )
     
     # Build user prompt
