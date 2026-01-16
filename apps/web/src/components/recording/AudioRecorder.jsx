@@ -4,6 +4,56 @@ import { audio } from '@/components/services/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
+// WebSocket URL for live transcription - must point to backend, never frontend
+// Defaults to backend API URL with /ws/listen endpoint
+const getTranscriptionWebSocketUrl = () => {
+  // If explicitly set, use that (with validation)
+  const explicitWsUrl = import.meta.env.VITE_TRANSCRIPTION_WS_URL;
+  if (explicitWsUrl) {
+    try {
+      const url = new URL(explicitWsUrl);
+      // Validate it's not pointing to frontend dev server
+      const isFrontend = url.port === '5173' || 
+                         (url.hostname === 'localhost' && !url.port && url.protocol === 'ws:') ||
+                         (url.hostname === 'localhost' && url.port === '' && url.protocol === 'ws:');
+      if (isFrontend) {
+        console.error('[AudioRecorder] VITE_TRANSCRIPTION_WS_URL points to frontend dev server (port 5173 or no port)!', explicitWsUrl);
+        console.error('[AudioRecorder] Using backend fallback: ws://localhost:8000/ws/listen');
+      } else {
+        console.log('[AudioRecorder] Using explicit WebSocket URL:', explicitWsUrl);
+        return explicitWsUrl;
+      }
+    } catch (err) {
+      console.error('[AudioRecorder] Invalid VITE_TRANSCRIPTION_WS_URL:', explicitWsUrl, err);
+      // Fall through to use backend default
+    }
+  }
+  
+  // Fallback: derive from API_BASE_URL (backend)
+  try {
+    const apiUrl = new URL(API_BASE_URL);
+    const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${apiUrl.host}/ws/listen`;
+    
+    // Validate we're not accidentally using frontend
+    if (apiUrl.port === '5173' || 
+        (apiUrl.hostname === 'localhost' && !apiUrl.port) ||
+        (apiUrl.hostname === 'localhost' && apiUrl.port === '')) {
+      console.error('[AudioRecorder] API_BASE_URL points to frontend! Forcing backend fallback.');
+      console.error('[AudioRecorder] API_BASE_URL:', API_BASE_URL);
+      return 'ws://localhost:8000/ws/listen';
+    }
+    
+    console.log('[AudioRecorder] Derived WebSocket URL from API_BASE_URL:', wsUrl);
+    return wsUrl;
+  } catch (err) {
+    console.error('[AudioRecorder] Invalid API_BASE_URL:', API_BASE_URL, err);
+    // Final fallback: hardcoded backend URL
+    console.warn('[AudioRecorder] Using hardcoded backend fallback: ws://localhost:8000/ws/listen');
+    return 'ws://localhost:8000/ws/listen';
+  }
+};
+
 export default function useAudioRecorder() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -15,50 +65,140 @@ export default function useAudioRecorder() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
+  const hasAudioChunksRef = useRef(false); // Track if at least one audio chunk was received
+  const recorderStateRef = useRef('idle'); // Track recorder state: 'idle' | 'recording' | 'stopping' | 'stopped'
+  const wsStatusRef = useRef('idle'); // Track WebSocket status: 'idle' | 'connecting' | 'open' | 'error' | 'closed'
   
   // Live transcription WebSocket connection
   const wsRef = useRef(null);
   const wsReadyRef = useRef(false);
   const chunkIntervalRef = useRef(null);
   const accumulatedTranscriptRef = useRef(''); // Track accumulated final transcripts
+  const pendingChunksRef = useRef([]); // Queue chunks that arrive before WebSocket is ready
   
-  // Helper to get JWT token for WebSocket auth
+  // Helper to get JWT token for WebSocket auth from Supabase session
   const getAuthToken = async () => {
     try {
       const { supabase } = await import('@/components/lib/supabase');
-      const { data: { session } } = await supabase.auth.getSession();
-      return session?.access_token || null;
+      // Await session to ensure it's loaded before constructing WebSocket URL
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error('[TranscriptionWS] Error getting Supabase session:', error);
+        return null;
+      }
+      
+      if (!session) {
+        console.warn('[TranscriptionWS] No Supabase session found - user may not be authenticated');
+        return null;
+      }
+      
+      const token = session.access_token;
+      if (!token) {
+        console.warn('[TranscriptionWS] Session exists but access_token is missing');
+        return null;
+      }
+      
+      // Validate token is a proper JWT (should be at least 50 chars for a valid JWT)
+      if (token.length < 50) {
+        console.error(`[TranscriptionWS] Token too short (${token.length} chars) - likely invalid`);
+        return null;
+      }
+      
+      console.log(`[TranscriptionWS] Token retrieved from Supabase session (length: ${token.length})`);
+      return token;
     } catch (err) {
-      console.error('Error getting auth token:', err);
+      console.error('[TranscriptionWS] Error getting auth token:', err);
       return null;
     }
   };
 
   /**
    * Start live transcription WebSocket connection using MediaRecorder (audio/webm).
+   * Returns true if connection initiated successfully, false if it failed.
    */
   const startLiveTranscription = async () => {
+    // Prevent multiple connections
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+      console.log('[TranscriptionWS] WebSocket already connecting or open');
+      return true; // Already connected/connecting
+    }
+    
     try {
-      // Get JWT token for authentication
+      // Get JWT token for authentication from Supabase session
+      // MUST await this before constructing WebSocket URL
       const token = await getAuthToken();
-      if (!token) {
-        console.warn('No auth token available for live transcription');
-        return;
+      
+      // Hard validation: token must exist and be valid length (JWT tokens are typically 150+ chars)
+      if (!token || typeof token !== 'string') {
+        console.error('[TranscriptionWS] Token validation failed: token is null, undefined, or not a string');
+        setError('Authentication expired. Please refresh the page and try again.');
+        wsStatusRef.current = 'error';
+        return false; // DO NOT open WebSocket
+      }
+      
+      if (token.trim().length === 0) {
+        console.error('[TranscriptionWS] Token validation failed: token is empty string');
+        setError('Authentication expired. Please refresh the page and try again.');
+        wsStatusRef.current = 'error';
+        return false; // DO NOT open WebSocket
+      }
+      
+      if (token.length < 50) {
+        console.error(`[TranscriptionWS] Token validation failed: token too short (${token.length} chars, expected >= 50)`);
+        setError('Authentication expired. Please refresh the page and try again.');
+        wsStatusRef.current = 'error';
+        return false; // DO NOT open WebSocket
       }
 
-      // Build WebSocket URL with auth token
-      const wsProtocol = API_BASE_URL.startsWith('https://') ? 'wss://' : 'ws://';
-      const wsHost = API_BASE_URL.replace(/^https?:\/\//, '');
-      const wsUrl = `${wsProtocol}${wsHost}/ws/listen?token=${encodeURIComponent(token)}`;
+      // Build WebSocket URL - ensure it points to backend, never frontend
+      const baseWsUrl = getTranscriptionWebSocketUrl();
+      const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}`;
+      
+      // Final validation: ensure URL is not pointing to frontend
+      const url = new URL(wsUrl);
+      if (url.port === '5173' || (url.hostname === 'localhost' && !url.port && url.protocol === 'ws:')) {
+        console.error('[TranscriptionWS] WebSocket URL validation failed - points to frontend!', wsUrl);
+        console.error('[TranscriptionWS] API_BASE_URL:', API_BASE_URL);
+        console.error('[TranscriptionWS] VITE_TRANSCRIPTION_WS_URL:', import.meta.env.VITE_TRANSCRIPTION_WS_URL);
+        setError('WebSocket configuration error - cannot connect to frontend. Please check VITE_TRANSCRIPTION_WS_URL or VITE_API_BASE_URL.');
+        wsStatusRef.current = 'error';
+        return false; // DO NOT open WebSocket
+      }
+      
+      // Log EXACT WebSocket URL with masked token (first 10 chars only)
+      const tokenPreview = token.substring(0, 10);
+      const maskedUrl = wsUrl.replace(/token=[^&]+/, `token=${tokenPreview}...`);
+      console.log(`[TranscriptionWS] Connecting to ${maskedUrl} (token length: ${token.length})`);
       
       // Open WebSocket connection to backend
+      wsStatusRef.current = 'connecting';
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
+      
+      // Return true to indicate connection was initiated successfully
+      // Note: Actual success is determined by ws.onopen firing
 
       // Handle WebSocket connection opened
       ws.onopen = () => {
-        console.log('Live transcription WebSocket connected');
+        console.log('[TranscriptionWS] WS authenticated & open - ready to receive audio chunks');
         wsReadyRef.current = true;
+        wsStatusRef.current = 'open';
+        setError(null); // Clear any previous errors
+        
+        // Send any pending chunks that arrived before WebSocket was ready
+        if (pendingChunksRef.current.length > 0) {
+          console.log(`[TranscriptionWS] Sending ${pendingChunksRef.current.length} queued audio chunks`);
+          while (pendingChunksRef.current.length > 0) {
+            const chunk = pendingChunksRef.current.shift();
+            try {
+              ws.send(chunk);
+              console.log('[TranscriptionWS] Sent queued chunk, size:', chunk.size);
+            } catch (err) {
+              console.error('[TranscriptionWS] Error sending queued chunk:', err);
+            }
+          }
+        }
       };
 
       // Handle incoming transcript messages from backend
@@ -100,22 +240,53 @@ export default function useAudioRecorder() {
       };
 
       ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-        setError('Live transcription connection error');
+        console.error('[TranscriptionWS] WS error occurred:', err);
+        console.error('[TranscriptionWS] WS readyState:', ws.readyState);
+        // Don't log full URL with token, but log base URL
+        console.error('[TranscriptionWS] WS base URL:', baseWsUrl);
+        wsStatusRef.current = 'error';
         wsReadyRef.current = false;
+        setError('Live transcription connection error - WebSocket failed to connect');
       };
 
-      ws.onclose = () => {
-        console.log('Live transcription WebSocket closed');
+      ws.onclose = (event) => {
+        const closeCode = event.code;
+        const closeReason = event.reason || 'No reason provided';
+        const wasClean = event.wasClean;
+        
+        console.log(`[TranscriptionWS] WS closed - code: ${closeCode}, reason: "${closeReason}", clean: ${wasClean}`);
+        
+        // Log error-level for abnormal closes (including auth failures)
+        if (!wasClean || closeCode !== 1000) {
+          console.error('[TranscriptionWS] WS closed abnormally:', {
+            code: closeCode,
+            reason: closeReason,
+            wasClean,
+            note: closeCode === 1008 ? 'Likely authentication failure - check token validity' : 'Connection error'
+          });
+          wsStatusRef.current = 'error';
+          // Provide user-friendly error message
+          if (closeCode === 1008) {
+            setError('Authentication failed. Please refresh the page and try again.');
+          } else {
+            setError(`Live transcription connection closed: ${closeReason || 'Connection lost'}`);
+          }
+        } else {
+          wsStatusRef.current = 'closed';
+        }
+        
         wsReadyRef.current = false;
         wsRef.current = null;
       };
       
-      console.log('[Live Transcription] WebSocket connection established');
+      console.log('[TranscriptionWS] WebSocket connection initiated, waiting for handshake...');
+      return true; // Connection initiated successfully
       
     } catch (err) {
-      console.error('Error starting live transcription:', err);
+      console.error('[TranscriptionWS] Error starting live transcription:', err);
       setError('Live transcription unavailable');
+      wsStatusRef.current = 'error';
+      return false; // Connection failed
     }
   };
 
@@ -143,20 +314,177 @@ export default function useAudioRecorder() {
 
     // Clear live transcript
     setLiveTranscript('');
+    
+    // Clear pending chunks queue
+    pendingChunksRef.current = [];
+  };
+  
+  /**
+   * Send audio chunk to live transcription WebSocket.
+   * Queues chunks if WebSocket is not ready yet.
+   */
+  const sendAudioChunk = (blob) => {
+    if (!blob || blob.size === 0) {
+      console.warn('[TranscriptionWS] Attempted to send empty chunk, skipping');
+      return;
+    }
+    
+    if (wsRef.current && wsReadyRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        wsRef.current.send(blob);
+        console.log(`[TranscriptionWS] Sent audio chunk to Deepgram (size: ${blob.size} bytes)`);
+      } catch (err) {
+        console.error('[TranscriptionWS] Error sending audio chunk to WebSocket:', err);
+        // Queue chunk if send failed
+        pendingChunksRef.current.push(blob);
+        console.log('[TranscriptionWS] Chunk queued after send failure. Queue size:', pendingChunksRef.current.length);
+      }
+    } else {
+      // Queue chunk if WebSocket is not ready yet
+      pendingChunksRef.current.push(blob);
+      console.log(`[TranscriptionWS] WebSocket not ready, queued chunk (size: ${blob.size} bytes). Queue size: ${pendingChunksRef.current.length}`);
+    }
   };
 
   const startRecording = async (options = {}) => {
-    const { enableLiveTranscription = true } = options;
+    const { enableLiveTranscription = true, stream: providedStream = null } = options;
     
     // Clear live transcript and accumulated transcript ONLY when starting a NEW recording
     setLiveTranscript('');
     accumulatedTranscriptRef.current = '';
+    pendingChunksRef.current = [];
+    hasAudioChunksRef.current = false; // Reset audio chunks tracking
+    recorderStateRef.current = 'idle'; // Reset recorder state
+    wsStatusRef.current = 'idle'; // Reset WebSocket status
     
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Get audio stream - use provided stream if available (from user gesture),
+      // otherwise request it here (for backward compatibility)
+      let stream = providedStream;
+      if (!stream) {
+        console.log('[AudioRecorder] Requesting microphone permission (fallback)...');
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       streamRef.current = stream;
       
+      // Start live transcription WebSocket connection if enabled
+      // This ensures the WebSocket is ready before MediaRecorder starts sending chunks
+      if (enableLiveTranscription) {
+        console.log('[AudioRecorder] Starting live transcription WebSocket...');
+        const wsStarted = await startLiveTranscription();
+        
+        // Check if WebSocket connection was initiated successfully
+        // startLiveTranscription returns true on success, false on failure, or undefined if already connecting
+        if (wsStarted === false) {
+          console.error('[AudioRecorder] WebSocket connection failed to initiate (token validation failed or error)');
+          console.error('[AudioRecorder] wsStarted value:', wsStarted);
+          throw new Error('WebSocket authentication failed - token validation failed');
+        }
+        
+        // Log if WebSocket connection was initiated
+        if (wsStarted === true) {
+          console.log('[AudioRecorder] WebSocket connection initiated successfully');
+        } else {
+          console.log('[AudioRecorder] WebSocket connection already in progress (wsStarted:', wsStarted, ')');
+        }
+        
+        // Wait for WebSocket to be ready (with timeout)
+        // CRITICAL: MediaRecorder MUST NOT start until WebSocket is authenticated and open
+        console.log('[AudioRecorder] Waiting for WebSocket to authenticate and open...');
+        const waitForReady = () => {
+          return new Promise((resolve, reject) => {
+            // Check if WebSocket is in error state - don't proceed
+            if (wsStatusRef.current === 'error') {
+              console.error('[TranscriptionWS] WebSocket in error state, aborting recording start');
+              setError('Live transcription connection failed. Please refresh and try again.');
+              reject(new Error('WebSocket authentication failed'));
+              return;
+            }
+            
+            // Check if WebSocket is already open
+            if (wsReadyRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              console.log('[TranscriptionWS] WebSocket already open, proceeding with MediaRecorder');
+              resolve();
+              return;
+            }
+            
+            // Poll for WebSocket to become ready
+            const checkInterval = setInterval(() => {
+              // Check for error state during wait (e.g., auth failure)
+              if (wsStatusRef.current === 'error') {
+                clearInterval(checkInterval);
+                clearTimeout(timeout);
+                console.error('[TranscriptionWS] WebSocket failed during wait (auth failed or connection error), aborting recording start');
+                setError('Live transcription connection failed. Please refresh and try again.');
+                reject(new Error('WebSocket authentication failed'));
+                return;
+              }
+              
+              // Check if WebSocket is now open (after ws.onopen fires)
+              if (wsReadyRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                clearInterval(checkInterval);
+                clearTimeout(timeout);
+                console.log('[TranscriptionWS] WebSocket authenticated & open, proceeding with MediaRecorder');
+                resolve();
+                return;
+              }
+              
+              // Check if WebSocket closed before opening (auth failure)
+              if (wsRef.current && wsRef.current.readyState === WebSocket.CLOSED) {
+                clearInterval(checkInterval);
+                clearTimeout(timeout);
+                console.error('[TranscriptionWS] WebSocket closed before opening (likely auth failure), aborting recording start');
+                wsStatusRef.current = 'error';
+                setError('Authentication failed. Please refresh and try again.');
+                reject(new Error('WebSocket authentication failed - connection closed'));
+                return;
+              }
+            }, 50);
+            
+            // Timeout after 3 seconds - if WebSocket hasn't opened by then, likely auth failure
+            const timeout = setTimeout(() => {
+              clearInterval(checkInterval);
+              // Check if it's an error or just slow connection
+              if (wsStatusRef.current === 'error') {
+                console.error('[TranscriptionWS] WebSocket failed, aborting recording start');
+                setError('Live transcription connection failed. Please refresh and try again.');
+                reject(new Error('WebSocket authentication failed'));
+              } else if (wsRef.current && wsRef.current.readyState === WebSocket.CLOSED) {
+                // WebSocket closed before opening - likely auth failure
+                console.error('[TranscriptionWS] WebSocket closed before opening (likely auth failure), aborting recording start');
+                wsStatusRef.current = 'error';
+                setError('Authentication failed. Please refresh and try again.');
+                reject(new Error('WebSocket authentication failed - connection closed'));
+              } else if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
+                // Still connecting after 3s - might be slow, but reject to be safe
+                console.error('[TranscriptionWS] WebSocket still connecting after 3s, likely auth failure, aborting');
+                wsStatusRef.current = 'error';
+                setError('Live transcription connection timeout. Please refresh and try again.');
+                reject(new Error('WebSocket connection timeout'));
+              } else {
+                // Unknown state - reject to be safe
+                console.error('[TranscriptionWS] WebSocket in unknown state after timeout, aborting');
+                wsStatusRef.current = 'error';
+                setError('Live transcription connection failed. Please refresh and try again.');
+                reject(new Error('WebSocket connection failed - unknown state'));
+              }
+            }, 3000);
+          });
+        };
+        
+        // CRITICAL: Wait for WebSocket authentication before starting MediaRecorder
+        // If WebSocket fails to open (auth failure), this will reject and abort recording
+        try {
+          await waitForReady();
+          console.log('[AudioRecorder] WebSocket ready, proceeding to MediaRecorder setup');
+        } catch (waitErr) {
+          console.error('[AudioRecorder] WebSocket wait failed, aborting recording:', waitErr);
+          throw waitErr; // Re-throw to abort recording
+        }
+      }
+      
       // Set up MediaRecorder with audio/webm format
+      console.log('[AudioRecorder] Setting up MediaRecorder...');
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
@@ -171,44 +499,72 @@ export default function useAudioRecorder() {
 
       // Handle data available events - send to WebSocket for live transcription
       mediaRecorder.ondataavailable = (event) => {
+        console.log('[AudioRecorder] ondataavailable fired, blob size:', event.data.size);
         if (event.data.size > 0) {
+          // Mark that at least one audio chunk was received
+          hasAudioChunksRef.current = true;
+          
           // Store for final blob
           audioChunksRef.current.push(event.data);
+          console.log('[AudioRecorder] Audio chunk received, total chunks:', audioChunksRef.current.length, 'total size:', audioChunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0));
           
-          // Send to WebSocket for live transcription (if connected)
-          if (enableLiveTranscription && wsRef.current && wsReadyRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            try {
-              wsRef.current.send(event.data);
-            } catch (err) {
-              console.error('Error sending audio chunk to WebSocket:', err);
-            }
+          // Send to WebSocket for live transcription (will queue if not ready)
+          if (enableLiveTranscription) {
+            sendAudioChunk(event.data);
           }
+        } else {
+          console.warn('[AudioRecorder] ondataavailable fired with empty blob');
         }
       };
 
       mediaRecorder.onstop = () => {
+        console.log('[AudioRecorder] onstop fired, total chunks:', audioChunksRef.current.length);
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         setAudioBlob(audioBlob);
+        console.log('[AudioRecorder] Final blob created, size:', audioBlob.size, 'hasAudioChunks:', hasAudioChunksRef.current);
       };
 
       // Start recording with timeslice of 250ms to get chunks frequently
-      mediaRecorder.start(250);
-      
-      mediaRecorderRef.current = mediaRecorder;
-      
-      setIsRecording(true);
-      setIsPaused(false);
-      setError(null);
-      // Live transcript was cleared at the start of this function
-      // It will now accumulate during recording
-
-      // Start live transcription WebSocket connection if enabled
-      if (enableLiveTranscription) {
-        await startLiveTranscription();
+      // Now the WebSocket should be ready, so chunks will be sent immediately
+      console.log('[AudioRecorder] Starting MediaRecorder with timeslice 250ms');
+      try {
+        mediaRecorder.start(250);
+        console.log('[AudioRecorder] MediaRecorder started successfully, state:', mediaRecorder.state);
+        recorderStateRef.current = 'recording';
+        
+        mediaRecorderRef.current = mediaRecorder;
+        
+        setIsRecording(true);
+        setIsPaused(false);
+        setError(null);
+        // Live transcript was cleared at the start of this function
+        // It will now accumulate during recording
+        console.log('[AudioRecorder] Recording state set to active - ready to receive audio chunks');
+      } catch (startErr) {
+        console.error('[AudioRecorder] Error calling mediaRecorder.start():', startErr);
+        console.error('[AudioRecorder] MediaRecorder state:', mediaRecorder.state);
+        console.error('[AudioRecorder] Stream active:', streamRef.current?.active);
+        throw new Error(`Failed to start MediaRecorder: ${startErr.message}`);
       }
     } catch (err) {
-      console.error('Error starting recording:', err);
+      console.error('[AudioRecorder] Error starting recording:', err);
       setError(err.message);
+      // Clean up stream if it was obtained but recording failed
+      if (streamRef.current) {
+        try {
+          streamRef.current.getTracks().forEach(track => {
+            if (track.readyState !== 'ended') {
+              track.stop();
+            }
+          });
+        } catch (cleanupErr) {
+          console.warn('[AudioRecorder] Error cleaning up stream:', cleanupErr);
+        }
+        streamRef.current = null;
+      }
+      recorderStateRef.current = 'idle';
+      // Re-throw to allow caller to handle
+      throw err;
     }
   };
 
@@ -228,37 +584,121 @@ export default function useAudioRecorder() {
   };
 
   const stopRecording = () => {
+    // Prevent double-stopping
+    if (recorderStateRef.current === 'stopping' || recorderStateRef.current === 'stopped') {
+      console.warn('[AudioRecorder] stopRecording called but recorder is already', recorderStateRef.current);
+      const finalBlob = audioBlob || new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      const hasChunks = hasAudioChunksRef.current || (finalBlob && finalBlob.size > 0);
+      return Promise.resolve({ blob: finalBlob, hasAudioChunks: hasChunks });
+    }
+    
+    recorderStateRef.current = 'stopping';
+    
     // Stop live transcription first (close WebSocket)
     stopLiveTranscription();
 
-    // Stop the recorder and return a Promise that resolves with the final Blob
+    // Stop the recorder and return a Promise that resolves with the final Blob and hasAudioChunks flag
     return new Promise((resolve) => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         const mr = mediaRecorderRef.current;
+        let stopResolved = false; // Prevent resolving twice
 
         const onStop = () => {
-          const finalBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          setAudioBlob(finalBlob);
-
-          // Stop all tracks
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
+          if (stopResolved) {
+            console.warn('[AudioRecorder] onStop called multiple times, ignoring');
+            return;
           }
+          stopResolved = true;
+          recorderStateRef.current = 'stopped';
+          
+          console.log('[AudioRecorder] onStop handler fired');
+          console.log('[AudioRecorder] Audio chunks count:', audioChunksRef.current.length);
+          console.log('[AudioRecorder] Total chunks size:', audioChunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0));
+          console.log('[AudioRecorder] hasAudioChunksRef:', hasAudioChunksRef.current);
+          
+          // Request final data - this may trigger one more ondataavailable
+          // Some browsers require this to get the final chunk
+          try {
+            if (mr.state !== 'inactive') {
+              mr.requestData();
+            }
+          } catch (reqErr) {
+            console.warn('[AudioRecorder] Error requesting final data:', reqErr);
+          }
+          
+          // Small delay to allow any final ondataavailable to fire
+          // MediaRecorder may need a tick to emit final chunk
+          setTimeout(() => {
+            const finalBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+            setAudioBlob(finalBlob);
+            
+            // Check if audio chunks were received (capture before cleanup)
+            const hasChunks = hasAudioChunksRef.current;
+            
+            console.log('[AudioRecorder] Finalizing stop - blob size:', finalBlob.size, 'hasChunks:', hasChunks);
 
-          setIsRecording(false);
-          setIsPaused(false);
-          mr.removeEventListener('stop', onStop);
-          resolve(finalBlob);
+            // Stop all tracks - ONLY AFTER MediaRecorder has finished and emitted final chunk
+            // This is critical: tracks must be stopped AFTER onstop fires
+            if (streamRef.current) {
+              try {
+                streamRef.current.getTracks().forEach(track => {
+                  // Only stop tracks that aren't already ended
+                  if (track.readyState !== 'ended') {
+                    console.log('[AudioRecorder] Stopping track, state:', track.readyState);
+                    track.stop();
+                  } else {
+                    console.log('[AudioRecorder] Track already ended, skipping');
+                  }
+                });
+                console.log('[AudioRecorder] Stopped all audio tracks');
+              } catch (trackErr) {
+                console.warn('[AudioRecorder] Error stopping tracks:', trackErr);
+              }
+              streamRef.current = null; // Clear stream reference
+            }
+
+            setIsRecording(false);
+            setIsPaused(false);
+            mr.removeEventListener('stop', onStop);
+            // Return both blob and hasAudioChunks flag
+            resolve({ blob: finalBlob, hasAudioChunks: hasChunks });
+          }, 100); // Small delay to allow final ondataavailable
         };
 
         mr.addEventListener('stop', onStop);
-        try { mr.stop(); } catch (e) { onStop(); }
+        try { 
+          console.log('[AudioRecorder] Calling mediaRecorder.stop()');
+          mr.stop(); // This will trigger onstop event
+        } catch (e) { 
+          console.error('[AudioRecorder] Error calling stop:', e);
+          onStop(); 
+        }
       } else {
         // Already stopped or never started
-        const finalBlob = audioBlob;
+        recorderStateRef.current = 'stopped';
+        console.warn('[AudioRecorder] stopRecording called but MediaRecorder is already inactive');
+        
+        const finalBlob = audioBlob || new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const hasChunks = hasAudioChunksRef.current || (finalBlob && finalBlob.size > 0);
+        
+        // Ensure tracks are stopped even if already stopped
+        if (streamRef.current) {
+          try {
+            streamRef.current.getTracks().forEach(track => {
+              if (track.readyState !== 'ended') {
+                track.stop();
+              }
+            });
+            console.log('[AudioRecorder] Stopped all audio tracks (already stopped)');
+          } catch (trackErr) {
+            console.warn('[AudioRecorder] Error stopping tracks:', trackErr);
+          }
+          streamRef.current = null;
+        }
+        
         setIsRecording(false);
         setIsPaused(false);
-        resolve(finalBlob);
+        resolve({ blob: finalBlob, hasAudioChunks: hasChunks });
       }
     });
   };
@@ -325,5 +765,6 @@ export default function useAudioRecorder() {
     resumeRecording,
     stopRecording,
     uploadAndTranscribe,
+    sendAudioChunk, // Expose method for sending audio chunks
   };
 }

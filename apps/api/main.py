@@ -563,23 +563,35 @@ async def websocket_listen(
         "confidence": 0.95
       }
     """
-    await websocket.accept()
-    
-    # Authenticate user
+    # Check authentication BEFORE accepting the connection
     if not token:
+        logger.warning(f"[WebSocket /ws/listen] Connection rejected: Missing authentication token")
+        await websocket.accept()
         await websocket.close(code=1008, reason="Missing authentication token")
         return
     
+    # Log token presence (but not the actual token for security)
+    token_preview = f"{token[:10]}..." if len(token) > 10 else token
+    logger.info(f"[WebSocket /ws/listen] Received connection with token: {token_preview} (length: {len(token)})")
+    
+    # Authenticate user BEFORE accepting connection
     try:
         user = await get_user_from_websocket_token(token)
-        logger.info(f"Live transcription session started for user {user['id']}")
+        logger.info(f"[WebSocket /ws/listen] Authentication successful for user {user['id']} (email: {user.get('email', 'N/A')})")
     except HTTPException as e:
-        await websocket.close(code=1008, reason="Authentication failed")
+        logger.error(f"[WebSocket /ws/listen] Authentication failed: {e.detail}")
+        await websocket.accept()
+        await websocket.close(code=1008, reason=f"Authentication failed: {e.detail}")
         return
     except Exception as e:
-        logger.error(f"WebSocket authentication error: {e}")
-        await websocket.close(code=1011, reason="Internal server error")
+        logger.error(f"[WebSocket /ws/listen] Authentication error: {type(e).__name__}: {str(e)}")
+        await websocket.accept()
+        await websocket.close(code=1011, reason="Internal server error during authentication")
         return
+    
+    # Only accept connection AFTER successful authentication
+    await websocket.accept()
+    logger.info(f"[WebSocket /ws/listen] Connection accepted for user {user['id']}")
     
     # Initialize Deepgram provider
     provider = DeepgramWebmProvider()

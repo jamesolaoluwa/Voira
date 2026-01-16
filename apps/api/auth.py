@@ -1,4 +1,5 @@
 """Authentication utilities for JWT validation."""
+import logging
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -6,6 +7,8 @@ import httpx
 from supabase import Client
 from db import supabase
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
@@ -90,6 +93,14 @@ async def get_user_from_websocket_token(token: str):
     Raises:
         HTTPException: If token is invalid
     """
+    if not token or not token.strip():
+        logger.warning("[WebSocket Auth] Empty or whitespace-only token provided")
+        raise HTTPException(status_code=401, detail="Missing or empty authentication token")
+    
+    # Log token presence (masked for security)
+    token_preview = f"{token[:10]}..." if len(token) > 10 else "***"
+    logger.debug(f"[WebSocket Auth] Validating token: {token_preview} (length: {len(token)})")
+    
     try:
         # Verify token with Supabase REST API
         async with httpx.AsyncClient() as client:
@@ -103,12 +114,17 @@ async def get_user_from_websocket_token(token: str):
             )
             
             if verify_response.status_code != 200:
+                logger.warning(f"[WebSocket Auth] Token validation failed: Supabase returned status {verify_response.status_code}")
+                logger.debug(f"[WebSocket Auth] Response body: {verify_response.text[:200]}")
                 raise HTTPException(status_code=401, detail="Invalid authentication token")
             
             user_data = verify_response.json()
             user_id = user_data.get("id")
             if not user_id:
+                logger.warning("[WebSocket Auth] Token validation returned invalid user data (no user_id)")
                 raise HTTPException(status_code=401, detail="Invalid user data")
+            
+            logger.debug(f"[WebSocket Auth] Token validated successfully for user {user_id}")
         
         # Get user profile
         profile_response = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
@@ -126,6 +142,10 @@ async def get_user_from_websocket_token(token: str):
         }
     except HTTPException:
         raise
+    except httpx.TimeoutException:
+        logger.error("[WebSocket Auth] Timeout while validating token with Supabase")
+        raise HTTPException(status_code=401, detail="Authentication timeout")
     except Exception as e:
+        logger.error(f"[WebSocket Auth] Unexpected error during token validation: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 

@@ -111,7 +111,7 @@ export default function Speak() {
   };
   
   useEffect(() => {
-    if (audioIsRecording && !audioIsPaused) {
+    if (recordingState === 'recording' && !audioIsPaused) {
       intervalRef.current = setInterval(() => {
         setDuration(d => d + 1);
       }, 1000);
@@ -122,21 +122,21 @@ export default function Speak() {
     return () => {
       clearInterval(intervalRef.current);
     };
-  }, [audioIsRecording, audioIsPaused]);
+  }, [recordingState, audioIsPaused]);
 
   // Update rawTranscript from audioLiveTranscript during recording
   useEffect(() => {
-    if (audioIsRecording && audioLiveTranscript) {
+    if (recordingState === 'recording' && audioLiveTranscript) {
       setRawTranscript(audioLiveTranscript);
     }
-  }, [audioLiveTranscript, audioIsRecording]);
+  }, [audioLiveTranscript, recordingState]);
 
   // Debug: Log liveTranscript updates for debugging
   useEffect(() => {
-    if (audioIsRecording) {
+    if (recordingState === 'recording') {
       console.log('[Speak.jsx] liveTranscript value:', audioLiveTranscript?.substring(0, 100) || '(empty)', `[length: ${audioLiveTranscript?.length || 0}]`);
     }
-  }, [audioLiveTranscript, audioIsRecording]);
+  }, [audioLiveTranscript, recordingState]);
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -154,8 +154,74 @@ export default function Speak() {
       setFillerCount(0);
       setConfidenceLevel(0);
       // audioLiveTranscript is cleared by useAudioRecorder when starting a NEW recording
-      setRecordingState('recording');
-      await audioStartRecording();
+      // DO NOT set recordingState here - wait until MediaRecorder actually starts
+      
+      // Request microphone permission DIRECTLY in click handler to satisfy user gesture requirement
+      let stream = null;
+      try {
+        console.log('[Speak] Requesting microphone permission...');
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log('[Speak] Microphone permission granted, stream obtained');
+      } catch (err) {
+        console.error('[Speak] Error requesting microphone permission:', err);
+        setRecordingState('idle'); // Reset to idle state on permission failure
+        toast({ 
+          title: 'Microphone Permission Required', 
+          description: err.name === 'NotAllowedError' 
+            ? 'Please allow microphone access to record audio.' 
+            : err.name === 'NotFoundError'
+            ? 'No microphone found. Please connect a microphone and try again.'
+            : 'Failed to access microphone. Please check your browser settings.',
+          variant: 'destructive',
+          duration: 5000
+        });
+        return; // Exit early if permission denied
+      }
+      
+      // Explicitly enable live transcription and pass the stream
+      try {
+        console.log('[Speak] Starting audio recording and live transcription...');
+        console.log('[Speak] Stream active:', stream.active);
+        console.log('[Speak] Stream tracks:', stream.getTracks().length);
+        
+        // startRecording will throw if MediaRecorder fails to start
+        // If it completes successfully, MediaRecorder has started
+        await audioStartRecording({ enableLiveTranscription: true, stream });
+        
+        // startRecording completed successfully - MediaRecorder is now recording
+        // setIsRecording(true) is called inside startRecording, but React state is async
+        // We don't need to wait for audioIsRecording to update - we trust that startRecording succeeded
+        console.log('[Speak] Recording started successfully, setting state to recording');
+        setRecordingState('recording');
+      } catch (err) {
+        console.error('[Speak] Error starting recording:', err);
+        console.error('[Speak] Error name:', err.name);
+        console.error('[Speak] Error message:', err.message);
+        console.error('[Speak] Error stack:', err.stack);
+        setRecordingState('idle'); // Reset to idle state on recording start failure
+        
+        // Clean up stream on error
+        try {
+          stream.getTracks().forEach(track => track.stop());
+        } catch (cleanupErr) {
+          console.warn('[Speak] Error cleaning up stream after error:', cleanupErr);
+        }
+        
+        // Provide more specific error message
+        let errorMessage = 'Failed to start recording. Please try again.';
+        if (err.message?.includes('WebSocket') || err.message?.includes('authentication')) {
+          errorMessage = 'Live transcription connection failed. Please refresh and try again.';
+        } else if (err.message?.includes('MediaRecorder')) {
+          errorMessage = 'Failed to initialize audio recorder. Please check your browser settings.';
+        }
+        
+        toast({ 
+          title: 'Recording Failed', 
+          description: errorMessage,
+          variant: 'destructive',
+          duration: 5000
+        });
+      }
   };
   
   const handlePause = () => {
@@ -172,15 +238,16 @@ export default function Speak() {
   setIsTranscribing(true);
 
     try {
-      // Stop and get final blob
-      const finalBlob = await audioStopRecording();
+      // Stop and get final blob and hasAudioChunks flag
+      const { blob: finalBlob, hasAudioChunks } = await audioStopRecording();
 
       // Freeze rawTranscript (verbatim speech from WebSocket)
       // This is the raw transcript that includes filler words, false starts, etc.
       const frozenRawTranscript = rawTranscript || audioLiveTranscript || '';
       
-      // Validate recording exists and duration
-      if (!finalBlob || finalBlob.size === 0 || duration < 2) {
+      // Validate recording based on audio chunks, not transcript length
+      // MediaRecorder timing means chunks may not have been emitted yet when stopped
+      if (!hasAudioChunks || !finalBlob || finalBlob.size === 0) {
         // Show user-friendly error and bail out (non-blocking toast)
         setIsTranscribing(false);
         setIsGenerating(false);
@@ -189,9 +256,29 @@ export default function Speak() {
         setRawTranscript('');
         setRefinedTranscript('');
         setTranscript('');
-        toast({ title: 'Recording too short', description: 'Please record at least 2 seconds.' });
+        setRecordingState('idle'); // Reset to idle state on validation failure
+        toast({ title: 'No audio recorded', description: 'Please record at least a few seconds of audio.' });
         return;
       }
+
+      // Transition to finished state and show Save modal immediately
+      // Do not wait for transcription/analysis - allow saving even if transcript arrives later
+      setRecordingState('finished');
+      
+      // Prepare session data with what we have so far (transcript may be empty)
+      setSessionData({
+        transcript: frozenRawTranscript || '', // May be empty if transcription still processing
+        audio_url: null, // Will be set after upload
+        refinedDraft: '', // Will be set after analysis
+        clarityScore: 75, // Default values
+        confidenceScore: 70,
+        fillerCount: 0,
+        question: contextPrompt,
+        type,
+      });
+      
+      // Show Save modal immediately - user can save even if transcript is still processing
+      setShowNamingModal(true);
 
   // Transcribe/upload the audio (for backup/archival, but we use rawTranscript for refinement)
       const resp = await uploadAndTranscribe((partialTranscript) => {
@@ -264,6 +351,8 @@ export default function Speak() {
       // Set refined transcript (LLM output)
       setRefinedTranscript(analysis.refined_text || '');
       
+      // Update session data with complete transcription and analysis results
+      // This updates the modal data if it's already open, or prepares it for when user opens it
       setSessionData({
         transcript: frozenRawTranscript, // Raw verbatim transcript (includes filler words)
         audio_url: audioUrl,
@@ -276,13 +365,14 @@ export default function Speak() {
       });
       
       setIsGenerating(false);
-      setRecordingState('finished');
+      // State is already 'finished' and modal is already shown
+      // Keep them as is - just ensure modal is visible
       setShowNamingModal(true);
     } catch (error) {
       console.error('Error processing recording:', error);
       setIsTranscribing(false);
       setIsGenerating(false);
-      setRecordingState('error');
+      setRecordingState('finished');
 
       // On error: use frozen rawTranscript (or fallback to transcript)
       const frozenRawTranscript = rawTranscript || transcript || '';
@@ -321,13 +411,14 @@ export default function Speak() {
         filler_count: sessionData.fillerCount,
       };
 
-      // validate transcript exists
+      // Allow saving even if transcript is empty - user may save audio-only session
+      // Transcript can arrive later or be added manually
       const transcriptText = payload.transcript && String(payload.transcript).trim();
+      
+      // Warn but don't block if transcript is empty
       if (!transcriptText || transcriptText.length < 3) {
-        try { savingToast.update({ title: 'Save failed', description: 'No transcript to save.', duration: 5000 }); } catch (e) {}
-        toast({ title: 'Save failed', description: 'Please record or transcribe before saving.', duration: 5000 });
-        setIsSaving(false);
-        return;
+        console.warn('[Speak] Saving session with empty transcript - audio URL:', payload.audio_url);
+        // Continue saving - audio URL is present, transcript can be added later
       }
 
       // Persist via central sessions API (calls backend /sessions which enforces credits)
@@ -462,7 +553,7 @@ export default function Speak() {
       </motion.div>
       
       {/* Contextual Prompt Input */}
-      {(type === 'application' || type === 'interview') && !audioIsRecording && (
+      {(type === 'application' || type === 'interview') && recordingState === 'idle' && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -532,7 +623,7 @@ export default function Speak() {
       )}
 
       {/* Advanced Goal Definition */}
-      {!audioIsRecording && (
+      {recordingState === 'idle' && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -618,9 +709,9 @@ export default function Speak() {
 
       {/* Main Recording Area */}
       <div className={`flex-1 flex flex-col items-center justify-center max-w-2xl mx-auto w-full transition-all duration-500 ${
-        audioIsRecording ? 'brightness-75' : ''
+        recordingState === 'recording' ? 'brightness-75' : ''
       }`}>
-        {!audioIsRecording && (
+        {recordingState === 'idle' && (
           <motion.p
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -630,22 +721,24 @@ export default function Speak() {
           </motion.p>
         )}
         
-        {/* Voice Visualizer */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: audioIsRecording ? 1.15 : 1 }}
-          transition={{ duration: 0.5 }}
-          className="mb-12"
-        >
-          <VoiceVisualizer 
-            size={audioIsRecording ? 280 : 240} 
-            isActive={audioIsRecording && !audioIsPaused} 
-            amplitude={audioAmplitude}
-          />
-        </motion.div>
+        {/* Voice Visualizer - Only show during idle or recording states */}
+        {(recordingState === 'idle' || recordingState === 'recording') && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: recordingState === 'recording' ? 1.15 : 1 }}
+            transition={{ duration: 0.5 }}
+            className="mb-12"
+          >
+            <VoiceVisualizer 
+              size={recordingState === 'recording' ? 280 : 240} 
+              isActive={recordingState === 'recording' && !audioIsPaused} 
+              amplitude={audioAmplitude}
+            />
+          </motion.div>
+        )}
         
         {/* Live Indicators */}
-        {audioIsRecording && (
+        {recordingState === 'recording' && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -664,7 +757,7 @@ export default function Speak() {
         
         {/* Timer */}
         <AnimatePresence>
-          {showTimer && audioIsRecording && (
+          {showTimer && recordingState === 'recording' && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -684,7 +777,7 @@ export default function Speak() {
           transition={{ delay: 0.2 }}
           className="flex items-center gap-4"
         >
-          {!audioIsRecording ? (
+          {recordingState === 'idle' && (
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
               <Button
                 size="lg"
@@ -701,7 +794,8 @@ export default function Speak() {
                 Start
               </Button>
             </motion.div>
-          ) : (
+          )}
+          {recordingState === 'recording' && (
             <>
               <Button
                 size="lg"
@@ -717,30 +811,24 @@ export default function Speak() {
                 disabled={isTranscribing || isGenerating}
                 className="h-14 px-8 bg-gradient-to-r from-teal-600 to-teal-500 hover:from-teal-500 hover:to-teal-400 text-white rounded-2xl disabled:opacity-50"
               >
-                {isTranscribing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Transcribing...
-                  </>
-                ) : isGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Square className="w-4 h-4 mr-2" />
-                    Finish
-                  </>
-                )}
+                <Square className="w-4 h-4 mr-2" />
+                Finish
               </Button>
             </>
+          )}
+          {(recordingState === 'processing' || recordingState === 'finished') && (
+            <div className="flex items-center gap-3 px-6 py-3 bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
+              <Loader2 className="w-5 h-5 animate-spin text-violet-600 dark:text-violet-400" />
+              <span className="text-zinc-700 dark:text-zinc-300">
+                {isTranscribing ? 'Transcribing...' : isGenerating ? 'Processing...' : 'Processing complete'}
+              </span>
+            </div>
           )}
         </motion.div>
         
   {/* Live Transcription - Only show when recording is active and enabled */}
   {/* Shows rawTranscript (verbatim speech, includes filler words) */}
-  {showTranscription && audioIsRecording && (
+  {showTranscription && recordingState === 'recording' && (
     <LiveTranscription 
       transcript={rawTranscript || ''}
     />
