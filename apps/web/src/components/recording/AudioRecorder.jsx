@@ -118,11 +118,32 @@ export default function useAudioRecorder() {
    * Returns true if connection initiated successfully, false if it failed.
    */
   const startLiveTranscription = async () => {
-    // Prevent multiple connections
-    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
-      console.log('[TranscriptionWS] WebSocket already connecting or open');
-      return true; // Already connected/connecting
+    // Check WebSocket state - close any stale connections first
+    if (wsRef.current) {
+      const wsState = wsRef.current.readyState;
+      console.log('[TranscriptionWS] Existing WebSocket found, state:', wsState);
+      
+      // Close stale connections (OPEN, CONNECTING, or CLOSING) to start fresh
+      if (wsState === WebSocket.OPEN || wsState === WebSocket.CONNECTING || wsState === WebSocket.CLOSING) {
+        console.log('[TranscriptionWS] Closing stale WebSocket connection (state:', wsState, ')');
+        try {
+          wsRef.current.close();
+        } catch (closeErr) {
+          console.warn('[TranscriptionWS] Error closing stale WebSocket:', closeErr);
+        }
+        wsRef.current = null;
+        wsReadyRef.current = false;
+        wsStatusRef.current = 'idle';
+      } else if (wsState === WebSocket.CLOSED) {
+        // Already closed, just clean up refs
+        console.log('[TranscriptionWS] WebSocket already closed, cleaning up refs');
+        wsRef.current = null;
+        wsReadyRef.current = false;
+        wsStatusRef.current = 'idle';
+      }
     }
+    
+    // Now start fresh connection - refs are cleaned up above
     
     try {
       // Get JWT token for authentication from Supabase session
@@ -292,21 +313,36 @@ export default function useAudioRecorder() {
 
   /**
    * Stop live transcription and close WebSocket connection.
+   * Idempotent - safe to call multiple times.
    */
   const stopLiveTranscription = () => {
-    wsReadyRef.current = false;
-
-    // Close WebSocket connection
+    // Idempotent cleanup - check state before acting
     if (wsRef.current) {
-      try {
-        wsRef.current.close();
-      } catch (err) {
-        console.error('Error closing WebSocket:', err);
+      const wsState = wsRef.current.readyState;
+      console.log('[TranscriptionWS] Stopping live transcription, WebSocket state:', wsState);
+      
+      // Close WebSocket connection if not already closed
+      if (wsState !== WebSocket.CLOSED && wsState !== WebSocket.CLOSING) {
+        try {
+          wsRef.current.close();
+          console.log('[TranscriptionWS] WebSocket close() called');
+        } catch (err) {
+          console.error('[TranscriptionWS] Error closing WebSocket:', err);
+        }
+      } else {
+        console.log('[TranscriptionWS] WebSocket already closing/closed, skipping close()');
       }
+      
       wsRef.current = null;
+    } else {
+      console.log('[TranscriptionWS] WebSocket ref is null, already cleaned up');
     }
 
-    // Clear interval if set
+    // Reset WebSocket state refs
+    wsReadyRef.current = false;
+    wsStatusRef.current = 'idle';
+
+    // Clear interval if set (idempotent)
     if (chunkIntervalRef.current) {
       clearInterval(chunkIntervalRef.current);
       chunkIntervalRef.current = null;
@@ -314,9 +350,12 @@ export default function useAudioRecorder() {
 
     // Clear live transcript
     setLiveTranscript('');
+    accumulatedTranscriptRef.current = '';
     
     // Clear pending chunks queue
     pendingChunksRef.current = [];
+    
+    console.log('[TranscriptionWS] Live transcription cleanup complete');
   };
   
   /**
@@ -349,15 +388,56 @@ export default function useAudioRecorder() {
   const startRecording = async (options = {}) => {
     const { enableLiveTranscription = true, stream: providedStream = null } = options;
     
-    // Clear live transcript and accumulated transcript ONLY when starting a NEW recording
+    // Log current state at start (for debugging stale state issues)
+    console.log('[AudioRecorder] startRecording called - state check:', {
+      recorderState: recorderStateRef.current,
+      wsStatus: wsStatusRef.current,
+      wsReady: wsReadyRef.current,
+      mediaRecorder: mediaRecorderRef.current ? mediaRecorderRef.current.state : 'null',
+      wsRef: wsRef.current ? `readyState=${wsRef.current.readyState}` : 'null',
+      streamRef: streamRef.current ? 'exists' : 'null',
+      hasAudioChunks: hasAudioChunksRef.current,
+      pendingChunksCount: pendingChunksRef.current.length
+    });
+    
+    // Check if recorder is already active - early return ONLY for active states
+    if (recorderStateRef.current === 'recording' || recorderStateRef.current === 'stopping') {
+      console.warn('[AudioRecorder] startRecording called but recorder is already', recorderStateRef.current, '- aborting');
+      throw new Error(`Recording already ${recorderStateRef.current}`);
+    }
+    
+    // Reset ALL refs/flags to initial values before starting a new recording
+    // This ensures no stale state from previous recording blocks re-entry
+    console.log('[AudioRecorder] Resetting all refs/flags for new recording');
     setLiveTranscript('');
     accumulatedTranscriptRef.current = '';
     pendingChunksRef.current = [];
-    hasAudioChunksRef.current = false; // Reset audio chunks tracking
-    recorderStateRef.current = 'idle'; // Reset recorder state
-    wsStatusRef.current = 'idle'; // Reset WebSocket status
+    hasAudioChunksRef.current = false;
+    recorderStateRef.current = 'idle';
+    wsStatusRef.current = 'idle';
+    wsReadyRef.current = false;
+    // Note: mediaRecorderRef and wsRef will be set below, don't clear them yet
     
     try {
+      // Clean up any stale MediaRecorder before starting new one
+      // This ensures we don't have stale refs blocking re-entry
+      if (mediaRecorderRef.current) {
+        const mrState = mediaRecorderRef.current.state;
+        console.log('[AudioRecorder] Cleaning up stale MediaRecorder, state:', mrState);
+        try {
+          if (mrState !== 'inactive') {
+            // Stop if still recording/paused
+            mediaRecorderRef.current.stop();
+          }
+          // Remove event listeners if any
+          mediaRecorderRef.current.ondataavailable = null;
+          mediaRecorderRef.current.onstop = null;
+        } catch (cleanupErr) {
+          console.warn('[AudioRecorder] Error cleaning up stale MediaRecorder:', cleanupErr);
+        }
+        mediaRecorderRef.current = null;
+      }
+      
       // Get audio stream - use provided stream if available (from user gesture),
       // otherwise request it here (for backward compatibility)
       let stream = providedStream;
@@ -657,9 +737,32 @@ export default function useAudioRecorder() {
               streamRef.current = null; // Clear stream reference
             }
 
+            // RESET ALL REFS to initial values after recording stops
+            // This ensures clean state for the next recording
+            console.log('[AudioRecorder] Resetting all refs/flags after recording stopped');
+            
             setIsRecording(false);
             setIsPaused(false);
             mr.removeEventListener('stop', onStop);
+            
+            // Clean up MediaRecorder ref
+            mediaRecorderRef.current = null;
+            
+            // Clean up stream ref (tracks already stopped above)
+            streamRef.current = null;
+            
+            // Reset recording state refs
+            recorderStateRef.current = 'idle';
+            hasAudioChunksRef.current = false;
+            audioChunksRef.current = [];
+            
+            // WebSocket cleanup already done by stopLiveTranscription() above
+            // But ensure refs are reset
+            wsStatusRef.current = 'idle';
+            wsReadyRef.current = false;
+            
+            console.log('[AudioRecorder] All refs reset, recording cleanup complete');
+            
             // Return both blob and hasAudioChunks flag
             resolve({ blob: finalBlob, hasAudioChunks: hasChunks });
           }, 100); // Small delay to allow final ondataavailable
@@ -675,7 +778,6 @@ export default function useAudioRecorder() {
         }
       } else {
         // Already stopped or never started
-        recorderStateRef.current = 'stopped';
         console.warn('[AudioRecorder] stopRecording called but MediaRecorder is already inactive');
         
         const finalBlob = audioBlob || new Blob(audioChunksRef.current, { type: 'audio/webm' });
@@ -695,6 +797,15 @@ export default function useAudioRecorder() {
           }
           streamRef.current = null;
         }
+        
+        // RESET ALL REFS even in this path (idempotent cleanup)
+        console.log('[AudioRecorder] Resetting all refs/flags (MediaRecorder was inactive)');
+        mediaRecorderRef.current = null;
+        recorderStateRef.current = 'idle';
+        hasAudioChunksRef.current = false;
+        audioChunksRef.current = [];
+        wsStatusRef.current = 'idle';
+        wsReadyRef.current = false;
         
         setIsRecording(false);
         setIsPaused(false);
@@ -745,11 +856,36 @@ export default function useAudioRecorder() {
     }
   };
 
-  // Cleanup on unmount
+  // Cleanup on unmount - idempotent cleanup
   useEffect(() => {
     return () => {
+      console.log('[AudioRecorder] Component unmounting, cleaning up...');
+      // stopLiveTranscription is idempotent - safe to call multiple times
       stopLiveTranscription();
-      stopRecording();
+      
+      // stopRecording is also idempotent - safe to call multiple times
+      // It checks recorderState before acting
+      try {
+        stopRecording().catch(err => {
+          console.warn('[AudioRecorder] Error during unmount cleanup:', err);
+        });
+      } catch (err) {
+        console.warn('[AudioRecorder] Error calling stopRecording during unmount:', err);
+      }
+      
+      // Final cleanup - ensure all refs are reset
+      mediaRecorderRef.current = null;
+      streamRef.current = null;
+      wsRef.current = null;
+      recorderStateRef.current = 'idle';
+      wsStatusRef.current = 'idle';
+      wsReadyRef.current = false;
+      hasAudioChunksRef.current = false;
+      audioChunksRef.current = [];
+      pendingChunksRef.current = [];
+      accumulatedTranscriptRef.current = '';
+      
+      console.log('[AudioRecorder] Unmount cleanup complete');
     };
   }, []);
 
