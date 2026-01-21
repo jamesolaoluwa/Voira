@@ -1,57 +1,37 @@
 import { useState, useRef, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { audio } from '@/components/services/api';
+import { 
+  API_BASE_URL, 
+  getWebSocketUrl,
+  RECORDING_TIMESLICE_MS,
+  WEBSOCKET_CONNECTION_TIMEOUT_MS,
+  WEBSOCKET_READY_CHECK_INTERVAL_MS,
+  MIN_JWT_TOKEN_LENGTH
+} from '@/config/constants';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-// WebSocket URL for live transcription - must point to backend, never frontend
-// Defaults to backend API URL with /ws/listen endpoint
+// WebSocket URL for live transcription - derived from centralized config
+// This function adds validation to prevent accidental frontend connections
 const getTranscriptionWebSocketUrl = () => {
-  // If explicitly set, use that (with validation)
-  const explicitWsUrl = import.meta.env.VITE_TRANSCRIPTION_WS_URL;
-  if (explicitWsUrl) {
-    try {
-      const url = new URL(explicitWsUrl);
-      // Validate it's not pointing to frontend dev server
-      const isFrontend = url.port === '5173' || 
-                         (url.hostname === 'localhost' && !url.port && url.protocol === 'ws:') ||
-                         (url.hostname === 'localhost' && url.port === '' && url.protocol === 'ws:');
-      if (isFrontend) {
-        console.error('[AudioRecorder] VITE_TRANSCRIPTION_WS_URL points to frontend dev server (port 5173 or no port)!', explicitWsUrl);
-        console.error('[AudioRecorder] Using backend fallback: ws://localhost:8000/ws/listen');
-      } else {
-        console.log('[AudioRecorder] Using explicit WebSocket URL:', explicitWsUrl);
-        return explicitWsUrl;
-      }
-    } catch (err) {
-      console.error('[AudioRecorder] Invalid VITE_TRANSCRIPTION_WS_URL:', explicitWsUrl, err);
-      // Fall through to use backend default
+  const wsUrl = getWebSocketUrl();
+  
+  // Validate it's not pointing to frontend dev server
+  try {
+    const url = new URL(wsUrl.replace('ws://', 'http://').replace('wss://', 'https://'));
+    const isFrontend = url.port === '5173' || 
+                       (url.hostname === 'localhost' && !url.port);
+    if (isFrontend) {
+      console.error('[AudioRecorder] WebSocket URL points to frontend! Using backend fallback.');
+      // Derive from API_BASE_URL as fallback
+      const apiUrl = new URL(API_BASE_URL);
+      const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${wsProtocol}//${apiUrl.host}/ws/listen`;
     }
+  } catch (err) {
+    console.warn('[AudioRecorder] Could not validate WebSocket URL, using as-is:', wsUrl);
   }
   
-  // Fallback: derive from API_BASE_URL (backend)
-  try {
-    const apiUrl = new URL(API_BASE_URL);
-    const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${apiUrl.host}/ws/listen`;
-    
-    // Validate we're not accidentally using frontend
-    if (apiUrl.port === '5173' || 
-        (apiUrl.hostname === 'localhost' && !apiUrl.port) ||
-        (apiUrl.hostname === 'localhost' && apiUrl.port === '')) {
-      console.error('[AudioRecorder] API_BASE_URL points to frontend! Forcing backend fallback.');
-      console.error('[AudioRecorder] API_BASE_URL:', API_BASE_URL);
-      return 'ws://localhost:8000/ws/listen';
-    }
-    
-    console.log('[AudioRecorder] Derived WebSocket URL from API_BASE_URL:', wsUrl);
-    return wsUrl;
-  } catch (err) {
-    console.error('[AudioRecorder] Invalid API_BASE_URL:', API_BASE_URL, err);
-    // Final fallback: hardcoded backend URL
-    console.warn('[AudioRecorder] Using hardcoded backend fallback: ws://localhost:8000/ws/listen');
-    return 'ws://localhost:8000/ws/listen';
-  }
+  return wsUrl;
 };
 
 export default function useAudioRecorder() {
@@ -99,8 +79,8 @@ export default function useAudioRecorder() {
         return null;
       }
       
-      // Validate token is a proper JWT (should be at least 50 chars for a valid JWT)
-      if (token.length < 50) {
+      // Validate token is a proper JWT (should be at least MIN_JWT_TOKEN_LENGTH chars)
+      if (token.length < MIN_JWT_TOKEN_LENGTH) {
         console.error(`[TranscriptionWS] Token too short (${token.length} chars) - likely invalid`);
         return null;
       }
@@ -165,8 +145,8 @@ export default function useAudioRecorder() {
         return false; // DO NOT open WebSocket
       }
       
-      if (token.length < 50) {
-        console.error(`[TranscriptionWS] Token validation failed: token too short (${token.length} chars, expected >= 50)`);
+      if (token.length < MIN_JWT_TOKEN_LENGTH) {
+        console.error(`[TranscriptionWS] Token validation failed: token too short (${token.length} chars, expected >= ${MIN_JWT_TOKEN_LENGTH})`);
         setError('Authentication expired. Please refresh the page and try again.');
         wsStatusRef.current = 'error';
         return false; // DO NOT open WebSocket
@@ -528,9 +508,9 @@ export default function useAudioRecorder() {
                 reject(new Error('WebSocket authentication failed - connection closed'));
                 return;
               }
-            }, 50);
+            }, WEBSOCKET_READY_CHECK_INTERVAL_MS);
             
-            // Timeout after 3 seconds - if WebSocket hasn't opened by then, likely auth failure
+            // Timeout - if WebSocket hasn't opened by then, likely auth failure
             const timeout = setTimeout(() => {
               clearInterval(checkInterval);
               // Check if it's an error or just slow connection
@@ -545,8 +525,8 @@ export default function useAudioRecorder() {
                 setError('Authentication failed. Please refresh and try again.');
                 reject(new Error('WebSocket authentication failed - connection closed'));
               } else if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
-                // Still connecting after 3s - might be slow, but reject to be safe
-                console.error('[TranscriptionWS] WebSocket still connecting after 3s, likely auth failure, aborting');
+                // Still connecting after timeout - might be slow, but reject to be safe
+                console.error(`[TranscriptionWS] WebSocket still connecting after ${WEBSOCKET_CONNECTION_TIMEOUT_MS}ms, likely auth failure, aborting`);
                 wsStatusRef.current = 'error';
                 setError('Live transcription connection timeout. Please refresh and try again.');
                 reject(new Error('WebSocket connection timeout'));
@@ -557,7 +537,7 @@ export default function useAudioRecorder() {
                 setError('Live transcription connection failed. Please refresh and try again.');
                 reject(new Error('WebSocket connection failed - unknown state'));
               }
-            }, 3000);
+            }, WEBSOCKET_CONNECTION_TIMEOUT_MS);
           });
         };
         
@@ -613,11 +593,11 @@ export default function useAudioRecorder() {
         console.log('[AudioRecorder] Final blob created, size:', audioBlob.size, 'hasAudioChunks:', hasAudioChunksRef.current);
       };
 
-      // Start recording with timeslice of 250ms to get chunks frequently
+      // Start recording with configured timeslice to get chunks frequently
       // Now the WebSocket should be ready, so chunks will be sent immediately
-      console.log('[AudioRecorder] Starting MediaRecorder with timeslice 250ms');
+      console.log(`[AudioRecorder] Starting MediaRecorder with timeslice ${RECORDING_TIMESLICE_MS}ms`);
       try {
-        mediaRecorder.start(250);
+        mediaRecorder.start(RECORDING_TIMESLICE_MS);
         console.log('[AudioRecorder] MediaRecorder started successfully, state:', mediaRecorder.state);
         recorderStateRef.current = 'recording';
         

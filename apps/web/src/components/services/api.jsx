@@ -358,34 +358,33 @@ export const audio = {
     }
   },
 
+  /**
+   * Start streaming transcription (deprecated - use WebSocket in AudioRecorder)
+   * @deprecated Use live WebSocket transcription via AudioRecorder instead
+   * This method is kept for backward compatibility but should not be used in production.
+   */
   async startTranscriptionStream(audioBlob, onChunkUpdate) {
-    const simulateChunks = async () => {
-      const chunks = [
-        'Hello, I would like to',
-        'Hello, I would like to talk about my',
-        'Hello, I would like to talk about my experience in',
-        'Hello, I would like to talk about my experience in leading community projects...',
-      ];
-
-      for (let i = 0; i < chunks.length; i++) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        onChunkUpdate(chunks[i]);
-      }
-    };
-
-    simulateChunks();
+    // NOTE: This method is deprecated. Live transcription now uses WebSocket
+    // via AudioRecorder.jsx directly connected to /ws/listen endpoint.
+    // This stub exists only for backward compatibility.
+    console.warn('[audio.startTranscriptionStream] Deprecated - use WebSocket transcription');
     return this.transcribeFinal(audioBlob);
   },
 
+  /**
+   * Finalize transcription by uploading audio file.
+   * NOTE: Actual transcription is now done via live WebSocket streaming.
+   * This method uploads the audio file and returns file metadata.
+   */
   async transcribeFinal(audioBlob) {
     const audioFile = new File([audioBlob], 'recording.webm', { type: audioBlob.type });
     
     const { file_url } = await base44.integrations.Core.UploadFile({ file: audioFile });
     
-    const mockTranscript = "I believe my experience in leading community initiatives has shaped who I am today. When I started volunteering at the local food bank three years ago, I didn't realize how much it would transform my perspective on service and leadership.";
-    
+    // NOTE: Transcript is captured from live WebSocket transcription, not generated here.
+    // Return empty transcript - caller must provide transcript from live transcription.
     return {
-      transcript: mockTranscript,
+      transcript: '', // Transcript comes from live WebSocket, not mock data
       audio_url: file_url,
       audio_mime: audioBlob.type,
       audio_size_bytes: audioBlob.size,

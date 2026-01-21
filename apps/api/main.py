@@ -3,15 +3,16 @@ FastAPI Backend for Voira
 Handles authentication, sessions, admin checks, and transcription.
 """
 
-import logging
 import json
 import asyncio
 import re
 import os
 import uuid
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List, Optional
 from auth import get_current_user, check_is_admin, security, get_user_from_websocket_token
 from models import (
@@ -20,7 +21,7 @@ from models import (
     FileUploadResponse
 )
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
-from rate_limit import rate_limit_middleware
+from rate_limit import rate_limit_middleware, rate_limit_check, close_redis
 from db import supabase
 from config import settings
 from transcription import (
@@ -34,9 +35,17 @@ from providers.deepgram_webm import DeepgramWebmProvider
 from datetime import datetime
 from llm_refinement import refine_transcript, analyze_and_refine
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Initialize logging FIRST (before any other imports that might log)
+from logging_config import setup_logging, get_logger, set_request_id, get_request_id
+setup_logging()
+logger = get_logger(__name__)
+
+# Initialize Sentry error tracking
+from sentry_config import init_sentry, capture_exception, set_user_context, clear_user_context
+init_sentry()
+
+# Import health check module
+from health import get_all_health_checks, is_ready, get_overall_status
 
 app = FastAPI(
     title="Voira API",
@@ -45,6 +54,88 @@ app = FastAPI(
 )
 
 
+# =============================================================================
+# Security Middleware
+# =============================================================================
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+    
+    async def dispatch(self, request: Request, call_next):
+        # Generate request ID for tracing
+        request_id = set_request_id()
+        
+        # Check request size limit
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > settings.max_request_size:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large"},
+                headers={"X-Request-ID": request_id},
+            )
+        
+        try:
+            response = await call_next(request)
+        except Exception as e:
+            # Capture unhandled exceptions
+            capture_exception(e, extra={
+                "request_id": request_id,
+                "path": request.url.path,
+                "method": request.method,
+            })
+            raise
+        
+        # Add security headers
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        
+        # Add HSTS header in production
+        if settings.is_production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        
+        return response
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Apply rate limiting to all requests."""
+    
+    async def dispatch(self, request: Request, call_next):
+        # Skip rate limiting for health checks
+        if request.url.path.startswith("/health"):
+            return await call_next(request)
+        
+        # Get identifier (user ID from auth header, or IP address)
+        identifier = request.client.host if request.client else "unknown"
+        
+        # Check rate limit
+        allowed, headers = await rate_limit_check(
+            identifier=identifier,
+            path=request.url.path,
+        )
+        
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please try again later."},
+                headers=headers,
+            )
+        
+        response = await call_next(request)
+        
+        # Add rate limit headers to response
+        for key, value in headers.items():
+            response.headers[key] = value
+        
+        return response
+
+
+# =============================================================================
+# Startup and Shutdown Events
+# =============================================================================
+
 @app.on_event("startup")
 async def startup_validation():
     """
@@ -52,50 +143,138 @@ async def startup_validation():
     This ensures the app fails fast with clear errors if configuration is missing.
     NEVER log or print secret values (keys, tokens, etc.)
     """
-    # Warn if OpenAI API key is missing (non-blocking, as it's only needed for LLM features)
-    if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY not set. LLM refinement features will not work. Set OPENAI_API_KEY in .env file.")
-    elif not settings.openai_api_key.strip():
-        logger.warning("OPENAI_API_KEY is empty. LLM refinement features will not work.")
-    else:
-        # Check if key looks valid (starts with 'sk-')
-        if not settings.openai_api_key.startswith('sk-'):
-            logger.warning("OPENAI_API_KEY does not appear to be in the correct format (should start with 'sk-'). Please verify your API key.")
-    missing_vars = []
+    logger.info(f"Application starting in {settings.env} environment")
     
-    # Check required Supabase configuration
+    # Check required configuration
+    missing_vars = []
+    warnings = []
+    
+    # Required: Supabase
     if not settings.supabase_url:
         missing_vars.append("SUPABASE_URL")
     if not settings.supabase_service_role_key:
         missing_vars.append("SUPABASE_SERVICE_ROLE_KEY")
     
+    # Warn about optional but important config
+    if not settings.openai_api_key:
+        warnings.append("OPENAI_API_KEY not set - LLM refinement will not work")
+    elif not settings.openai_api_key.startswith('sk-'):
+        warnings.append("OPENAI_API_KEY may be invalid (should start with 'sk-')")
+    
+    if not settings.deepgram_api_key:
+        warnings.append("DEEPGRAM_API_KEY not set - transcription will not work")
+    
+    if settings.is_production:
+        if not settings.sentry_dsn:
+            warnings.append("SENTRY_DSN not set - error tracking disabled in production")
+        if not settings.redis_url:
+            warnings.append("REDIS_URL not set - using in-memory rate limiting (not recommended for production)")
+    
+    # Log warnings
+    for warning in warnings:
+        logger.warning(warning)
+    
+    # Fail on missing required vars
     if missing_vars:
         error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
         logger.error(error_msg)
         raise ValueError(error_msg)
     
-    # Log environment (safe to log - not a secret)
-    logger.info(f"Application starting in {settings.env} environment")
-    
-    # Validate Supabase URL format (basic check, no secrets logged)
+    # Validate Supabase URL format
     if settings.supabase_url and not settings.supabase_url.startswith(("http://", "https://")):
         logger.warning("SUPABASE_URL should start with http:// or https://")
+    
+    logger.info("Startup validation complete")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Clean up resources on shutdown."""
+    logger.info("Application shutting down...")
+    await close_redis()
+    logger.info("Shutdown complete")
+
+# =============================================================================
+# Middleware (order matters - first added = outermost)
+# =============================================================================
 
 # CORS configuration - must be added before other middleware
+# Origins are configured via CORS_ORIGINS env var (comma-separated)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
+    expose_headers=[
+        "*",
+        "X-Request-ID",
+        "X-RateLimit-Limit",
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+    ],
 )
 
+# Security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Rate limiting middleware
+app.add_middleware(RateLimitMiddleware)
+
+
+# =============================================================================
+# Health Check Endpoints
+# =============================================================================
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
+    """
+    Basic liveness check.
+    Returns 200 if the application is running.
+    Use this for container liveness probes.
+    """
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """
+    Readiness check with dependency verification.
+    Returns 200 if the application is ready to serve traffic.
+    Returns 503 if critical dependencies are unavailable.
+    Use this for container readiness probes.
+    """
+    checks = await get_all_health_checks()
+    ready = is_ready(checks)
+    status = get_overall_status(checks)
+    
+    response = {
+        "status": status,
+        "ready": ready,
+        "checks": checks,
+        "environment": settings.env,
+    }
+    
+    if not ready:
+        raise HTTPException(status_code=503, detail=response)
+    
+    return response
+
+
+@app.get("/health/dependencies")
+async def health_dependencies():
+    """
+    Detailed dependency health status.
+    Returns status of all external dependencies.
+    Useful for debugging and monitoring dashboards.
+    """
+    checks = await get_all_health_checks()
+    return {
+        "status": get_overall_status(checks),
+        "dependencies": checks,
+        "environment": settings.env,
+        "version": "1.0.0",
+    }
 
 
 @app.get("/auth/me", response_model=UserResponse)
@@ -449,14 +628,16 @@ async def websocket_live_transcribe(
     
     try:
         # Start transcription stream
-        # Browser AudioContext typically uses 48000 Hz (or 44100 Hz on some browsers)
-        # Deepgram requires sample_rate to match the actual audio sample rate (no auto-resampling)
-        sample_rate = 48000  # Most modern browsers use 48000 Hz
+        # Configuration values come from settings (config.py) with sensible defaults:
+        # - Sample rate: 48000 Hz (modern browser default)
+        # - Channels: 1 (mono)
+        # - Encoding: linear16 (PCM)
+        # These can be overridden via environment variables if needed
         stream = provider.start_stream(
             language=language,
-            sample_rate=sample_rate,
-            channels=1,
-            encoding="linear16"
+            sample_rate=settings.deepgram_sample_rate,
+            channels=settings.deepgram_channels,
+            encoding=settings.deepgram_encoding
         )
         
         # Task to forward transcript events to client
