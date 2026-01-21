@@ -62,7 +62,11 @@ export default function Library() {
   // Use unified session store as authoritative source
   const sessions = useSessionStore(state => state.sessions || []);
   const setSessions = useSessionStore(state => state.setSessions);
-  const safeRecordings = Array.isArray(sessions) ? sessions : [];
+  // Filter out seed/demo data - only show real user recordings
+  const safeRecordings = React.useMemo(() => {
+    const allSessions = Array.isArray(sessions) ? sessions : [];
+    return allSessions.filter(s => s.id && !s.id.startsWith('seed-'));
+  }, [sessions]);
   
   const deleteMutation = useMutation({
     mutationFn: (id) => base44.entities.Recording.delete(id),

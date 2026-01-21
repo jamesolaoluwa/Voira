@@ -96,11 +96,14 @@ function computeStats(sessions) {
 }
 
 export const useSessionStore = create((set, get) => ({
+  // Initialize with local recordings only, NOT seed data
+  // Seed data should only be shown if explicitly requested for demo purposes
+  // Real users should see their actual sessions from backend/localStorage
   sessions: (() => {
-    // merge local fallback (from save flows) with deterministic seed if none exist
     const local = getLocalRecordings() || [];
-    if (local.length > 0) return local;
-    return seedDeterministic();
+    // Return local recordings if any exist, otherwise empty array
+    // Do NOT return seed data by default - it confuses real users
+    return local.length > 0 ? local : [];
   })(),
   setSessions: (sessions) => set(prev => ({ ...prev, sessions })),
   addSession: (session) => {

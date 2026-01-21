@@ -106,12 +106,28 @@ export async function processOAuthRedirect() {
 // ============================================
 
 export const sessions = {
+  // Alias for getSessionById (Bug #13 fix - Draft.jsx was calling sessions.get())
+  async get(id) {
+    return this.getSessionById(id);
+  },
+  
   async createSessionDraft(payload) {
     const {
       title, type, question, goal, reference_text,
       audio_url, audio_mime, audio_size_bytes, duration_seconds,
       transcript, refined_draft, metrics, highlights = [],
+      // Also accept flat properties for backward compatibility
+      clarity_score: flatClarityScore,
+      confidence_score: flatConfidenceScore,
+      filler_count: flatFillerCount,
+      words_per_minute: flatWordsPerMinute,
     } = payload;
+
+    // Support both nested metrics and flat properties
+    const clarityScore = metrics?.clarity_score ?? flatClarityScore ?? 0;
+    const confidenceScore = metrics?.confidence_score ?? flatConfidenceScore ?? 0;
+    const fillerCount = metrics?.filler_count ?? flatFillerCount ?? 0;
+    const wordsPerMinute = metrics?.words_per_minute ?? flatWordsPerMinute ?? 0;
 
     // Try backend first (enforces credits server-side)
     try {
@@ -128,10 +144,10 @@ export const sessions = {
         duration_seconds,
         transcript,
         refined_draft,
-        clarity_score: metrics?.clarity_score || 0,
-        confidence_score: metrics?.confidence_score || 0,
-        filler_count: metrics?.filler_count || 0,
-        words_per_minute: metrics?.words_per_minute || 0,
+        clarity_score: clarityScore,
+        confidence_score: confidenceScore,
+        filler_count: fillerCount,
+        words_per_minute: wordsPerMinute,
         highlights: highlights || [],
       });
     } catch (error) {
@@ -151,10 +167,10 @@ export const sessions = {
         duration_seconds: duration_seconds || 0,
         transcript: transcript || '',
         refined_draft: refined_draft || '',
-        clarity_score: metrics?.clarity_score || 0,
-        confidence_score: metrics?.confidence_score || 0,
-        filler_count: metrics?.filler_count || 0,
-        words_per_minute: metrics?.words_per_minute || 0,
+        clarity_score: clarityScore,
+        confidence_score: confidenceScore,
+        filler_count: fillerCount,
+        words_per_minute: wordsPerMinute,
         highlights: JSON.stringify(highlights),
       });
       return session;

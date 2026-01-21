@@ -314,6 +314,8 @@ export default function useAudioRecorder() {
   /**
    * Stop live transcription and close WebSocket connection.
    * Idempotent - safe to call multiple times.
+   * CRITICAL: Does NOT clear accumulatedTranscriptRef - transcript must be preserved
+   * until explicitly cleared by caller after saving or discarding session.
    */
   const stopLiveTranscription = () => {
     // Idempotent cleanup - check state before acting
@@ -348,14 +350,21 @@ export default function useAudioRecorder() {
       chunkIntervalRef.current = null;
     }
 
-    // Clear live transcript
-    setLiveTranscript('');
-    accumulatedTranscriptRef.current = '';
+    // CRITICAL: Do NOT clear accumulatedTranscriptRef here!
+    // The transcript must be preserved until the session is saved or discarded.
+    // Clearing it here causes Bug #1 (transcript lost before handleFinish captures it).
+    // 
+    // Do NOT clear: accumulatedTranscriptRef.current
+    // Do NOT call: setLiveTranscript('')
+    //
+    // These will be cleared in startRecording() when a new recording begins,
+    // or by the caller after successfully saving the session.
     
-    // Clear pending chunks queue
+    // Clear pending chunks queue (these are audio chunks, not transcript)
     pendingChunksRef.current = [];
     
-    console.log('[TranscriptionWS] Live transcription cleanup complete');
+    console.log('[TranscriptionWS] Live transcription WebSocket closed, transcript PRESERVED:', 
+      accumulatedTranscriptRef.current?.substring(0, 50) || '(empty)');
   };
   
   /**
@@ -667,17 +676,20 @@ export default function useAudioRecorder() {
     // Prevent double-stopping
     if (recorderStateRef.current === 'stopping' || recorderStateRef.current === 'stopped') {
       console.warn('[AudioRecorder] stopRecording called but recorder is already', recorderStateRef.current);
-      const finalBlob = audioBlob || new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      // Construct blob from current chunks (don't rely on stale audioBlob state)
+      const finalBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
       const hasChunks = hasAudioChunksRef.current || (finalBlob && finalBlob.size > 0);
-      return Promise.resolve({ blob: finalBlob, hasAudioChunks: hasChunks });
+      // Also return the transcript synchronously
+      const transcript = accumulatedTranscriptRef.current || '';
+      return Promise.resolve({ blob: finalBlob, hasAudioChunks: hasChunks, transcript });
     }
     
     recorderStateRef.current = 'stopping';
     
-    // Stop live transcription first (close WebSocket)
+    // Stop live transcription (close WebSocket) - but PRESERVE transcript
     stopLiveTranscription();
 
-    // Stop the recorder and return a Promise that resolves with the final Blob and hasAudioChunks flag
+    // Stop the recorder and return a Promise that resolves with the final Blob, hasAudioChunks flag, and transcript
     return new Promise((resolve) => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         const mr = mediaRecorderRef.current;
@@ -689,12 +701,12 @@ export default function useAudioRecorder() {
             return;
           }
           stopResolved = true;
-          recorderStateRef.current = 'stopped';
           
           console.log('[AudioRecorder] onStop handler fired');
           console.log('[AudioRecorder] Audio chunks count:', audioChunksRef.current.length);
           console.log('[AudioRecorder] Total chunks size:', audioChunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0));
           console.log('[AudioRecorder] hasAudioChunksRef:', hasAudioChunksRef.current);
+          console.log('[AudioRecorder] accumulatedTranscript:', accumulatedTranscriptRef.current?.substring(0, 100) || '(empty)');
           
           // Request final data - this may trigger one more ondataavailable
           // Some browsers require this to get the final chunk
@@ -709,20 +721,22 @@ export default function useAudioRecorder() {
           // Small delay to allow any final ondataavailable to fire
           // MediaRecorder may need a tick to emit final chunk
           setTimeout(() => {
+            // CRITICAL: Construct blob BEFORE clearing audioChunksRef
+            // Bug #4 fix: don't clear chunks until blob is safely constructed
             const finalBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
             setAudioBlob(finalBlob);
             
-            // Check if audio chunks were received (capture before cleanup)
+            // Capture values BEFORE any cleanup
             const hasChunks = hasAudioChunksRef.current;
+            // CRITICAL: Capture transcript from ref, not React state (Bug #1, #2 fix)
+            const transcript = accumulatedTranscriptRef.current || '';
             
-            console.log('[AudioRecorder] Finalizing stop - blob size:', finalBlob.size, 'hasChunks:', hasChunks);
+            console.log('[AudioRecorder] Finalizing stop - blob size:', finalBlob.size, 'hasChunks:', hasChunks, 'transcript length:', transcript.length);
 
             // Stop all tracks - ONLY AFTER MediaRecorder has finished and emitted final chunk
-            // This is critical: tracks must be stopped AFTER onstop fires
             if (streamRef.current) {
               try {
                 streamRef.current.getTracks().forEach(track => {
-                  // Only stop tracks that aren't already ended
                   if (track.readyState !== 'ended') {
                     console.log('[AudioRecorder] Stopping track, state:', track.readyState);
                     track.stop();
@@ -734,37 +748,30 @@ export default function useAudioRecorder() {
               } catch (trackErr) {
                 console.warn('[AudioRecorder] Error stopping tracks:', trackErr);
               }
-              streamRef.current = null; // Clear stream reference
             }
 
-            // RESET ALL REFS to initial values after recording stops
-            // This ensures clean state for the next recording
-            console.log('[AudioRecorder] Resetting all refs/flags after recording stopped');
+            // SYNCHRONOUS state reset - critical for re-recording (Bug #7 fix)
+            // Reset recorderStateRef BEFORE any async operations
+            recorderStateRef.current = 'idle';
             
+            // Clean up refs for next recording
+            mediaRecorderRef.current = null;
+            streamRef.current = null;
+            hasAudioChunksRef.current = false;
+            // Clear audio chunks AFTER blob is constructed (Bug #4 fix)
+            audioChunksRef.current = [];
+            wsStatusRef.current = 'idle';
+            wsReadyRef.current = false;
+            
+            // Update React state
             setIsRecording(false);
             setIsPaused(false);
             mr.removeEventListener('stop', onStop);
             
-            // Clean up MediaRecorder ref
-            mediaRecorderRef.current = null;
+            console.log('[AudioRecorder] All refs reset, recording cleanup complete. Transcript PRESERVED.');
             
-            // Clean up stream ref (tracks already stopped above)
-            streamRef.current = null;
-            
-            // Reset recording state refs
-            recorderStateRef.current = 'idle';
-            hasAudioChunksRef.current = false;
-            audioChunksRef.current = [];
-            
-            // WebSocket cleanup already done by stopLiveTranscription() above
-            // But ensure refs are reset
-            wsStatusRef.current = 'idle';
-            wsReadyRef.current = false;
-            
-            console.log('[AudioRecorder] All refs reset, recording cleanup complete');
-            
-            // Return both blob and hasAudioChunks flag
-            resolve({ blob: finalBlob, hasAudioChunks: hasChunks });
+            // Return blob, hasAudioChunks flag, AND transcript
+            resolve({ blob: finalBlob, hasAudioChunks: hasChunks, transcript });
           }, 100); // Small delay to allow final ondataavailable
         };
 
@@ -780,10 +787,13 @@ export default function useAudioRecorder() {
         // Already stopped or never started
         console.warn('[AudioRecorder] stopRecording called but MediaRecorder is already inactive');
         
-        const finalBlob = audioBlob || new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        // Construct blob from current chunks
+        const finalBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const hasChunks = hasAudioChunksRef.current || (finalBlob && finalBlob.size > 0);
+        // Capture transcript from ref
+        const transcript = accumulatedTranscriptRef.current || '';
         
-        // Ensure tracks are stopped even if already stopped
+        // Ensure tracks are stopped
         if (streamRef.current) {
           try {
             streamRef.current.getTracks().forEach(track => {
@@ -795,13 +805,12 @@ export default function useAudioRecorder() {
           } catch (trackErr) {
             console.warn('[AudioRecorder] Error stopping tracks:', trackErr);
           }
-          streamRef.current = null;
         }
         
-        // RESET ALL REFS even in this path (idempotent cleanup)
-        console.log('[AudioRecorder] Resetting all refs/flags (MediaRecorder was inactive)');
-        mediaRecorderRef.current = null;
+        // SYNCHRONOUS state reset (Bug #7 fix)
         recorderStateRef.current = 'idle';
+        mediaRecorderRef.current = null;
+        streamRef.current = null;
         hasAudioChunksRef.current = false;
         audioChunksRef.current = [];
         wsStatusRef.current = 'idle';
@@ -809,7 +818,7 @@ export default function useAudioRecorder() {
         
         setIsRecording(false);
         setIsPaused(false);
-        resolve({ blob: finalBlob, hasAudioChunks: hasChunks });
+        resolve({ blob: finalBlob, hasAudioChunks: hasChunks, transcript });
       }
     });
   };
@@ -889,6 +898,26 @@ export default function useAudioRecorder() {
     };
   }, []);
 
+  /**
+   * Get the accumulated transcript synchronously from ref.
+   * CRITICAL: Use this instead of liveTranscript state for capturing transcript
+   * in handleFinish - React state may be stale due to async updates.
+   * @returns {string} The accumulated final transcript
+   */
+  const getAccumulatedTranscript = () => {
+    return accumulatedTranscriptRef.current || '';
+  };
+
+  /**
+   * Clear the transcript. Call this ONLY after session is saved or discarded.
+   * Do NOT call this during stopRecording - it will lose the transcript.
+   */
+  const clearTranscript = () => {
+    console.log('[AudioRecorder] Clearing transcript (session saved or discarded)');
+    accumulatedTranscriptRef.current = '';
+    setLiveTranscript('');
+  };
+
   return {
     isRecording,
     isPaused,
@@ -902,5 +931,7 @@ export default function useAudioRecorder() {
     stopRecording,
     uploadAndTranscribe,
     sendAudioChunk, // Expose method for sending audio chunks
+    getAccumulatedTranscript, // CRITICAL: Use this to capture transcript synchronously
+    clearTranscript, // Call after session saved or discarded
   };
 }

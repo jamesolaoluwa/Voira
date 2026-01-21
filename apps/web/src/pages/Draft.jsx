@@ -23,22 +23,16 @@ import {
 import RecordButton from '@/components/ui/RecordButton';
 import { base44 } from '@/api/base44Client';
 import { sessions } from '@/components/services/api';
+import { toast } from '@/components/ui/use-toast';
 
-const mockDraft = {
-  original: "I believe my experience in leading community initiatives has shaped who I am today. When I started volunteering at the local food bank three years ago, I didn't realize how much it would transform my perspective on service and leadership.",
-  refined: "My journey leading community initiatives has profoundly shaped my identity. Three years ago, when I first volunteered at our local food bank, I couldn't have anticipated the transformative impact this experience would have on my understanding of service and leadership.",
-  structure: [
-    { title: "Opening Hook", content: "Personal journey statement", status: "strong" },
-    { title: "Context", content: "Timeline and setting established", status: "strong" },
-    { title: "Reflection", content: "Personal growth acknowledgment", status: "moderate" },
-    { title: "Conclusion", content: "Needs strengthening", status: "weak" },
-  ],
-  themes: ["Leadership", "Community Service", "Personal Growth", "Transformation"],
-  alignment: {
-    score: 85,
-    notes: "Strong alignment with scholarship values of community impact and leadership development."
-  }
-};
+// Default structure/themes used when real data doesn't have them
+const defaultStructure = [
+  { title: "Opening Hook", content: "Personal journey statement", status: "strong" },
+  { title: "Context", content: "Timeline and setting established", status: "strong" },
+  { title: "Reflection", content: "Personal growth acknowledgment", status: "moderate" },
+  { title: "Conclusion", content: "Needs strengthening", status: "weak" },
+];
+const defaultThemes = ["Leadership", "Community Service", "Personal Growth", "Transformation"];
 
 const toneOptions = [
   { label: 'Confident', value: 'confident' },
@@ -55,9 +49,12 @@ export default function Draft() {
   const [copied, setCopied] = useState(false);
   const [selectedTone, setSelectedTone] = useState('confident');
   const [isExpanded, setIsExpanded] = useState(false);
-  const [draft, setDraft] = useState(mockDraft);
+  // CRITICAL: Initialize to null, NOT mock data (Bug #5 fix)
+  // Draft page must NEVER show placeholder content
+  const [draft, setDraft] = useState(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [currentRecording, setCurrentRecording] = useState(null);
   
   useEffect(() => {
@@ -65,17 +62,19 @@ export default function Draft() {
   }, [location.state, recordingId]);
   
   const loadDraftData = async () => {
+    setLoadError(null);
     try {
       // Try loading from URL parameter first (ID-based)
       if (recordingId) {
-        const recording = await sessions.get(recordingId);
+        // Bug #13 fix: Use getSessionById instead of non-existent get() method
+        const recording = await sessions.getSessionById(recordingId);
         if (recording) {
           setCurrentRecording(recording);
           setDraft({
-            original: recording.transcript,
-            refined: recording.refined_draft,
-            structure: mockDraft.structure,
-            themes: mockDraft.themes,
+            original: recording.transcript || '',
+            refined: recording.refined_draft || '',
+            structure: defaultStructure,
+            themes: defaultThemes,
             alignment: {
               score: recording.clarity_score || 80,
               notes: `Your response shows ${(recording.clarity_score || 80) >= 80 ? 'strong' : 'good'} clarity and alignment.`
@@ -86,29 +85,47 @@ export default function Draft() {
         }
       }
       
-      // Fall back to state-based loading
+      // Fall back to state-based loading (from Speak.jsx navigation)
       if (location.state?.sessionData) {
         const { sessionData } = location.state;
+        console.log('[Draft] Loading from navigation state, transcript length:', sessionData.transcript?.length || 0);
         setDraft({
-          original: sessionData.transcript,
-          refined: sessionData.refinedDraft,
-          structure: mockDraft.structure,
-          themes: mockDraft.themes,
+          original: sessionData.transcript || '',
+          refined: sessionData.refinedDraft || sessionData.refined_draft || '',
+          structure: defaultStructure,
+          themes: defaultThemes,
           alignment: {
-            score: sessionData.clarityScore || 80,
-            notes: `Your response shows ${(sessionData.clarityScore || 80) >= 80 ? 'strong' : 'good'} clarity and alignment.`
+            score: sessionData.clarityScore || sessionData.clarity_score || 80,
+            notes: `Your response shows ${(sessionData.clarityScore || sessionData.clarity_score || 80) >= 80 ? 'strong' : 'good'} clarity and alignment.`
           }
         });
+        setIsLoading(false);
+        return;
       }
+      
+      // No data source available - show error state
+      console.warn('[Draft] No session data available from URL or navigation state');
+      setLoadError('No session data found. Please record a new session.');
     } catch (error) {
       console.error('Error loading draft:', error);
+      setLoadError('Failed to load session. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
   
   const handleCopy = () => {
-    navigator.clipboard.writeText(draft.refined);
+    // Copy refined text, or original if refined is empty
+    const textToCopy = draft?.refined || draft?.original || '';
+    if (!textToCopy) {
+      toast({
+        title: 'Nothing to copy',
+        description: 'No text available to copy.',
+        duration: 2000
+      });
+      return;
+    }
+    navigator.clipboard.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -116,38 +133,77 @@ export default function Draft() {
   const handleSave = async () => {
     try {
       if (currentRecording) {
-        await sessions.update(currentRecording.id, {
+        // Use updateSession instead of non-existent update method
+        await sessions.updateSession(currentRecording.id, {
           refined_draft: draft.refined
         });
       }
     } catch (error) {
       console.error('Error saving draft:', error);
+      // Continue to navigate even on error - draft may already be saved
     }
     navigate(createPageUrl('Library'));
   };
   
   const handleRegenerate = async () => {
+    // Validate we have original text to regenerate
+    if (!draft?.original || draft.original.trim().length < 3) {
+      console.warn('[Draft] Cannot regenerate - no original transcript');
+      return;
+    }
+    
     setIsRegenerating(true);
     try {
-      const regeneratePrompt = `
-        Rewrite the following text with a ${selectedTone} tone:
-        
-        "${draft.original}"
-        
-        Maintain the core message but adjust the tone to be ${selectedTone}.
-        Keep it natural and authentic.
-      `;
+      // Use backend /refine endpoint for consistent, production-quality refinement
+      const { apiClient } = await import('@/lib/apiClient');
       
-      const newDraft = await base44.integrations.Core.InvokeLLM({
-        prompt: regeneratePrompt,
+      console.log('[Draft] Calling /refine with tone:', selectedTone);
+      const response = await apiClient.post('/refine', {
+        raw_transcript: draft.original,
+        session_type: 'refine',
+        desired_tone: selectedTone,
+        goal: `Rewrite with a ${selectedTone} tone while maintaining authenticity`,
       });
       
-      setDraft({
-        ...draft,
-        refined: typeof newDraft === 'string' ? newDraft : newDraft.output || draft.refined
-      });
+      if (response?.refined_text) {
+        setDraft({
+          ...draft,
+          refined: response.refined_text
+        });
+        console.log('[Draft] Refinement successful, new length:', response.refined_text.length);
+      } else {
+        console.warn('[Draft] Refinement response empty, keeping original');
+      }
     } catch (error) {
-      console.error('Error regenerating:', error);
+      console.error('[Draft] Error regenerating:', error);
+      // Fallback to base44 LLM if backend fails
+      try {
+        const regeneratePrompt = `
+          Rewrite the following text with a ${selectedTone} tone:
+          
+          "${draft.original}"
+          
+          Maintain the core message but adjust the tone to be ${selectedTone}.
+          Keep it natural and authentic.
+        `;
+        
+        const newDraft = await base44.integrations.Core.InvokeLLM({
+          prompt: regeneratePrompt,
+        });
+        
+        setDraft({
+          ...draft,
+          refined: typeof newDraft === 'string' ? newDraft : newDraft.output || draft.refined
+        });
+      } catch (fallbackError) {
+        console.error('[Draft] Fallback regeneration also failed:', fallbackError);
+        toast({
+          title: 'Regeneration failed',
+          description: 'Could not regenerate draft. Please try again later.',
+          variant: 'destructive',
+          duration: 4000
+        });
+      }
     } finally {
       setIsRegenerating(false);
     }
@@ -157,6 +213,29 @@ export default function Draft() {
     return (
       <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+      </div>
+    );
+  }
+  
+  // Bug #5 fix: Show error state instead of mock data when no draft available
+  if (loadError || !draft) {
+    return (
+      <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10 flex flex-col items-center justify-center">
+        <div className="text-center max-w-md">
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-4">
+            No Session Data
+          </h2>
+          <p className="text-zinc-600 dark:text-zinc-400 mb-6">
+            {loadError || 'No session data found. Please record a new session.'}
+          </p>
+          <Button
+            onClick={() => navigate(createPageUrl('Speak'))}
+            className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+          >
+            <Mic className="w-4 h-4 mr-2" />
+            Start Recording
+          </Button>
+        </div>
       </div>
     );
   }

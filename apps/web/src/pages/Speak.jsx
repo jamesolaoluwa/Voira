@@ -45,6 +45,8 @@ export default function Speak() {
     resumeRecording: audioResumeRecording,
     stopRecording: audioStopRecording,
     uploadAndTranscribe,
+    getAccumulatedTranscript, // CRITICAL: Use to capture transcript synchronously
+    clearTranscript, // Call after session saved or discarded
   } = useAudioRecorder();
   
   const { user: authUser, session, isLoading: authLoading, isAdmin } = useAuth();
@@ -233,17 +235,27 @@ export default function Speak() {
   };
   
   const handleFinish = async () => {
-  // mark processing
-  setRecordingState('processing');
-  setIsTranscribing(true);
+    // mark processing
+    setRecordingState('processing');
+    setIsTranscribing(true);
 
     try {
-      // Stop and get final blob and hasAudioChunks flag
-      const { blob: finalBlob, hasAudioChunks } = await audioStopRecording();
+      // CRITICAL: Stop and get final blob, hasAudioChunks flag, AND transcript from ref
+      // Bug #1, #2 fix: Transcript is captured synchronously from accumulatedTranscriptRef
+      // inside stopRecording, NOT from React state which may be stale
+      const { blob: finalBlob, hasAudioChunks, transcript: capturedTranscript } = await audioStopRecording();
 
-      // Freeze rawTranscript (verbatim speech from WebSocket)
-      // This is the raw transcript that includes filler words, false starts, etc.
-      const frozenRawTranscript = rawTranscript || audioLiveTranscript || '';
+      // CRITICAL: Use transcript returned from stopRecording, NOT React state
+      // This fixes Bug #1 (stopLiveTranscription clearing transcript) and
+      // Bug #2 (rawTranscript state being stale due to async updates)
+      const frozenRawTranscript = capturedTranscript || '';
+      
+      console.log('[Speak] handleFinish - captured transcript:', frozenRawTranscript?.substring(0, 100) || '(empty)', `[length: ${frozenRawTranscript?.length || 0}]`);
+      
+      // Update rawTranscript state for UI display (but this is NOT the source of truth for saving)
+      if (frozenRawTranscript) {
+        setRawTranscript(frozenRawTranscript);
+      }
       
       // Validate recording based on audio chunks, not transcript length
       // MediaRecorder timing means chunks may not have been emitted yet when stopped
@@ -251,12 +263,12 @@ export default function Speak() {
         // Show user-friendly error and bail out (non-blocking toast)
         setIsTranscribing(false);
         setIsGenerating(false);
-        // Refund local decrement if we removed credits earlier
-        setUserCredits(prev => prev + 0); // no-op if we didn't decrement
         setRawTranscript('');
         setRefinedTranscript('');
         setTranscript('');
         setRecordingState('idle'); // Reset to idle state on validation failure
+        // Clear transcript since session is being discarded
+        try { clearTranscript(); } catch (e) {}
         toast({ title: 'No audio recorded', description: 'Please record at least a few seconds of audio.' });
         return;
       }
@@ -265,9 +277,9 @@ export default function Speak() {
       // Do not wait for transcription/analysis - allow saving even if transcript arrives later
       setRecordingState('finished');
       
-      // Prepare session data with what we have so far (transcript may be empty)
+      // Prepare session data with the FROZEN transcript (captured synchronously from ref)
       setSessionData({
-        transcript: frozenRawTranscript || '', // May be empty if transcription still processing
+        transcript: frozenRawTranscript, // Use captured transcript, NOT React state
         audio_url: null, // Will be set after upload
         refinedDraft: '', // Will be set after analysis
         clarityScore: 75, // Default values
@@ -280,73 +292,114 @@ export default function Speak() {
       // Show Save modal immediately - user can save even if transcript is still processing
       setShowNamingModal(true);
 
-  // Transcribe/upload the audio (for backup/archival, but we use rawTranscript for refinement)
+      // Transcribe/upload the audio (for backup/archival, but we use frozenRawTranscript for refinement)
       const resp = await uploadAndTranscribe((partialTranscript) => {
         setTranscript(partialTranscript); // Deprecated: kept for backward compatibility
       }, finalBlob);
-  // Use backend transcript from final transcription (for backup)
-  const transcribedText = resp?.transcript || frozenRawTranscript; // Fallback to rawTranscript if backend transcript is empty
+      // Use backend transcript from final transcription (for backup)
+      const transcribedText = resp?.transcript || frozenRawTranscript; // Fallback to captured transcript
       const audioUrl = resp?.file_url ?? null;
 
       setTranscript(transcribedText); // Deprecated: kept for backward compatibility
       setIsTranscribing(false);
       setIsGenerating(true);
       
-      // Use frozen rawTranscript (verbatim speech) for analysis
+      // Use frozen transcript (captured synchronously) for analysis
       const rawTextForAnalysis = frozenRawTranscript || transcribedText;
       
+      // Validate transcript exists before calling analysis
+      if (!rawTextForAnalysis || rawTextForAnalysis.trim().length < 3) {
+        console.warn('[Speak] Transcript is empty or too short for analysis, skipping refinement');
+        // Update session data with empty refinement (user can still save)
+        setSessionData({
+          transcript: frozenRawTranscript,
+          audio_url: audioUrl,
+          refinedDraft: '', // No refinement without transcript
+          clarityScore: 50,
+          confidenceScore: 50,
+          fillerCount: 0,
+          question: contextPrompt,
+          type,
+        });
+        setIsGenerating(false);
+        setShowNamingModal(true);
+        toast({ 
+          title: 'Limited transcription', 
+          description: 'Transcript was short or empty. You can still save the recording.',
+          duration: 5000 
+        });
+        return;
+      }
+      
       // Call backend /analyze endpoint (combines analytics + LLM refinement)
-      const { apiClient } = await import('@/lib/apiClient');
-      
-      // Determine desired tone from user input
-      const desiredTone = sessionIntent || goalInput || 'natural';
-      // Normalize tone to common values
-      const toneMap = {
-        'confident': 'confident',
-        'concise': 'concise',
-        'reflective': 'reflective',
-        'natural': 'natural',
-        'clear': 'natural',
-      };
-      const normalizedTone = toneMap[desiredTone.toLowerCase()] || 'natural';
-      
-      // For interviews, extract or use company name
-      let interviewCompanyName = undefined;
-      if (type === 'interview') {
-        // Use provided company name, or try to extract from question
-        if (companyName.trim()) {
-          interviewCompanyName = companyName.trim();
-        } else if (contextPrompt) {
-          // Try to extract company name from question (simple heuristic)
-          const questionLower = contextPrompt.toLowerCase();
-          // Look for patterns like "at [Company]", "for [Company]", "[Company] interview", etc.
-          const companyPatterns = [
-            /(?:at|for|with|from)\s+([A-Z][a-zA-Z0-9&\s]+?)(?:\s|,|\.|$)/,
-            /([A-Z][a-zA-Z0-9&\s]+?)\s+interview/,
-            /interview\s+(?:at|with)\s+([A-Z][a-zA-Z0-9&\s]+?)(?:\s|,|\.|$)/,
-          ];
-          for (const pattern of companyPatterns) {
-            const match = contextPrompt.match(pattern);
-            if (match && match[1] && match[1].trim().length > 2 && match[1].trim().length < 50) {
-              interviewCompanyName = match[1].trim();
-              break;
+      let analysis = null;
+      try {
+        const { apiClient } = await import('@/lib/apiClient');
+        
+        // Determine desired tone from user input
+        const desiredTone = sessionIntent || goalInput || 'natural';
+        // Normalize tone to common values
+        const toneMap = {
+          'confident': 'confident',
+          'concise': 'concise',
+          'reflective': 'reflective',
+          'natural': 'natural',
+          'clear': 'natural',
+        };
+        const normalizedTone = toneMap[desiredTone.toLowerCase()] || 'natural';
+        
+        // For interviews, extract or use company name
+        let interviewCompanyName = undefined;
+        if (type === 'interview') {
+          // Use provided company name, or try to extract from question
+          if (companyName.trim()) {
+            interviewCompanyName = companyName.trim();
+          } else if (contextPrompt) {
+            // Try to extract company name from question (simple heuristic)
+            const companyPatterns = [
+              /(?:at|for|with|from)\s+([A-Z][a-zA-Z0-9&\s]+?)(?:\s|,|\.|$)/,
+              /([A-Z][a-zA-Z0-9&\s]+?)\s+interview/,
+              /interview\s+(?:at|with)\s+([A-Z][a-zA-Z0-9&\s]+?)(?:\s|,|\.|$)/,
+            ];
+            for (const pattern of companyPatterns) {
+              const match = contextPrompt.match(pattern);
+              if (match && match[1] && match[1].trim().length > 2 && match[1].trim().length < 50) {
+                interviewCompanyName = match[1].trim();
+                break;
+              }
             }
           }
         }
+        
+        console.log('[Speak] Calling /analyze with transcript length:', rawTextForAnalysis.length);
+        analysis = await apiClient.post('/analyze', {
+          raw_transcript: rawTextForAnalysis,
+          session_type: type,
+          desired_tone: normalizedTone,
+          user_context: type === 'interview' ? companyContext || undefined : contextPrompt || undefined,
+          reference_text: referenceText || undefined,
+          reference_file_url: uploadedFileUrl || undefined,
+          reference_file_type: uploadedFileType || undefined,
+          question: contextPrompt || undefined,
+          goal: sessionIntent || goalInput || undefined,
+          company_name: type === 'interview' ? interviewCompanyName : undefined,
+        });
+        console.log('[Speak] /analyze response received, refined_text length:', analysis?.refined_text?.length || 0);
+      } catch (analysisError) {
+        // Log error but don't block saving - user can still save raw transcript
+        console.error('[Speak] Error calling /analyze endpoint:', analysisError);
+        analysis = {
+          refined_text: '',
+          clarity_score: 70,
+          confidence_score: 70,
+          filler_word_count: 0,
+        };
+        toast({ 
+          title: 'Refinement unavailable', 
+          description: 'Could not refine transcript. You can still save the raw recording.',
+          duration: 5000 
+        });
       }
-      
-      const analysis = await apiClient.post('/analyze', {
-        raw_transcript: rawTextForAnalysis,
-        session_type: type, // Pass session type (free, application, interview, practice, refine)
-        desired_tone: normalizedTone,
-        user_context: type === 'interview' ? companyContext || undefined : contextPrompt || undefined, // Company/role context for interviews, question context for applications
-        reference_text: referenceText || undefined, // Extracted text content from reference file
-        reference_file_url: uploadedFileUrl || undefined, // URL of uploaded reference file (for Vision API)
-        reference_file_type: uploadedFileType || undefined, // MIME type of uploaded file (e.g., image/jpeg, application/pdf)
-        question: contextPrompt || undefined, // The interview/application question being answered
-        goal: sessionIntent || goalInput || undefined, // User's goal for the session (tone/style)
-        company_name: type === 'interview' ? interviewCompanyName : undefined, // Company name for research
-      });
       
       // Set refined transcript (LLM output)
       setRefinedTranscript(analysis.refined_text || '');
@@ -356,10 +409,10 @@ export default function Speak() {
       setSessionData({
         transcript: frozenRawTranscript, // Raw verbatim transcript (includes filler words)
         audio_url: audioUrl,
-        refinedDraft: analysis.refined_text,
-        clarityScore: analysis.clarity_score,
-        confidenceScore: analysis.confidence_score,
-        fillerCount: analysis.filler_word_count,
+        refinedDraft: analysis.refined_text || '',
+        clarityScore: analysis.clarity_score || 70,
+        confidenceScore: analysis.confidence_score || 70,
+        fillerCount: analysis.filler_word_count || 0,
         question: contextPrompt,
         type,
       });
@@ -374,10 +427,11 @@ export default function Speak() {
       setIsGenerating(false);
       setRecordingState('finished');
 
-      // On error: use frozen rawTranscript (or fallback to transcript)
-      const frozenRawTranscript = rawTranscript || transcript || '';
+      // On error: get transcript from ref synchronously as fallback
+      const fallbackTranscript = getAccumulatedTranscript() || rawTranscript || transcript || '';
+      console.log('[Speak] handleFinish error - fallback transcript:', fallbackTranscript?.substring(0, 100) || '(empty)');
       setSessionData({
-        transcript: frozenRawTranscript,
+        transcript: fallbackTranscript,
         refinedDraft: '', // No refinement on error
         clarityScore: 75,
         confidenceScore: 70,
@@ -415,10 +469,22 @@ export default function Speak() {
       // Transcript can arrive later or be added manually
       const transcriptText = payload.transcript && String(payload.transcript).trim();
       
-      // Warn but don't block if transcript is empty
+      // Warn user if transcript is empty or very short
       if (!transcriptText || transcriptText.length < 3) {
         console.warn('[Speak] Saving session with empty transcript - audio URL:', payload.audio_url);
+        toast({ 
+          title: 'Limited transcript', 
+          description: 'Your session has minimal or no transcript. Audio has been saved.',
+          duration: 4000 
+        });
         // Continue saving - audio URL is present, transcript can be added later
+      } else if (transcriptText.length < 50) {
+        // Short transcript warning
+        toast({ 
+          title: 'Short transcript', 
+          description: 'Your session has a short transcript. Consider recording for longer next time.',
+          duration: 3000 
+        });
       }
 
       // Persist via central sessions API (calls backend /sessions which enforces credits)
@@ -480,10 +546,14 @@ export default function Speak() {
       });
 
       // update toast to saved
-  try { savingToast.update({ title: 'Saved', description: 'Session saved to Library', duration: 4000 }); } catch (e) {}
+      try { savingToast.update({ title: 'Saved', description: 'Session saved to Library', duration: 4000 }); } catch (e) {}
       setIsSaving(false);
       setRecordingState('idle');
-      // Live transcript will be cleared when starting a new recording
+      
+      // CRITICAL: Clear transcript AFTER session is saved
+      // This allows the next recording to start fresh
+      try { clearTranscript(); } catch (e) { console.warn('clearTranscript failed:', e); }
+      
       // Credits are now decremented server-side by the backend
       // Backend /sessions endpoint handles credit enforcement
       // Only update local UI state for non-admin users

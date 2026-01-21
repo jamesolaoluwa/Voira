@@ -2,16 +2,12 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import useSessionStore from '@/stores/useSessionStore';
-import { TrendingUp, TrendingDown, Award, Mic, Sparkles } from 'lucide-react';
+import { TrendingUp, TrendingDown, Award, Mic, Sparkles, AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
+import { Button } from '@/components/ui/button';
 
-// derive chart data from session store (last N sessions)
-
-const improvements = [
-  { trait: 'Filler Word Reduction', change: '-79%', positive: true },
-  { trait: 'Confidence Score', change: '+40%', positive: true },
-  { trait: 'Speaking Pace', change: 'Optimal', positive: true },
-  { trait: 'Clarity', change: '+25%', positive: true },
-];
+// Calculate real improvements from session data
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
@@ -27,18 +23,79 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 export default function Growth() {
   const sessions = useSessionStore(state => state.sessions || []);
-  const stats = React.useMemo(() => {
-    const total = sessions.length;
-    if (total === 0) return { totalSessions: 0, avgConfidence: 0, avgFillers: 0, avgWPM: 0 };
-    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
-    const avgFillers = Math.round(sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
-    const avgWPM = Math.round(sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
-    return { totalSessions: total, avgConfidence, avgFillers, avgWPM };
+  
+  // Filter out seed/demo data (only show real user recordings)
+  const realSessions = React.useMemo(() => {
+    return sessions.filter(s => s.id && !s.id.startsWith('seed-'));
   }, [sessions]);
-  const recent = sessions.slice(0, 12).reverse();
-  const fillerData = recent.map((s, i) => ({ week: `S${i+1}`, count: s.fillerCount }));
-  const confidenceData = recent.map((s, i) => ({ week: `S${i+1}`, score: s.confidenceScore }));
-  const speakingData = recent.map((s, i) => ({ week: `S${i+1}`, words: s.wordsPerMinute }));
+  
+  const stats = React.useMemo(() => {
+    const total = realSessions.length;
+    if (total === 0) return { totalSessions: 0, avgConfidence: 0, avgFillers: 0, avgWPM: 0 };
+    const avgConfidence = Math.round(realSessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const avgFillers = Math.round(realSessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
+    const avgWPM = Math.round(realSessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
+    return { totalSessions: total, avgConfidence, avgFillers, avgWPM };
+  }, [realSessions]);
+  
+  // Calculate real improvements by comparing first half vs second half of sessions
+  const improvements = React.useMemo(() => {
+    const total = realSessions.length;
+    if (total < 2) {
+      return [
+        { trait: 'Filler Word Reduction', change: 'N/A', positive: true },
+        { trait: 'Confidence Score', change: 'N/A', positive: true },
+        { trait: 'Speaking Pace', change: 'N/A', positive: true },
+        { trait: 'Sessions Completed', change: `${total}`, positive: total > 0 },
+      ];
+    }
+    
+    const half = Math.max(1, Math.floor(total / 2));
+    // Sessions are sorted newest first, so first half = recent, last half = older
+    const recentHalf = realSessions.slice(0, half);
+    const olderHalf = realSessions.slice(-half);
+    
+    // Filler word reduction
+    const recentFillers = recentHalf.reduce((s, x) => s + (x.fillerCount || 0), 0) / recentHalf.length;
+    const olderFillers = olderHalf.reduce((s, x) => s + (x.fillerCount || 0), 0) / olderHalf.length;
+    const fillerReduction = olderFillers > 0 ? Math.round(((olderFillers - recentFillers) / olderFillers) * 100) : 0;
+    
+    // Confidence improvement
+    const recentConf = recentHalf.reduce((s, x) => s + (x.confidenceScore || 0), 0) / recentHalf.length;
+    const olderConf = olderHalf.reduce((s, x) => s + (x.confidenceScore || 0), 0) / olderHalf.length;
+    const confImprovement = Math.round(recentConf - olderConf);
+    
+    // Speaking pace stability
+    const avgWPM = realSessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total;
+    const paceVariance = realSessions.reduce((s, x) => s + Math.abs((x.wordsPerMinute || 0) - avgWPM), 0) / total;
+    const paceStatus = paceVariance < 15 ? 'Stable' : paceVariance < 25 ? 'Improving' : 'Variable';
+    
+    return [
+      { 
+        trait: 'Filler Word Reduction', 
+        change: fillerReduction > 0 ? `-${fillerReduction}%` : fillerReduction < 0 ? `+${Math.abs(fillerReduction)}%` : '0%', 
+        positive: fillerReduction >= 0 
+      },
+      { 
+        trait: 'Confidence Score', 
+        change: confImprovement > 0 ? `+${confImprovement}%` : `${confImprovement}%`, 
+        positive: confImprovement >= 0 
+      },
+      { trait: 'Speaking Pace', change: paceStatus, positive: paceVariance < 25 },
+      { trait: 'Sessions Completed', change: `${total}`, positive: true },
+    ];
+  }, [realSessions]);
+  
+  const recent = realSessions.slice(0, 12).reverse();
+  const fillerData = recent.length > 0 
+    ? recent.map((s, i) => ({ week: `S${i+1}`, count: s.fillerCount || 0 }))
+    : [{ week: 'S1', count: 0 }];
+  const confidenceData = recent.length > 0
+    ? recent.map((s, i) => ({ week: `S${i+1}`, score: s.confidenceScore || 0 }))
+    : [{ week: 'S1', score: 0 }];
+  const speakingData = recent.length > 0
+    ? recent.map((s, i) => ({ week: `S${i+1}`, words: s.wordsPerMinute || 0 }))
+    : [{ week: 'S1', words: 0 }];
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
       {/* Header */}
@@ -55,6 +112,28 @@ export default function Growth() {
         </p>
       </motion.div>
       
+      {/* Empty State */}
+      {realSessions.length === 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-8 mb-8 text-center"
+        >
+          <AlertCircle className="w-12 h-12 text-zinc-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2">No sessions yet</h3>
+          <p className="text-zinc-600 dark:text-zinc-500 mb-6 max-w-md mx-auto">
+            Start recording to track your speaking growth over time. Your progress will appear here.
+          </p>
+          <Link to={createPageUrl('Speak')}>
+            <Button className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400">
+              <Mic className="w-4 h-4 mr-2" />
+              Start Recording
+            </Button>
+          </Link>
+        </motion.div>
+      )}
+
       {/* Stats Overview */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -62,13 +141,15 @@ export default function Growth() {
         transition={{ delay: 0.1 }}
         className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
       >
-          <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
+        <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <Mic className="w-5 h-5 text-violet-400" />
-            <span className="text-xs text-green-400 flex items-center">
-              <TrendingDown className="w-3 h-3 mr-1" />
-              -79%
-            </span>
+            {realSessions.length >= 2 && improvements[0]?.change !== 'N/A' && (
+              <span className={`text-xs ${improvements[0]?.positive ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
+                {improvements[0]?.positive ? <TrendingDown className="w-3 h-3 mr-1" /> : <TrendingUp className="w-3 h-3 mr-1" />}
+                {improvements[0]?.change}
+              </span>
+            )}
           </div>
           <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgFillers}</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Filler Words/Session</p>
@@ -77,10 +158,12 @@ export default function Growth() {
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <Sparkles className="w-5 h-5 text-teal-600 dark:text-teal-400" />
-            <span className="text-xs text-green-400 flex items-center">
-              <TrendingUp className="w-3 h-3 mr-1" />
-              +40%
-            </span>
+            {realSessions.length >= 2 && improvements[1]?.change !== 'N/A' && (
+              <span className={`text-xs ${improvements[1]?.positive ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
+                {improvements[1]?.positive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
+                {improvements[1]?.change}
+              </span>
+            )}
           </div>
           <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgConfidence}%</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Confidence Score</p>
@@ -89,6 +172,11 @@ export default function Growth() {
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <Award className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+            {realSessions.length >= 2 && (
+              <span className={`text-xs ${improvements[2]?.positive ? 'text-green-400' : 'text-amber-400'}`}>
+                {improvements[2]?.change}
+              </span>
+            )}
           </div>
           <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgWPM}</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Words/Minute</p>
