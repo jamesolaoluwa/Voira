@@ -143,3 +143,12 @@ class FileUploadResponse(BaseModel):
     file_size: int = Field(..., ge=0, description="Size of the file in bytes")
     extracted_text: Optional[str] = Field(None, description="Extracted text content (for non-image files)")
 
+
+class AudioUploadResponse(BaseModel):
+    """Response model for audio file upload."""
+    file_url: str = Field(..., description="URL of the uploaded audio file")
+    file_type: str = Field(..., description="MIME type of the audio file")
+    file_size: int = Field(..., ge=0, description="Size of the file in bytes")
+    storage_path: str = Field(..., description="Internal storage path")
+    session_id: Optional[str] = Field(None, description="Associated session ID")
+

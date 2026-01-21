@@ -452,6 +452,210 @@ Monitor these endpoints:
 
 ---
 
+## Supabase Storage Setup
+
+The application uses Supabase Storage for file uploads. You need to create the required buckets.
+
+### Create Storage Buckets
+
+In Supabase Dashboard > Storage, create these buckets:
+
+1. **audio-recordings** (for user audio files)
+   - Public: Yes (for playback)
+   - File size limit: 15MB
+   - Allowed MIME types: `audio/*`
+
+2. **reference-files** (for PDF, Word docs, images)
+   - Public: Yes
+   - File size limit: 25MB
+   - Allowed MIME types: `application/pdf`, `application/msword`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `image/*`
+
+### Storage Policies
+
+Add RLS policies for each bucket:
+
+```sql
+-- Users can upload their own audio
+CREATE POLICY "Users upload own audio"
+ON storage.objects
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'audio-recordings'
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+-- Users can view their own audio
+CREATE POLICY "Users view own audio"
+ON storage.objects
+FOR SELECT
+TO authenticated
+USING (
+  bucket_id = 'audio-recordings'
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+-- Users can delete their own audio
+CREATE POLICY "Users delete own audio"
+ON storage.objects
+FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'audio-recordings'
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+-- Users can upload reference files
+CREATE POLICY "Users upload references"
+ON storage.objects
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'reference-files'
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+
+-- Users can view their own references
+CREATE POLICY "Users view references"
+ON storage.objects
+FOR SELECT
+TO authenticated
+USING (
+  bucket_id = 'reference-files'
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+CREATE POLICY "Users delete own references"
+ON storage.objects
+FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'reference-files'
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+```
+
+---
+
+## API Features
+
+### Request Timeouts
+
+The API has built-in request timeouts to prevent hanging requests:
+
+| Endpoint Type | Timeout |
+|---------------|---------|
+| Transcription | 120s |
+| WebSocket | 600s |
+| Analysis/Refine | 60s |
+| File Upload | 60s |
+| Standard API | 30s |
+
+### Response Caching
+
+The API uses Redis for response caching. Cache TTLs:
+
+| Cache Type | TTL |
+|------------|-----|
+| User Profile | 5 minutes |
+| Session List | 1 minute |
+| Session Detail | 5 minutes |
+| Analysis Results | 1 hour |
+| Voice Profile | 10 minutes |
+
+To invalidate cache for a user, restart the API or wait for TTL expiry.
+
+### API Versioning
+
+The API supports versioning via:
+- URL path: `/api/v1/endpoint`
+- Header: `X-API-Version: v1`
+
+Check supported versions: `GET /api/versions`
+
+### Feature Flags
+
+The API includes a feature flag system for gradual rollouts:
+
+```python
+# Check if feature is enabled
+from feature_flags import is_enabled
+
+if is_enabled("new_feature", user_id=user["id"]):
+    # Use new feature
+```
+
+Available endpoints:
+- `GET /feature-flags` - Get flags for current user
+- `GET /admin/feature-flags` - Get all flags (admin only)
+
+### User Data Export (GDPR)
+
+Users can export their data for GDPR compliance:
+
+- `GET /user/export` - Export all user data as JSON
+- `GET /sessions/{id}/export?format=json` - Export single session
+- `GET /sessions/{id}/export?format=txt` - Export as plain text
+
+### Analytics Events
+
+The API can track analytics events. To enable database storage, create the analytics table:
+
+```sql
+CREATE TABLE analytics_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type VARCHAR(100) NOT NULL,
+    user_id UUID REFERENCES auth.users(id),
+    session_id UUID,
+    properties JSONB DEFAULT '{}',
+    environment VARCHAR(50),
+    timestamp TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index for querying
+CREATE INDEX idx_analytics_user ON analytics_events(user_id);
+CREATE INDEX idx_analytics_type ON analytics_events(event_type);
+CREATE INDEX idx_analytics_timestamp ON analytics_events(timestamp);
+
+-- RLS
+ALTER TABLE analytics_events ENABLE ROW LEVEL SECURITY;
+
+-- Only service role can insert (from backend)
+CREATE POLICY "Service role can insert"
+ON analytics_events FOR INSERT
+TO service_role
+WITH CHECK (true);
+
+-- Users can view their own events
+CREATE POLICY "Users view own events"
+ON analytics_events FOR SELECT
+TO authenticated
+USING (user_id = auth.uid());
+```
+
+### Email Notifications
+
+Email notifications are currently logged in development. For production, configure an email provider:
+
+**Option 1: Resend (Recommended)**
+```bash
+pip install resend
+# Add to .env: RESEND_API_KEY=re_xxxxx
+```
+
+**Option 2: SendGrid**
+```bash
+pip install sendgrid
+# Add to .env: SENDGRID_API_KEY=SG.xxxxx
+```
+
+Then update `notifications.py` to use your provider.
+
+---
+
 ## Security Checklist
 
 Before going live, verify:
@@ -464,6 +668,8 @@ Before going live, verify:
 - [ ] Rate limiting is enabled
 - [ ] Error tracking is configured
 - [ ] Admin emails are added to `admin_emails` table
+- [ ] Storage buckets have proper RLS policies
+- [ ] Request size limits are configured
 
 ---
 

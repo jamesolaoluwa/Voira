@@ -18,8 +18,9 @@ from auth import get_current_user, check_is_admin, security, get_user_from_webso
 from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
     TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
-    FileUploadResponse
+    FileUploadResponse, AudioUploadResponse
 )
+from storage import storage_service, StorageService
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
 from rate_limit import rate_limit_middleware, rate_limit_check, close_redis
 from db import supabase
@@ -192,11 +193,20 @@ async def shutdown():
     """Clean up resources on shutdown."""
     logger.info("Application shutting down...")
     await close_redis()
+    # Close cache connections
+    try:
+        from cache import close_cache
+        await close_cache()
+    except ImportError:
+        pass
     logger.info("Shutdown complete")
 
 # =============================================================================
 # Middleware (order matters - first added = outermost)
 # =============================================================================
+
+# Import additional middleware
+from middleware import TimeoutMiddleware, PerformanceLoggingMiddleware, ErrorHandlingMiddleware
 
 # CORS configuration - must be added before other middleware
 # Origins are configured via CORS_ORIGINS env var (comma-separated)
@@ -212,14 +222,24 @@ app.add_middleware(
         "X-RateLimit-Limit",
         "X-RateLimit-Remaining",
         "X-RateLimit-Reset",
+        "X-Response-Time",
     ],
 )
+
+# Error handling middleware (outermost - catches all errors)
+app.add_middleware(ErrorHandlingMiddleware)
+
+# Performance logging middleware
+app.add_middleware(PerformanceLoggingMiddleware)
 
 # Security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Rate limiting middleware
 app.add_middleware(RateLimitMiddleware)
+
+# Timeout middleware (innermost - wraps actual request handling)
+app.add_middleware(TimeoutMiddleware)
 
 
 # =============================================================================
@@ -275,6 +295,22 @@ async def health_dependencies():
         "environment": settings.env,
         "version": "1.0.0",
     }
+
+
+# =============================================================================
+# API Version Endpoint
+# =============================================================================
+
+from api_versioning import get_version_info
+
+@app.get("/api/versions")
+async def api_versions():
+    """
+    Get information about supported API versions.
+    
+    Returns current version, supported versions, and deprecation status.
+    """
+    return get_version_info()
 
 
 @app.get("/auth/me", response_model=UserResponse)
@@ -950,10 +986,10 @@ async def analyze_transcript_endpoint(
 
 
 # ============================================
-# File Upload Endpoint
+# File Upload Endpoints
 # ============================================
 
-# Allowed file types for reference materials
+# Allowed file types for reference materials (legacy - now in storage.py)
 ALLOWED_REFERENCE_TYPES = {
     # Documents
     "application/pdf": [".pdf"],
@@ -979,6 +1015,63 @@ def validate_file_type(content_type: str, filename: str) -> bool:
         return any(ext in exts for exts in ALLOWED_REFERENCE_TYPES.values())
     
     return content_type in ALLOWED_REFERENCE_TYPES
+
+
+@app.post("/upload-audio", response_model=AudioUploadResponse)
+async def upload_audio_file(
+    file: UploadFile = File(..., description="Audio file to upload"),
+    session_id: Optional[str] = Form(None, description="Optional session ID to associate with"),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Upload an audio recording to storage.
+    
+    Accepts audio files (webm, mp3, wav, m4a, ogg, flac) up to 15MB.
+    Returns the file URL for playback and storage path for reference.
+    """
+    rate_limit_middleware(f"upload_audio:{user['id']}")
+    
+    # Read file content
+    try:
+        file_content = await file.read()
+        file_size = len(file_content)
+    except Exception as e:
+        logger.error(f"Error reading audio file: {e}")
+        raise HTTPException(status_code=400, detail="Error reading audio file")
+    
+    # Validate file
+    is_valid, error_msg = StorageService.validate_audio_file(
+        file.content_type,
+        file.filename,
+        file_size
+    )
+    
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    try:
+        # Upload to storage
+        result = await storage_service.upload_audio(
+            user_id=user['id'],
+            file_content=file_content,
+            filename=file.filename or "recording.webm",
+            content_type=file.content_type or "audio/webm",
+            session_id=session_id
+        )
+        
+        logger.info(f"Audio uploaded by user {user['id']}: {result['storage_path']}")
+        
+        return AudioUploadResponse(
+            file_url=result["file_url"],
+            file_type=file.content_type or "audio/webm",
+            file_size=result["file_size"],
+            storage_path=result["storage_path"],
+            session_id=session_id
+        )
+        
+    except Exception as e:
+        logger.error(f"Error uploading audio: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload audio file")
 
 
 @app.post("/upload-reference", response_model=FileUploadResponse)
@@ -1072,3 +1165,101 @@ async def upload_reference_file(
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
         raise HTTPException(status_code=500, detail="Internal server error during file upload")
+
+
+# =============================================================================
+# Feature Flags Endpoint
+# =============================================================================
+
+from feature_flags import get_all_flags, get_user_flags, is_enabled
+
+@app.get("/feature-flags")
+async def get_feature_flags(user: dict = Depends(get_current_user)):
+    """
+    Get feature flags for the current user.
+    
+    Returns which features are enabled for this user.
+    """
+    return {
+        "flags": get_user_flags(user["id"]),
+        "environment": settings.env,
+    }
+
+
+@app.get("/admin/feature-flags")
+async def get_all_feature_flags(
+    user: dict = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Get all feature flags (admin only).
+    
+    Returns complete flag configuration.
+    """
+    is_admin = await check_is_admin(user["email"])
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return {
+        "flags": get_all_flags(),
+        "environment": settings.env,
+    }
+
+
+# =============================================================================
+# User Data Export Endpoints (GDPR)
+# =============================================================================
+
+from backup import UserDataExport, SessionExport, ExportFormat
+
+@app.get("/user/export")
+async def export_my_data(user: dict = Depends(get_current_user)):
+    """
+    Export all data for the current user (GDPR compliance).
+    
+    Returns all user data including profile, sessions, and voice profiles.
+    """
+    rate_limit_middleware(f"export_data:{user['id']}")
+    
+    try:
+        data = await UserDataExport.export_user_data(user["id"])
+        return data
+    except Exception as e:
+        logger.error(f"Failed to export user data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export data")
+
+
+@app.get("/sessions/{session_id}/export")
+async def export_session(
+    session_id: str,
+    format: str = Query("json", description="Export format: json or txt"),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Export a session in the specified format.
+    
+    Returns the session data as a downloadable file.
+    """
+    from fastapi.responses import Response
+    
+    if format not in [ExportFormat.JSON, ExportFormat.TXT]:
+        raise HTTPException(status_code=400, detail="Invalid format. Use 'json' or 'txt'")
+    
+    try:
+        data = await SessionExport.export_session(session_id, user["id"], format)
+        
+        content_type = "application/json" if format == "json" else "text/plain"
+        filename = f"voira_session_{session_id}.{format}"
+        
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to export session: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export session")
