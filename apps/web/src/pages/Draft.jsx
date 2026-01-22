@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import { 
   ArrowLeft, 
   Copy, 
@@ -18,21 +19,179 @@ import {
   Tags,
   Target,
   Mic,
-  Loader2
+  Loader2,
+  Wand2
 } from 'lucide-react';
 import RecordButton from '@/components/ui/RecordButton';
 import { base44 } from '@/api/base44Client';
 import { sessions } from '@/components/services/api';
 import { toast } from '@/components/ui/use-toast';
 
-// Default structure/themes used when real data doesn't have them
-const defaultStructure = [
-  { title: "Opening Hook", content: "Personal journey statement", status: "strong" },
-  { title: "Context", content: "Timeline and setting established", status: "strong" },
-  { title: "Reflection", content: "Personal growth acknowledgment", status: "moderate" },
-  { title: "Conclusion", content: "Needs strengthening", status: "weak" },
-];
-const defaultThemes = ["Leadership", "Community Service", "Personal Growth", "Transformation"];
+/**
+ * Minimum transcript length to compute strongest moment.
+ * Requires at least 2-3 sentences worth of content (~100 characters).
+ */
+const MIN_TRANSCRIPT_LENGTH_FOR_STRONGEST_MOMENT = 100;
+
+/**
+ * Compute strongest moment from transcript text.
+ * Uses heuristics: longest sentence with impactful keywords, or first substantial sentence.
+ * Returns { text: string, reason: string } or null if transcript is too short.
+ * 
+ * EDGE CASE: If transcript is too short (< 100 chars or < 2 sentences),
+ * returns null and UI should show "Not enough content yet" message.
+ */
+function computeStrongestMoment(transcript) {
+  // VALIDATION: Require minimum content length
+  if (!transcript || transcript.trim().length < MIN_TRANSCRIPT_LENGTH_FOR_STRONGEST_MOMENT) {
+    return null;
+  }
+  
+  // Split into sentences
+  const sentences = transcript
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 15); // Filter out very short fragments
+  
+  // VALIDATION: Require at least 2 sentences for meaningful analysis
+  if (sentences.length < 2) {
+    return null;
+  }
+  
+  // Impact keywords that suggest confidence/strength
+  const impactKeywords = [
+    'led', 'achieved', 'created', 'built', 'transformed', 'improved',
+    'passionate', 'dedicated', 'committed', 'learned', 'grew', 'discovered',
+    'impact', 'change', 'growth', 'success', 'accomplished', 'developed',
+    'journey', 'experience', 'believe', 'proud', 'meaningful'
+  ];
+  
+  // Score each sentence
+  const scoredSentences = sentences.map(sentence => {
+    const lowerSentence = sentence.toLowerCase();
+    let score = 0;
+    
+    // Length score (longer sentences often have more substance)
+    score += Math.min(sentence.length / 20, 5);
+    
+    // Keyword score
+    impactKeywords.forEach(keyword => {
+      if (lowerSentence.includes(keyword)) {
+        score += 2;
+      }
+    });
+    
+    // First-person indicators suggest personal ownership
+    if (lowerSentence.includes(' i ') || lowerSentence.startsWith('i ')) {
+      score += 1;
+    }
+    
+    return { sentence, score };
+  });
+  
+  // Sort by score descending and pick the best
+  scoredSentences.sort((a, b) => b.score - a.score);
+  const strongest = scoredSentences[0];
+  
+  // Determine reason based on what made it score high
+  let reason = 'This part of your response shows clear conviction.';
+  const lowerText = strongest.sentence.toLowerCase();
+  
+  if (impactKeywords.some(kw => lowerText.includes(kw))) {
+    if (lowerText.includes('led') || lowerText.includes('created') || lowerText.includes('built')) {
+      reason = 'This demonstrates leadership and initiative.';
+    } else if (lowerText.includes('learned') || lowerText.includes('grew') || lowerText.includes('discovered')) {
+      reason = 'This shows reflective growth and self-awareness.';
+    } else if (lowerText.includes('passionate') || lowerText.includes('believe') || lowerText.includes('meaningful')) {
+      reason = 'This conveys authentic passion and personal values.';
+    }
+  }
+  
+  return { text: strongest.sentence, reason };
+}
+
+/**
+ * Extract key themes from transcript using keyword analysis.
+ * Returns array of theme strings.
+ */
+function extractThemes(transcript) {
+  if (!transcript || transcript.trim().length < 20) {
+    return [];
+  }
+  
+  const lowerTranscript = transcript.toLowerCase();
+  const themes = [];
+  
+  // Theme detection patterns
+  const themePatterns = [
+    { keywords: ['lead', 'led', 'leader', 'team', 'managed'], theme: 'Leadership' },
+    { keywords: ['community', 'volunteer', 'service', 'help', 'impact'], theme: 'Community Service' },
+    { keywords: ['grew', 'growth', 'learned', 'changed', 'transformed'], theme: 'Personal Growth' },
+    { keywords: ['challenge', 'overcome', 'difficult', 'obstacle', 'persever'], theme: 'Resilience' },
+    { keywords: ['passion', 'love', 'excited', 'enthusiast', 'dedicate'], theme: 'Passion' },
+    { keywords: ['creative', 'innovat', 'design', 'build', 'create'], theme: 'Innovation' },
+    { keywords: ['family', 'parent', 'sibling', 'home', 'upbringing'], theme: 'Family' },
+    { keywords: ['work', 'job', 'career', 'profession', 'intern'], theme: 'Professional Experience' },
+    { keywords: ['school', 'university', 'education', 'study', 'academic'], theme: 'Education' },
+    { keywords: ['goal', 'dream', 'aspir', 'future', 'plan'], theme: 'Ambition' },
+  ];
+  
+  themePatterns.forEach(({ keywords, theme }) => {
+    if (keywords.some(kw => lowerTranscript.includes(kw))) {
+      themes.push(theme);
+    }
+  });
+  
+  // Return up to 4 themes, or a default if none found
+  return themes.length > 0 ? themes.slice(0, 4) : ['Personal Narrative'];
+}
+
+/**
+ * Generate structure analysis from transcript.
+ * Returns array of { title, content, status } objects.
+ */
+function analyzeStructure(transcript) {
+  if (!transcript || transcript.trim().length < 20) {
+    return [{ title: "Content", content: "No content to analyze", status: "weak" }];
+  }
+  
+  const sentences = transcript.split(/[.!?]+/).filter(s => s.trim().length > 10);
+  const structure = [];
+  
+  // Opening
+  if (sentences.length > 0) {
+    const opening = sentences[0].trim();
+    const hasHook = opening.length > 30 || /^(I |My |When |Growing|Throughout)/i.test(opening);
+    structure.push({
+      title: "Opening",
+      content: opening.substring(0, 50) + (opening.length > 50 ? '...' : ''),
+      status: hasHook ? 'strong' : 'moderate'
+    });
+  }
+  
+  // Body/Development
+  if (sentences.length > 2) {
+    const bodyLength = sentences.slice(1, -1).join(' ').length;
+    structure.push({
+      title: "Development",
+      content: `${sentences.length - 2} supporting points`,
+      status: bodyLength > 100 ? 'strong' : bodyLength > 50 ? 'moderate' : 'weak'
+    });
+  }
+  
+  // Conclusion
+  if (sentences.length > 1) {
+    const conclusion = sentences[sentences.length - 1].trim();
+    const hasConclusion = conclusion.length > 20 && /learned|grew|realize|understand|believe|future/i.test(conclusion);
+    structure.push({
+      title: "Conclusion",
+      content: hasConclusion ? "Clear closing statement" : "Could be strengthened",
+      status: hasConclusion ? 'strong' : 'weak'
+    });
+  }
+  
+  return structure.length > 0 ? structure : [{ title: "Content", content: "Brief response", status: "moderate" }];
+}
 
 const toneOptions = [
   { label: 'Confident', value: 'confident' },
@@ -40,6 +199,24 @@ const toneOptions = [
   { label: 'Reflective', value: 'reflective' },
 ];
 
+/**
+ * Draft Page Component
+ * 
+ * DATA FLOW:
+ * 1. Session data comes from either:
+ *    - URL parameter ?id=<session_id> -> fetched from backend
+ *    - Navigation state from Speak.jsx -> passed via location.state.sessionData
+ * 
+ * 2. SINGLE SOURCE OF TRUTH: The `draft` state object contains:
+ *    - original: Raw transcript (what user spoke)
+ *    - refined: LLM-refined text (the main output)
+ *    - strongestMoment: Computed from transcript, NOT hardcoded
+ *    - themes: Extracted from transcript, NOT hardcoded
+ *    - structure: Analyzed from transcript, NOT hardcoded
+ * 
+ * 3. All refinement operations update the `draft.refined` field.
+ *    The UI always reads from this single source.
+ */
 export default function Draft() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -49,63 +226,109 @@ export default function Draft() {
   const [copied, setCopied] = useState(false);
   const [selectedTone, setSelectedTone] = useState('confident');
   const [isExpanded, setIsExpanded] = useState(false);
-  // CRITICAL: Initialize to null, NOT mock data (Bug #5 fix)
-  // Draft page must NEVER show placeholder content
+  
+  // SINGLE SOURCE OF TRUTH for draft data
+  // Never populated with mock/hardcoded data
   const [draft, setDraft] = useState(null);
+  
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [currentRecording, setCurrentRecording] = useState(null);
   
+  // Section refinement state
+  const [refinementInput, setRefinementInput] = useState('');
+  const [isApplyingRefinement, setIsApplyingRefinement] = useState(false);
+  
+  // Ref to scroll to refined content after applying refinement
+  const refinedContentRef = useRef(null);
+  
   useEffect(() => {
     loadDraftData();
   }, [location.state, recordingId]);
   
+  /**
+   * Load draft data from URL parameter or navigation state.
+   * All analysis (strongest moment, themes, structure) is computed from real transcript.
+   * NO hardcoded data is ever used.
+   */
   const loadDraftData = async () => {
     setLoadError(null);
     try {
+      let transcript = '';
+      let refinedText = '';
+      let clarityScore = 80;
+      let question = ''; // CRITICAL: Question is required for all LLM calls
+      let referenceText = ''; // Optional: reference content for context
+      let recording = null;
+      
       // Try loading from URL parameter first (ID-based)
       if (recordingId) {
-        // Bug #13 fix: Use getSessionById instead of non-existent get() method
-        const recording = await sessions.getSessionById(recordingId);
+        recording = await sessions.getSessionById(recordingId);
         if (recording) {
           setCurrentRecording(recording);
-          setDraft({
-            original: recording.transcript || '',
-            refined: recording.refined_draft || '',
-            structure: defaultStructure,
-            themes: defaultThemes,
-            alignment: {
-              score: recording.clarity_score || 80,
-              notes: `Your response shows ${(recording.clarity_score || 80) >= 80 ? 'strong' : 'good'} clarity and alignment.`
-            }
-          });
-          setIsLoading(false);
-          return;
+          transcript = recording.transcript || '';
+          refinedText = recording.refined_draft || '';
+          clarityScore = recording.clarity_score || 80;
+          question = recording.question || '';
+          referenceText = recording.reference_text || '';
         }
       }
       
       // Fall back to state-based loading (from Speak.jsx navigation)
-      if (location.state?.sessionData) {
+      if (!transcript && location.state?.sessionData) {
         const { sessionData } = location.state;
         console.log('[Draft] Loading from navigation state, transcript length:', sessionData.transcript?.length || 0);
-        setDraft({
-          original: sessionData.transcript || '',
-          refined: sessionData.refinedDraft || sessionData.refined_draft || '',
-          structure: defaultStructure,
-          themes: defaultThemes,
-          alignment: {
-            score: sessionData.clarityScore || sessionData.clarity_score || 80,
-            notes: `Your response shows ${(sessionData.clarityScore || sessionData.clarity_score || 80) >= 80 ? 'strong' : 'good'} clarity and alignment.`
-          }
-        });
+        console.log('[Draft] Refined draft length:', (sessionData.refinedDraft || sessionData.refined_draft || '').length);
+        transcript = sessionData.transcript || '';
+        refinedText = sessionData.refinedDraft || sessionData.refined_draft || '';
+        clarityScore = sessionData.clarityScore || sessionData.clarity_score || 80;
+        question = sessionData.question || '';
+        referenceText = sessionData.reference_text || sessionData.referenceText || '';
+      }
+      
+      // No data source available - show error state
+      if (!transcript && !refinedText) {
+        console.warn('[Draft] No session data available from URL or navigation state');
+        setLoadError('No session data found. Please record a new session.');
         setIsLoading(false);
         return;
       }
       
-      // No data source available - show error state
-      console.warn('[Draft] No session data available from URL or navigation state');
-      setLoadError('No session data found. Please record a new session.');
+      // CRITICAL: Compute all analysis from REAL transcript data
+      // Never use hardcoded values
+      const strongestMoment = computeStrongestMoment(transcript);
+      const themes = extractThemes(transcript);
+      const structure = analyzeStructure(transcript);
+      
+      setDraft({
+        original: transcript,
+        refined: refinedText,
+        // CRITICAL: Question is the anchor for all LLM operations
+        question,
+        // Optional: Reference content (used as supporting context, not source-of-truth)
+        referenceText,
+        // Computed from real data, not hardcoded
+        strongestMoment,
+        themes,
+        structure,
+        alignment: {
+          score: clarityScore,
+          notes: clarityScore >= 80 
+            ? 'Your response shows strong clarity and alignment with the question.'
+            : clarityScore >= 60
+            ? 'Your response shows good alignment. Consider adding more specific details.'
+            : 'Consider restructuring your response to better address the question.'
+        }
+      });
+      
+      // Pre-populate refinement input with example format if we have refined text
+      if (refinedText) {
+        // Extract a sample phrase from refined text for the example
+        const samplePhrase = refinedText.split(/[.!?]/)[0]?.substring(0, 40) || 'your text here';
+        setRefinementInput(`{${samplePhrase}...}[make this more specific]`);
+      }
+      
     } catch (error) {
       console.error('Error loading draft:', error);
       setLoadError('Failed to load session. Please try again.');
@@ -157,12 +380,22 @@ export default function Draft() {
       // Use backend /refine endpoint for consistent, production-quality refinement
       const { apiClient } = await import('@/lib/apiClient');
       
-      console.log('[Draft] Calling /refine with tone:', selectedTone);
+      console.log('[Draft] Calling /refine with tone:', selectedTone, 'question:', draft.question?.substring(0, 50));
+      
+      // CRITICAL: Every LLM call MUST include the question as the anchor
       const response = await apiClient.post('/refine', {
         raw_transcript: draft.original,
         session_type: 'refine',
         desired_tone: selectedTone,
-        goal: `Rewrite with a ${selectedTone} tone while maintaining authenticity`,
+        // REQUIRED: Question is the anchor for refinement
+        question: draft.question || undefined,
+        // OPTIONAL: Reference content (used as supporting context only)
+        reference_text: draft.referenceText || undefined,
+        goal: `Rewrite with a ${selectedTone} tone while maintaining authenticity${draft.question ? ` and addressing the question: "${draft.question}"` : ''}`,
+        // Explicit instruction for reference handling
+        user_context: draft.referenceText 
+          ? 'Use the reference material only to inform tone, structure, or examples. Do not copy content from references.'
+          : undefined,
       });
       
       if (response?.refined_text) {
@@ -171,41 +404,142 @@ export default function Draft() {
           refined: response.refined_text
         });
         console.log('[Draft] Refinement successful, new length:', response.refined_text.length);
+        toast({
+          title: 'Refinement complete',
+          description: `Your draft has been rewritten with a ${selectedTone} tone.`,
+          duration: 3000
+        });
       } else {
         console.warn('[Draft] Refinement response empty, keeping original');
       }
     } catch (error) {
       console.error('[Draft] Error regenerating:', error);
-      // Fallback to base44 LLM if backend fails
-      try {
-        const regeneratePrompt = `
-          Rewrite the following text with a ${selectedTone} tone:
-          
-          "${draft.original}"
-          
-          Maintain the core message but adjust the tone to be ${selectedTone}.
-          Keep it natural and authentic.
-        `;
-        
-        const newDraft = await base44.integrations.Core.InvokeLLM({
-          prompt: regeneratePrompt,
-        });
-        
-        setDraft({
-          ...draft,
-          refined: typeof newDraft === 'string' ? newDraft : newDraft.output || draft.refined
-        });
-      } catch (fallbackError) {
-        console.error('[Draft] Fallback regeneration also failed:', fallbackError);
-        toast({
-          title: 'Regeneration failed',
-          description: 'Could not regenerate draft. Please try again later.',
-          variant: 'destructive',
-          duration: 4000
-        });
-      }
+      toast({
+        title: 'Regeneration failed',
+        description: 'Could not regenerate draft. Please try again later.',
+        variant: 'destructive',
+        duration: 4000
+      });
     } finally {
       setIsRegenerating(false);
+    }
+  };
+  
+  // Track refinement input validation error for inline display
+  const [refinementError, setRefinementError] = useState('');
+  
+  /**
+   * Apply section-specific refinement.
+   * Extracts {highlighted section} and [instruction] from refinementInput.
+   * Sends context-aware request to LLM that preserves everything except highlighted section.
+   * 
+   * VALIDATION: Shows inline error if syntax is invalid.
+   */
+  const handleApplyRefinement = async () => {
+    // Clear previous error
+    setRefinementError('');
+    
+    if (!refinementInput.trim() || !draft?.refined) {
+      setRefinementError('Please add refinement instructions using {text}[instruction] format.');
+      return;
+    }
+    
+    // Parse {highlighted section} and [instruction]
+    const sectionMatch = refinementInput.match(/\{([^}]+)\}/);
+    const instructionMatch = refinementInput.match(/\[([^\]]+)\]/);
+    
+    // EDGE CASE: Show inline validation error for invalid syntax
+    if (!sectionMatch && !instructionMatch) {
+      setRefinementError('Please wrap the section in {} and add instructions in [].');
+      return;
+    }
+    
+    if (!sectionMatch) {
+      setRefinementError('Missing section to edit. Wrap your text in {curly braces}.');
+      return;
+    }
+    
+    if (!instructionMatch) {
+      setRefinementError('Missing instruction. Add your instruction in [square brackets].');
+      return;
+    }
+    
+    const highlightedSection = sectionMatch[1].trim();
+    const instruction = instructionMatch[1].trim();
+    
+    // Check if the highlighted section exists in the refined text
+    if (!draft.refined.toLowerCase().includes(highlightedSection.toLowerCase().substring(0, 20))) {
+      toast({
+        title: 'Section not found',
+        description: 'The highlighted text was not found in the refined draft. Copy the exact text you want to edit.',
+        variant: 'destructive',
+        duration: 4000
+      });
+      return;
+    }
+    
+    setIsApplyingRefinement(true);
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      
+      console.log('[Draft] Applying section refinement:', { highlightedSection: highlightedSection.substring(0, 50), instruction });
+      
+      // CONTEXT-AWARE REFINEMENT: Include full context so LLM only edits the specific section
+      // CRITICAL: Always include the question as the anchor
+      const response = await apiClient.post('/refine', {
+        raw_transcript: draft.original, // Original context
+        session_type: 'section_refine',
+        desired_tone: selectedTone,
+        goal: instruction,
+        // REQUIRED: Question is the anchor - ensures refinement stays on-topic
+        question: draft.question || undefined,
+        // OPTIONAL: Reference content (used as supporting context only)
+        reference_text: draft.referenceText || undefined,
+        // Pass the full refined essay and the section to edit
+        user_context: `IMPORTANT: You are editing a specific section of an already-refined essay.
+${draft.question ? `\nORIGINAL QUESTION BEING ANSWERED:\n"${draft.question}"\n` : ''}
+FULL CURRENT ESSAY:
+"""
+${draft.refined}
+"""
+
+SECTION TO EDIT (keep everything else unchanged):
+"""
+${highlightedSection}
+"""
+
+INSTRUCTION: ${instruction}
+${draft.referenceText ? '\nNote: Use reference material only to inform tone and style. Do not copy content.' : ''}
+Return the COMPLETE essay with ONLY the highlighted section modified. Do not change any other part of the essay. Preserve all tone, structure, and content except for the specific section being refined.`,
+      });
+      
+      if (response?.refined_text) {
+        setDraft({
+          ...draft,
+          refined: response.refined_text
+        });
+        console.log('[Draft] Section refinement successful');
+        toast({
+          title: 'Section refined',
+          description: 'The highlighted section has been updated.',
+          duration: 3000
+        });
+        
+        // Scroll to refined content
+        if (refinedContentRef.current) {
+          refinedContentRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    } catch (error) {
+      console.error('[Draft] Section refinement error:', error);
+      toast({
+        title: 'Refinement failed',
+        description: 'Could not refine the section. Please try again.',
+        variant: 'destructive',
+        duration: 4000
+      });
+    } finally {
+      setIsApplyingRefinement(false);
     }
   };
   
@@ -313,46 +647,94 @@ export default function Draft() {
                 animate={{ opacity: 1 }}
                 className="space-y-6"
               >
-                {/* Before vs After View */}
+                {/* REFINED OUTPUT - Primary content, most prominent */}
+                <div 
+                  ref={refinedContentRef}
+                  className={`bg-white dark:bg-[#1a1a24] rounded-2xl border-2 border-violet-400 dark:border-violet-500/30 shadow-lg dark:shadow-violet-500/5 p-6 ${isExpanded ? 'min-h-[400px]' : ''}`}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-violet-500" />
+                      <h3 className="text-lg font-semibold text-violet-700 dark:text-violet-300">After (Refined)</h3>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setIsExpanded(!isExpanded)}
+                      className="text-zinc-400 hover:text-violet-400"
+                    >
+                      {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                  {draft.refined ? (
+                    <p className="text-zinc-900 dark:text-zinc-100 leading-relaxed whitespace-pre-wrap">
+                      {draft.refined}
+                    </p>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-zinc-500 dark:text-zinc-400 mb-4">No refined output yet.</p>
+                      <Button
+                        onClick={handleRegenerate}
+                        disabled={isRegenerating}
+                        className="bg-violet-500 hover:bg-violet-600 text-white"
+                      >
+                        {isRegenerating ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <Wand2 className="w-4 h-4 mr-2" />
+                            Generate Refined Draft
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Before vs After Comparison (collapsed view) */}
                 <div className="grid md:grid-cols-2 gap-6">
-                  {/* Before */}
+                  {/* Before (Raw) */}
                   <div className="bg-zinc-100 dark:bg-[#1a1a24]/50 rounded-2xl border border-zinc-200 dark:border-white/5 p-6">
                     <h3 className="text-sm font-semibold text-zinc-600 dark:text-zinc-500 mb-4">Before (Raw)</h3>
                     <p className="text-zinc-600 dark:text-zinc-500 text-sm leading-relaxed">
-                      {draft.original}
+                      {draft.original || <span className="italic">No transcript available</span>}
                     </p>
                   </div>
                   
-                  {/* After */}
-                  <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-violet-400 dark:border-violet-500/20 shadow-sm dark:shadow-none p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-sm font-semibold text-violet-700 dark:text-violet-300">After (Refined)</h3>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setIsExpanded(!isExpanded)}
-                        className="text-zinc-400 hover:text-white"
-                      >
-                        {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-                      </Button>
+                  {/* Strongest Moment - COMPUTED FROM REAL TRANSCRIPT */}
+                  <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-teal-400/30 dark:border-teal-500/20 shadow-sm dark:shadow-none p-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                      <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-300">Your Strongest Moment</h3>
                     </div>
-                    <p className="text-zinc-900 dark:text-zinc-100 leading-relaxed">
-                      {draft.refined}
-                    </p>
+                    {draft.strongestMoment ? (
+                      <>
+                        <p className="text-zinc-700 dark:text-zinc-300 text-sm leading-relaxed">
+                          <span className="bg-teal-500/20 text-teal-700 dark:text-teal-300 px-1 rounded">
+                            {draft.strongestMoment.text}
+                          </span>
+                        </p>
+                        <p className="text-zinc-600 dark:text-zinc-400 text-sm mt-3">
+                          {draft.strongestMoment.reason}
+                        </p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-600 mt-2 italic">
+                          💡 You sounded most confident here.
+                        </p>
+                      </>
+                    ) : (
+                      <div className="text-center py-2">
+                        <p className="text-zinc-500 dark:text-zinc-400 text-sm">
+                          Not enough content yet to identify a strongest moment.
+                        </p>
+                        <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+                          Record a response with 2-3 sentences or more.
+                        </p>
+                      </div>
+                    )}
                   </div>
-                </div>
-
-                {/* Confidence Heat Highlights */}
-                <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Sparkles className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-                    <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-300">Your Strongest Moments</h3>
-                  </div>
-                  <p className="text-zinc-700 dark:text-zinc-400 text-sm leading-relaxed">
-                    <span className="bg-teal-500/20 text-teal-300 px-1 rounded">My journey leading community initiatives has profoundly shaped my identity.</span> This opening demonstrates authentic conviction and personal ownership. 
-                    <span className="bg-teal-500/20 text-teal-300 px-1 rounded ml-1">The transformative impact on my understanding of service and leadership</span> shows reflective depth.
-                  </p>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-600 mt-3 italic">💡 You sounded most confident here.</p>
                 </div>
               </motion.div>
             </TabsContent>
@@ -364,26 +746,32 @@ export default function Draft() {
                 className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-8"
               >
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-6">Response Structure</h3>
-                <div className="space-y-4">
-                  {draft.structure.map((item, index) => (
-                    <div key={index} className="flex items-start gap-4 p-4 bg-zinc-50 dark:bg-[#13131a] rounded-xl">
-                      <div className={`w-2 h-2 mt-2 rounded-full ${
-                        item.status === 'strong' ? 'bg-green-400' :
-                        item.status === 'moderate' ? 'bg-amber-400' : 'bg-red-400'
-                      }`} />
-                      <div className="flex-1">
-                        <h4 className="font-medium text-zinc-800 dark:text-zinc-200">{item.title}</h4>
-                        <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">{item.content}</p>
+                {draft.structure && draft.structure.length > 0 ? (
+                  <div className="space-y-4">
+                    {draft.structure.map((item, index) => (
+                      <div key={index} className="flex items-start gap-4 p-4 bg-zinc-50 dark:bg-[#13131a] rounded-xl">
+                        <div className={`w-2 h-2 mt-2 rounded-full ${
+                          item.status === 'strong' ? 'bg-green-400' :
+                          item.status === 'moderate' ? 'bg-amber-400' : 'bg-red-400'
+                        }`} />
+                        <div className="flex-1">
+                          <h4 className="font-medium text-zinc-800 dark:text-zinc-200">{item.title}</h4>
+                          <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">{item.content}</p>
+                        </div>
+                        <Badge className={`${
+                          item.status === 'strong' ? 'bg-green-500/20 text-green-400' :
+                          item.status === 'moderate' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {item.status}
+                        </Badge>
                       </div>
-                      <Badge className={`${
-                        item.status === 'strong' ? 'bg-green-500/20 text-green-400' :
-                        item.status === 'moderate' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'
-                      }`}>
-                        {item.status}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-zinc-500 dark:text-zinc-400 italic">
+                    No structure analysis available. Record a longer response for detailed analysis.
+                  </p>
+                )}
               </motion.div>
             </TabsContent>
             
@@ -394,16 +782,22 @@ export default function Draft() {
                 className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-8"
               >
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-6">Key Themes Identified</h3>
-                <div className="flex flex-wrap gap-3">
-                  {draft.themes.map((theme, index) => (
-                    <Badge 
-                      key={index}
-                      className="px-4 py-2 bg-violet-500/20 text-violet-300 text-sm"
-                    >
-                      {theme}
-                    </Badge>
-                  ))}
-                </div>
+                {draft.themes && draft.themes.length > 0 ? (
+                  <div className="flex flex-wrap gap-3">
+                    {draft.themes.map((theme, index) => (
+                      <Badge 
+                        key={index}
+                        className="px-4 py-2 bg-violet-500/20 text-violet-700 dark:text-violet-300 text-sm"
+                      >
+                        {theme}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-zinc-500 dark:text-zinc-400 italic">
+                    No themes identified. Record a longer response for theme analysis.
+                  </p>
+                )}
               </motion.div>
             </TabsContent>
             
@@ -475,32 +869,63 @@ export default function Draft() {
             </Button>
           </motion.div>
           
-          {/* Inline Refinement Instructions with Recording */}
+          {/* Inline Refinement Instructions */}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
             className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
-            >
-            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-4">Refine Specific Sections</h3>
+          >
+            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-3">Refine Specific Sections</h3>
             <p className="text-xs text-zinc-600 dark:text-zinc-500 mb-3">
-              Use <code className="text-violet-400">{'{}'}</code> to highlight and <code className="text-teal-400">[]</code> to instruct:
+              Use <code className="bg-violet-500/20 text-violet-400 px-1 rounded">{'{text}'}</code> to highlight and <code className="bg-teal-500/20 text-teal-400 px-1 rounded">[instruction]</code> to instruct:
             </p>
-            <div className="bg-zinc-50 dark:bg-[#13131a] rounded-xl p-3 mb-4">
-              <p className="text-sm text-zinc-700 dark:text-zinc-400 font-mono">
-                I led a team <span className="text-violet-400">{'{'}during my internship{'}'}</span>
-                <span className="text-teal-400">[make this more confident and results-driven]</span>
+            
+            {/* Editable refinement input */}
+            <Textarea
+              value={refinementInput}
+              onChange={(e) => {
+                setRefinementInput(e.target.value);
+                // Clear error as user types
+                if (refinementError) setRefinementError('');
+              }}
+              placeholder="{copy text from your draft}[make it more confident]"
+              className={`mb-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-200 dark:border-white/10 text-zinc-800 dark:text-zinc-200 font-mono text-sm min-h-[80px] resize-none ${
+                refinementError ? 'border-red-400 dark:border-red-500/50' : ''
+              }`}
+            />
+            
+            {/* Inline validation error */}
+            {refinementError && (
+              <p className="text-xs text-red-500 dark:text-red-400 mb-2 flex items-center gap-1">
+                <span className="inline-block w-1 h-1 rounded-full bg-red-500" />
+                {refinementError}
               </p>
-            </div>
-            <div className="flex gap-2">
-              <Button className="flex-1 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 border-violet-500/30">
-                Apply Refinements
-              </Button>
-              <RecordButton
-                size="icon"
-                className="border-white/10 hover:bg-violet-500/20 hover:border-violet-500/30"
-              />
-            </div>
+            )}
+            
+            {!refinementError && (
+              <p className="text-xs text-zinc-500 dark:text-zinc-600 mb-3">
+                <strong>Tip:</strong> Copy the exact text from the refined draft above, wrap it in {'{}'}, then add your instruction in [].
+              </p>
+            )}
+            
+            <Button 
+              onClick={handleApplyRefinement}
+              disabled={isApplyingRefinement || !refinementInput.trim()}
+              className="w-full bg-violet-500/20 hover:bg-violet-500/30 text-violet-700 dark:text-violet-300 border border-violet-500/30 disabled:opacity-50"
+            >
+              {isApplyingRefinement ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Applying...
+                </>
+              ) : (
+                <>
+                  <Wand2 className="w-4 h-4 mr-2" />
+                  Apply Refinement
+                </>
+              )}
+            </Button>
           </motion.div>
           
           {/* Quick Actions */}
@@ -509,14 +934,26 @@ export default function Draft() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.4 }}
             className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
-            >
+          >
             <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-4">Quick Actions</h3>
             <div className="space-y-2">
-              <Button variant="outline" className="w-full justify-start border-white/5 text-zinc-400 hover:text-white">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setRefinementInput(`{${draft.refined?.substring(0, 50) || 'your text'}...}[expand this with more specific details and examples]`);
+                }}
+                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+              >
                 <Maximize2 className="w-4 h-4 mr-2" />
                 Expand Content
               </Button>
-              <Button variant="outline" className="w-full justify-start border-white/5 text-zinc-400 hover:text-white">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setRefinementInput(`{${draft.refined?.substring(0, 50) || 'your text'}...}[make this more concise while keeping the key points]`);
+                }}
+                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+              >
                 <Minimize2 className="w-4 h-4 mr-2" />
                 Make Concise
               </Button>

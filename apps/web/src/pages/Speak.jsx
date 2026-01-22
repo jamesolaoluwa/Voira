@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
@@ -13,7 +13,7 @@ import FileUpload from '@/components/ui/FileUpload';
 import RecordButton from '@/components/ui/RecordButton';
 import SessionNamingModal from '@/components/ui/SessionNamingModal';
 import CreditsDisplay from '@/components/ui/CreditsDisplay';
-import { Mic, Pause, Square, Clock, Type, ArrowLeft, Loader2 } from 'lucide-react';
+import { Mic, Pause, Square, Clock, Type, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,6 +21,24 @@ import { toast } from '@/components/ui/use-toast';
 import { saveLocalRecording } from '@/lib/localRecordings';
 import useSessionStore from '@/stores/useSessionStore';
 import LiveTranscription from '@/components/transcription/LiveTranscription';
+
+/**
+ * VALIDATION RULES (Non-Negotiable):
+ * 
+ * 1. Application Essay Question is REQUIRED for 'application' type
+ *    - Recording CANNOT start without a question
+ *    - Show inline warning (not modal)
+ * 
+ * 2. Reference Upload is OPTIONAL
+ *    - Valid: Question only, Question + Reference
+ *    - Invalid: Reference only (no question)
+ * 
+ * 3. "What do you want this response to sound like?" is OPTIONAL
+ *    - Uses voice profile as default if empty
+ *    - Does NOT block recording
+ * 
+ * 4. For 'free' and 'refine' types, no question is required
+ */
 
 const typeLabels = {
   application: 'Application Essay',
@@ -76,7 +94,57 @@ export default function Speak() {
   const [uploadedFileType, setUploadedFileType] = useState(null); // MIME type of uploaded file
   const [referenceText, setReferenceText] = useState(''); // Extracted text from reference file
   
+  // Validation state - tracks whether user has attempted to start recording
+  const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
+  
   const intervalRef = useRef(null);
+  
+  /**
+   * VALIDATION LOGIC
+   * 
+   * canStartRecording is true ONLY when:
+   * - For 'application' type: contextPrompt (question) is non-empty
+   * - For 'interview' type: contextPrompt (question) is non-empty
+   * - For 'free'/'refine' types: always allowed (no question required)
+   * - AND not currently recording/processing
+   * 
+   * Reference and tone inputs do NOT affect this boolean.
+   */
+  const requiresQuestion = type === 'application' || type === 'interview';
+  const hasValidQuestion = contextPrompt.trim().length > 0;
+  const hasReferenceOnly = (uploadedFileUrl || referenceText) && !hasValidQuestion;
+  
+  const canStartRecording = useMemo(() => {
+    // Must not be in recording or processing state
+    if (recordingState !== 'idle') return false;
+    if (isTranscribing || isGenerating) return false;
+    
+    // For types that require a question, validate it exists
+    if (requiresQuestion && !hasValidQuestion) return false;
+    
+    return true;
+  }, [recordingState, isTranscribing, isGenerating, requiresQuestion, hasValidQuestion]);
+  
+  /**
+   * Get the validation warning message to display
+   * Returns null if no warning needed
+   */
+  const getValidationWarning = () => {
+    if (!hasAttemptedStart && !hasReferenceOnly) return null;
+    
+    if (requiresQuestion && !hasValidQuestion) {
+      if (hasReferenceOnly) {
+        return 'Please add the application essay question. References alone are not enough.';
+      }
+      return type === 'application' 
+        ? 'Please enter the application essay question before recording.'
+        : 'Please enter the interview question before recording.';
+    }
+    
+    return null;
+  };
+  
+  const validationWarning = getValidationWarning();
   const queryClient = useQueryClient();
   const addSessionToStore = useSessionStore(state => state.addSession);
   
@@ -147,25 +215,39 @@ export default function Speak() {
   };
   
   const handleStart = async () => {
-  // Start recording (credits will be decremented after a successful save)
+    // Mark that user has attempted to start (for showing validation warnings)
+    setHasAttemptedStart(true);
     
-      setDuration(0);
-      setRawTranscript(''); // Clear raw transcript (verbatim speech)
-      setRefinedTranscript(''); // Clear refined transcript (LLM output)
-      setTranscript(''); // Deprecated: kept for backward compatibility
-      setFillerCount(0);
-      setConfidenceLevel(0);
-      // audioLiveTranscript is cleared by useAudioRecorder when starting a NEW recording
-      // DO NOT set recordingState here - wait until MediaRecorder actually starts
-      
-      // Request microphone permission DIRECTLY in click handler to satisfy user gesture requirement
-      let stream = null;
-      try {
-        console.log('[Speak] Requesting microphone permission...');
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log('[Speak] Microphone permission granted, stream obtained');
-      } catch (err) {
-        console.error('[Speak] Error requesting microphone permission:', err);
+    // VALIDATION: Check if recording can start
+    if (!canStartRecording) {
+      // Don't proceed - validation warning will be shown via validationWarning state
+      console.log('[Speak] Recording blocked - validation failed:', {
+        requiresQuestion,
+        hasValidQuestion,
+        hasReferenceOnly,
+        recordingState
+      });
+      return;
+    }
+    
+    // Start recording (credits will be decremented after a successful save)
+    setDuration(0);
+    setRawTranscript(''); // Clear raw transcript (verbatim speech)
+    setRefinedTranscript(''); // Clear refined transcript (LLM output)
+    setTranscript(''); // Deprecated: kept for backward compatibility
+    setFillerCount(0);
+    setConfidenceLevel(0);
+    // audioLiveTranscript is cleared by useAudioRecorder when starting a NEW recording
+    // DO NOT set recordingState here - wait until MediaRecorder actually starts
+    
+    // Request microphone permission DIRECTLY in click handler to satisfy user gesture requirement
+    let stream = null;
+    try {
+      console.log('[Speak] Requesting microphone permission...');
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('[Speak] Microphone permission granted, stream obtained');
+    } catch (err) {
+      console.error('[Speak] Error requesting microphone permission:', err);
         setRecordingState('idle'); // Reset to idle state on permission failure
         toast({ 
           title: 'Microphone Permission Required', 
@@ -291,14 +373,30 @@ export default function Speak() {
       
       // Show Save modal immediately - user can save even if transcript is still processing
       setShowNamingModal(true);
-
-      // Transcribe/upload the audio (for backup/archival, but we use frozenRawTranscript for refinement)
-      const resp = await uploadAndTranscribe((partialTranscript) => {
-        setTranscript(partialTranscript); // Deprecated: kept for backward compatibility
-      }, finalBlob);
-      // Use backend transcript from final transcription (for backup)
-      const transcribedText = resp?.transcript || frozenRawTranscript; // Fallback to captured transcript
-      const audioUrl = resp?.file_url ?? null;
+      
+      // IMPORTANT: We already have the transcript from live transcription (frozenRawTranscript).
+      // The uploadAndTranscribe call is OPTIONAL - used only for audio backup storage.
+      // If it fails (e.g., CORS error, network issue), we continue with the live transcript.
+      let audioUrl = null;
+      let backupTranscript = null;
+      
+      try {
+        // Transcribe/upload the audio (for backup/archival)
+        // This is NON-BLOCKING - we use live transcript as primary source
+        const resp = await uploadAndTranscribe((partialTranscript) => {
+          setTranscript(partialTranscript); // Deprecated: kept for backward compatibility
+        }, finalBlob);
+        
+        backupTranscript = resp?.transcript;
+        audioUrl = resp?.file_url ?? null;
+      } catch (uploadErr) {
+        // Non-critical error - we have live transcript, just log and continue
+        console.warn('[Speak] uploadAndTranscribe failed (non-critical):', uploadErr.message);
+      }
+      
+      // PRIMARY SOURCE: Live transcript from WebSocket
+      // FALLBACK: Backend transcript (if uploadAndTranscribe succeeded)
+      const transcribedText = frozenRawTranscript || backupTranscript || '';
 
       setTranscript(transcribedText); // Deprecated: kept for backward compatibility
       setIsTranscribing(false);
@@ -638,17 +736,42 @@ export default function Speak() {
               </Label>
               <Input
                 value={contextPrompt}
-                onChange={(e) => setContextPrompt(e.target.value)}
+                onChange={(e) => {
+                  setContextPrompt(e.target.value);
+                  // Clear validation warning as user types
+                  if (e.target.value.trim().length > 0) {
+                    setHasAttemptedStart(false);
+                  }
+                }}
                 placeholder={type === 'application' 
                   ? 'e.g., Tell us about a time you demonstrated leadership...' 
                   : 'e.g., Why do you want to work here?'}
-                className="bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 h-12"
-                />
+                className={`bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 h-12 ${
+                  validationWarning && !hasValidQuestion ? 'border-red-400 dark:border-red-500/50 focus:border-red-500' : ''
+                }`}
+              />
+              
+              {/* Validation Warning - Inline, not modal */}
+              {validationWarning && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-2 mt-2 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-lg"
+                >
+                  <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    {validationWarning}
+                  </p>
+                </motion.div>
+              )}
+              
+              {!validationWarning && (
                 <p className="text-xs text-zinc-600 dark:text-zinc-500 mt-2">
-                {type === 'application' 
-                  ? 'Voira will help you respond naturally, clearly, and authentically.' 
-                  : 'Voira will refine your answer while keeping your authentic voice.'}
-              </p>
+                  {type === 'application' 
+                    ? 'Voira will help you respond naturally, clearly, and authentically.' 
+                    : 'Voira will refine your answer while keeping your authentic voice.'}
+                </p>
+              )}
             </div>
             
             {/* Company Name - Only for interviews */}

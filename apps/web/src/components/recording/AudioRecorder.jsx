@@ -254,7 +254,6 @@ export default function useAudioRecorder() {
         const closeCode = event.code;
         const closeReason = event.reason || 'No reason provided';
         const wasClean = event.wasClean;
-        
         console.log(`[TranscriptionWS] WS closed - code: ${closeCode}, reason: "${closeReason}", clean: ${wasClean}`);
         
         // Log error-level for abnormal closes (including auth failures)

@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from '@/App.jsx'
 import '@/index.css'
 import { supabase } from '@/components/lib/supabase'
-import { initSentry, setUser as setSentryUser } from '@/lib/sentry'
+import { initSentry, setUser as setSentryUser } from '@/lib/sentry.jsx'
 
 // Initialize Sentry for error tracking (must be done before app renders)
 initSentry();
