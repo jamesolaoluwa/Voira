@@ -2,100 +2,91 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import useSessionStore from '@/stores/useSessionStore';
-import { TrendingUp, TrendingDown, Award, Mic, Sparkles, AlertCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Award, Mic, Sparkles, AlertCircle, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { Button } from '@/components/ui/button';
 
-// Calculate real improvements from session data
+// Import v3 analytics utilities (SINGLE SOURCE OF TRUTH)
+import {
+  computeGrowthStats,
+  prepareChartData,
+  DEFAULT_BASELINE,
+  isReliable,
+  getReliabilityLabel,
+} from '@/lib/analytics';
 
+/**
+ * Custom Tooltip for charts with reliability indicator.
+ */
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    const reliability = data.reliability;
+    
     return (
       <div className="bg-white dark:bg-[#1a1a24] border border-zinc-200 dark:border-white/10 rounded-lg px-4 py-2 shadow-md dark:shadow-none">
         <p className="text-zinc-600 dark:text-zinc-400 text-sm">{label}</p>
         <p className="text-zinc-900 dark:text-zinc-100 font-semibold">{payload[0].value}</p>
+        {reliability !== undefined && (
+          <p className={`text-xs mt-1 ${isReliable(reliability) ? 'text-green-500' : 'text-amber-500'}`}>
+            Reliability: {getReliabilityLabel(reliability)}
+          </p>
+        )}
       </div>
     );
   }
   return null;
 };
 
+/**
+ * Reliability Badge component
+ */
+const ReliabilityBadge = ({ reliability }) => {
+  if (reliability === undefined) return null;
+  
+  const label = getReliabilityLabel(reliability);
+  const colorClass = isReliable(reliability)
+    ? 'bg-green-500/10 text-green-500 border-green-500/20'
+    : 'bg-amber-500/10 text-amber-500 border-amber-500/20';
+  
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full border ${colorClass}`}>
+      {label} Reliability
+    </span>
+  );
+};
+
 export default function Growth() {
   const sessions = useSessionStore(state => state.sessions || []);
   
-  // Filter out seed/demo data (only show real user recordings)
-  const realSessions = React.useMemo(() => {
-    return sessions.filter(s => s.id && !s.id.startsWith('seed-'));
+  /**
+   * CRITICAL: Use v3 analytics utilities for ALL stats computation.
+   * NO client-side calculations allowed here.
+   */
+  const stats = React.useMemo(() => {
+    return computeGrowthStats(sessions, DEFAULT_BASELINE);
   }, [sessions]);
   
-  const stats = React.useMemo(() => {
-    const total = realSessions.length;
-    if (total === 0) return { totalSessions: 0, avgConfidence: 0, avgFillers: 0, avgWPM: 0 };
-    const avgConfidence = Math.round(realSessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
-    const avgFillers = Math.round(realSessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
-    const avgWPM = Math.round(realSessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
-    return { totalSessions: total, avgConfidence, avgFillers, avgWPM };
-  }, [realSessions]);
+  /**
+   * CRITICAL: Use v3 chart data preparation.
+   * Charts display pre-computed data, never recompute.
+   */
+  const chartData = React.useMemo(() => {
+    const realSessions = sessions.filter(s => s.id && !s.id.startsWith('seed-'));
+    return prepareChartData(realSessions, 12);
+  }, [sessions]);
   
-  // Calculate real improvements by comparing first half vs second half of sessions
-  const improvements = React.useMemo(() => {
-    const total = realSessions.length;
-    if (total < 2) {
-      return [
-        { trait: 'Filler Word Reduction', change: 'N/A', positive: true },
-        { trait: 'Confidence Score', change: 'N/A', positive: true },
-        { trait: 'Speaking Pace', change: 'N/A', positive: true },
-        { trait: 'Sessions Completed', change: `${total}`, positive: total > 0 },
-      ];
+  // Get trend direction icons
+  const getTrendIcon = (direction, positive) => {
+    if (direction === 'improving' || (positive && direction !== 'declining')) {
+      return <TrendingUp className="w-3 h-3 mr-1" />;
+    } else if (direction === 'declining') {
+      return <TrendingDown className="w-3 h-3 mr-1" />;
     }
-    
-    const half = Math.max(1, Math.floor(total / 2));
-    // Sessions are sorted newest first, so first half = recent, last half = older
-    const recentHalf = realSessions.slice(0, half);
-    const olderHalf = realSessions.slice(-half);
-    
-    // Filler word reduction
-    const recentFillers = recentHalf.reduce((s, x) => s + (x.fillerCount || 0), 0) / recentHalf.length;
-    const olderFillers = olderHalf.reduce((s, x) => s + (x.fillerCount || 0), 0) / olderHalf.length;
-    const fillerReduction = olderFillers > 0 ? Math.round(((olderFillers - recentFillers) / olderFillers) * 100) : 0;
-    
-    // Confidence improvement
-    const recentConf = recentHalf.reduce((s, x) => s + (x.confidenceScore || 0), 0) / recentHalf.length;
-    const olderConf = olderHalf.reduce((s, x) => s + (x.confidenceScore || 0), 0) / olderHalf.length;
-    const confImprovement = Math.round(recentConf - olderConf);
-    
-    // Speaking pace stability
-    const avgWPM = realSessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total;
-    const paceVariance = realSessions.reduce((s, x) => s + Math.abs((x.wordsPerMinute || 0) - avgWPM), 0) / total;
-    const paceStatus = paceVariance < 15 ? 'Stable' : paceVariance < 25 ? 'Improving' : 'Variable';
-    
-    return [
-      { 
-        trait: 'Filler Word Reduction', 
-        change: fillerReduction > 0 ? `-${fillerReduction}%` : fillerReduction < 0 ? `+${Math.abs(fillerReduction)}%` : '0%', 
-        positive: fillerReduction >= 0 
-      },
-      { 
-        trait: 'Confidence Score', 
-        change: confImprovement > 0 ? `+${confImprovement}%` : `${confImprovement}%`, 
-        positive: confImprovement >= 0 
-      },
-      { trait: 'Speaking Pace', change: paceStatus, positive: paceVariance < 25 },
-      { trait: 'Sessions Completed', change: `${total}`, positive: true },
-    ];
-  }, [realSessions]);
+    return null;
+  };
   
-  const recent = realSessions.slice(0, 12).reverse();
-  const fillerData = recent.length > 0 
-    ? recent.map((s, i) => ({ week: `S${i+1}`, count: s.fillerCount || 0 }))
-    : [{ week: 'S1', count: 0 }];
-  const confidenceData = recent.length > 0
-    ? recent.map((s, i) => ({ week: `S${i+1}`, score: s.confidenceScore || 0 }))
-    : [{ week: 'S1', score: 0 }];
-  const speakingData = recent.length > 0
-    ? recent.map((s, i) => ({ week: `S${i+1}`, words: s.wordsPerMinute || 0 }))
-    : [{ week: 'S1', words: 0 }];
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
       {/* Header */}
@@ -113,7 +104,7 @@ export default function Growth() {
       </motion.div>
       
       {/* Empty State */}
-      {realSessions.length === 0 && (
+      {stats.totalSessions === 0 && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -134,47 +125,52 @@ export default function Growth() {
         </motion.div>
       )}
 
-      {/* Stats Overview */}
+      {/* Stats Overview - Using v3 reliability-weighted averages */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
         className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
       >
+        {/* Thinking Pause Density (using density, not raw count) */}
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <Mic className="w-5 h-5 text-violet-400" />
-            {realSessions.length >= 2 && improvements[0]?.change !== 'N/A' && (
-              <span className={`text-xs ${improvements[0]?.positive ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
-                {improvements[0]?.positive ? <TrendingDown className="w-3 h-3 mr-1" /> : <TrendingUp className="w-3 h-3 mr-1" />}
-                {improvements[0]?.change}
+            {stats.totalSessions >= 2 && stats.trends.fillers.reductionPct !== 0 && (
+              <span className={`text-xs ${stats.trends.fillers.reductionPct >= 0 ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
+                {getTrendIcon(stats.trends.fillers.direction, stats.trends.fillers.reductionPct >= 0)}
+                {stats.trends.fillers.reductionPct > 0 ? `-${stats.trends.fillers.reductionPct}%` : `+${Math.abs(stats.trends.fillers.reductionPct)}%`}
               </span>
             )}
           </div>
-          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgFillers}</p>
-          <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Filler Words/Session</p>
+          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgFillerDensity}%</p>
+          <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Pause Density</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-600 mt-0.5">per 100 words</p>
         </div>
         
+        {/* Confidence Score (reliability-weighted) */}
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <Sparkles className="w-5 h-5 text-teal-600 dark:text-teal-400" />
-            {realSessions.length >= 2 && improvements[1]?.change !== 'N/A' && (
-              <span className={`text-xs ${improvements[1]?.positive ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
-                {improvements[1]?.positive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
-                {improvements[1]?.change}
+            {stats.totalSessions >= 2 && stats.trends.confidence.change !== 0 && (
+              <span className={`text-xs ${stats.trends.confidence.change >= 0 ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
+                {getTrendIcon(stats.trends.confidence.direction, stats.trends.confidence.change >= 0)}
+                {stats.trends.confidence.change > 0 ? `+${stats.trends.confidence.change}` : stats.trends.confidence.change}
               </span>
             )}
           </div>
           <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.avgConfidence}%</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Confidence Score</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-600 mt-0.5">vs baseline: {DEFAULT_BASELINE.confidenceExpectation}</p>
         </div>
         
+        {/* Speaking Pace */}
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <Award className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-            {realSessions.length >= 2 && (
-              <span className={`text-xs ${improvements[2]?.positive ? 'text-green-400' : 'text-amber-400'}`}>
-                {improvements[2]?.change}
+            {stats.totalSessions >= 2 && (
+              <span className={`text-xs ${stats.trends.pace.variance < 25 ? 'text-green-400' : 'text-amber-400'}`}>
+                {stats.trends.pace.stability}
               </span>
             )}
           </div>
@@ -182,6 +178,7 @@ export default function Growth() {
           <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Words/Minute</p>
         </div>
         
+        {/* Sessions Completed */}
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
             <TrendingUp className="w-5 h-5 text-rose-600 dark:text-rose-400" />
@@ -191,9 +188,24 @@ export default function Growth() {
         </div>
       </motion.div>
       
-      {/* Charts */}
+      {/* Analytics Note */}
+      {stats.totalSessions > 0 && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.15 }}
+          className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-600 mb-6 px-1"
+        >
+          <Info className="w-3.5 h-3.5" />
+          <span>
+            Scores are reliability-weighted averages. Improvements are measured against your personal baseline.
+          </span>
+        </motion.div>
+      )}
+      
+      {/* Charts - Using pre-computed chart data */}
       <div className="grid lg:grid-cols-2 gap-6 mb-8">
-        {/* Filler Words Chart */}
+        {/* Thinking Pause Density Chart (using density, not count) */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -201,12 +213,12 @@ export default function Growth() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
         >
           <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Filler Word Reduction</h3>
-          <p className="text-xs text-teal-600 dark:text-teal-400">You're becoming clearer with every session.</p>
-        </div>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Thinking Pause Density</h3>
+            <p className="text-xs text-teal-600 dark:text-teal-400">Normalized per 100 words</p>
+          </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={fillerData}>
+              <AreaChart data={chartData.fillerData}>
                 <defs>
                   <linearGradient id="fillerGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/>
@@ -214,12 +226,12 @@ export default function Growth() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                <XAxis dataKey="week" stroke="#52525b" fontSize={12} />
+                <XAxis dataKey="session" stroke="#52525b" fontSize={12} />
                 <YAxis stroke="#52525b" fontSize={12} />
                 <Tooltip content={<CustomTooltip />} />
                 <Area 
                   type="monotone" 
-                  dataKey="count" 
+                  dataKey="density" 
                   stroke="#8B5CF6" 
                   strokeWidth={2}
                   fill="url(#fillerGradient)" 
@@ -237,16 +249,27 @@ export default function Growth() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
         >
           <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Confidence Trend</h3>
-          <p className="text-xs text-violet-600 dark:text-violet-400">Your confidence is trending upward — keep going.</p>
-        </div>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Confidence Trend</h3>
+            <p className="text-xs text-violet-600 dark:text-violet-400">
+              Baseline: {DEFAULT_BASELINE.confidenceExpectation}
+            </p>
+          </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={confidenceData}>
+              <LineChart data={chartData.confidenceData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                <XAxis dataKey="week" stroke="#52525b" fontSize={12} />
-                <YAxis stroke="#52525b" fontSize={12} domain={[50, 100]} />
+                <XAxis dataKey="session" stroke="#52525b" fontSize={12} />
+                <YAxis stroke="#52525b" fontSize={12} domain={[30, 100]} />
                 <Tooltip content={<CustomTooltip />} />
+                {/* Baseline reference line */}
+                <Line 
+                  type="monotone" 
+                  dataKey={() => DEFAULT_BASELINE.confidenceExpectation}
+                  stroke="#6b7280" 
+                  strokeWidth={1}
+                  strokeDasharray="5 5"
+                  dot={false}
+                />
                 <Line 
                   type="monotone" 
                   dataKey="score" 
@@ -271,7 +294,7 @@ export default function Growth() {
         <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-6">Speaking Pace (Words/Minute)</h3>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={speakingData}>
+            <AreaChart data={chartData.paceData}>
               <defs>
                 <linearGradient id="speakingGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3}/>
@@ -279,12 +302,12 @@ export default function Growth() {
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="week" stroke="#52525b" fontSize={12} />
-              <YAxis stroke="#52525b" fontSize={12} domain={[100, 180]} />
+              <XAxis dataKey="session" stroke="#52525b" fontSize={12} />
+              <YAxis stroke="#52525b" fontSize={12} domain={[80, 200]} />
               <Tooltip content={<CustomTooltip />} />
               <Area 
                 type="monotone" 
-                dataKey="words" 
+                dataKey="wpm" 
                 stroke="#F59E0B" 
                 strokeWidth={2}
                 fill="url(#speakingGradient)" 
@@ -294,7 +317,7 @@ export default function Growth() {
         </div>
       </motion.div>
       
-      {/* Most Improved */}
+      {/* Most Improved - Using v3 improvements data */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -303,10 +326,10 @@ export default function Growth() {
       >
         <div className="flex items-center gap-2 mb-6">
           <Award className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Most Improved Traits</h3>
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Progress Summary</h3>
         </div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {improvements.map((item, index) => (
+          {stats.improvements.map((item, index) => (
             <motion.div
               key={item.trait}
               initial={{ opacity: 0, scale: 0.9 }}
@@ -315,9 +338,12 @@ export default function Growth() {
               className="bg-white/50 dark:bg-[#1a1a24]/50 rounded-xl p-4 border border-zinc-200 dark:border-transparent"
             >
               <p className="text-zinc-700 dark:text-zinc-400 text-sm mb-2">{item.trait}</p>
-              <p className={`text-2xl font-bold ${item.positive ? 'text-green-400' : 'text-zinc-100'}`}>
+              <p className={`text-2xl font-bold ${item.positive ? 'text-green-500 dark:text-green-400' : 'text-zinc-700 dark:text-zinc-100'}`}>
                 {item.change}
               </p>
+              {item.note && (
+                <p className="text-xs text-zinc-500 dark:text-zinc-600 mt-1">{item.note}</p>
+              )}
             </motion.div>
           ))}
         </div>

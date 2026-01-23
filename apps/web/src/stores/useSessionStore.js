@@ -1,134 +1,97 @@
 import { create } from 'zustand';
 import { saveLocalRecording, getLocalRecordings } from '@/lib/localRecordings';
 
-// Session shape documented in the task
-// id, createdAt, type, question, transcript, durationSec, wordsCount, confidenceScore, fillerCount, wordsPerMinute
+/**
+ * Session Store (v3 Analytics Compliant)
+ * 
+ * IMPORTANT: This store ONLY manages session data persistence and retrieval.
+ * All analytics calculations MUST use the utilities in @/lib/analytics.js
+ * 
+ * DO NOT:
+ * - Compute scores or trends here
+ * - Use legacy field names without mapping
+ * - Create new aggregation functions
+ * 
+ * The getStatsSummary method is DEPRECATED - use computeGrowthStats from analytics.js instead.
+ */
 
-const seedDeterministic = () => {
-  // deterministic seed data for demo purposes
-  const now = new Date('2025-12-28T12:00:00Z');
-  return [
-    {
-      id: 'seed-1',
-      createdAt: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 7).toISOString(),
-      type: 'practice',
-      question: 'Tell me about a time you led a project',
-      transcript: 'I led a project where I coordinated a team of five...',
-      durationSec: 60,
-      wordsCount: 120,
-      confidenceScore: 78,
-      fillerCount: 3,
-      wordsPerMinute: 120,
-    },
-    {
-      id: 'seed-2',
-      createdAt: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 3).toISOString(),
-      type: 'interview',
-      question: 'Why do you want to work here?',
-      transcript: 'I admire the mission and the team...',
-      durationSec: 45,
-      wordsCount: 90,
-      confidenceScore: 84,
-      fillerCount: 2,
-      wordsPerMinute: 120,
-    },
-    {
-      id: 'seed-3',
-      createdAt: new Date(now.getTime() - 1000 * 60 * 60 * 24 * 1).toISOString(),
-      type: 'application',
-      question: 'Personal statement',
-      transcript: 'My journey started when...',
-      durationSec: 90,
-      wordsCount: 180,
-      confidenceScore: 81,
-      fillerCount: 4,
-      wordsPerMinute: 120,
-    },
-  ];
-};
+// Import v3 analytics for compatibility layer
+import { mapLegacySession, computeGrowthStats, DEFAULT_BASELINE } from '@/lib/analytics';
 
+/**
+ * @deprecated Use computeGrowthStats from @/lib/analytics.js instead
+ * This function is kept for backward compatibility only.
+ */
 function computeStats(sessions) {
-  const total = sessions.length;
-  if (total === 0) return {
-    totalSessions: 0,
-    avgConfidence: 0,
-    avgFillers: 0,
-    avgWPM: 0,
-    lastSessionAt: null,
-    improvementTrend: {
-      confidenceDelta: 0,
-      fillerReductionPct: 0,
-      paceStability: 0,
-    },
-  };
-
-  const avgConfidence = Math.round((sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total));
-  const avgFillers = Math.round((sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total));
-  const avgWPM = Math.round((sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total));
-  const lastSessionAt = sessions.reduce((a, b) => new Date(a.createdAt) > new Date(b.createdAt) ? a : b).createdAt;
-
-  // simple trend: compare last half vs first half
-  const half = Math.max(1, Math.floor(total / 2));
-  const firstHalf = sessions.slice(0, half);
-  const lastHalf = sessions.slice(-half);
-  const firstAvgConf = firstHalf.reduce((s, x) => s + (x.confidenceScore || 0), 0) / firstHalf.length;
-  const lastAvgConf = lastHalf.reduce((s, x) => s + (x.confidenceScore || 0), 0) / lastHalf.length;
-
-  const confidenceDelta = Math.round(lastAvgConf - firstAvgConf);
-  const firstAvgFill = firstHalf.reduce((s, x) => s + (x.fillerCount || 0), 0) / firstHalf.length;
-  const lastAvgFill = lastHalf.reduce((s, x) => s + (x.fillerCount || 0), 0) / lastHalf.length;
-  const fillerReductionPct = firstAvgFill === 0 ? 0 : Math.round(((firstAvgFill - lastAvgFill) / firstAvgFill) * 100);
-
-  const paceStability = Math.round(sessions.reduce((s, x) => s + Math.abs((x.wordsPerMinute || 0) - avgWPM), 0) / total);
-
+  // Delegate to v3 analytics
+  const stats = computeGrowthStats(sessions, DEFAULT_BASELINE);
+  
+  // Map to legacy format for backward compatibility
   return {
-    totalSessions: total,
-    avgConfidence,
-    avgFillers,
-    avgWPM,
-    lastSessionAt,
+    totalSessions: stats.totalSessions,
+    avgConfidence: stats.avgConfidence,
+    avgFillers: stats.avgFillerDensity, // Note: now returns density, not count
+    avgWPM: stats.avgWPM,
+    lastSessionAt: sessions.length > 0 
+      ? sessions.reduce((a, b) => new Date(a.createdAt) > new Date(b.createdAt) ? a : b).createdAt
+      : null,
     improvementTrend: {
-      confidenceDelta,
-      fillerReductionPct,
-      paceStability,
+      confidenceDelta: stats.trends.confidence.change,
+      fillerReductionPct: stats.trends.fillers.reductionPct,
+      paceStability: stats.trends.pace.variance,
     },
   };
 }
 
 export const useSessionStore = create((set, get) => ({
-  // Initialize with local recordings only, NOT seed data
-  // Seed data should only be shown if explicitly requested for demo purposes
-  // Real users should see their actual sessions from backend/localStorage
+  // Initialize with local recordings only
   sessions: (() => {
     const local = getLocalRecordings() || [];
-    // Return local recordings if any exist, otherwise empty array
-    // Do NOT return seed data by default - it confuses real users
     return local.length > 0 ? local : [];
   })(),
   setSessions: (sessions) => set(prev => ({ ...prev, sessions })),
+  
+  /**
+   * Add a session to the store.
+   * 
+   * This method normalizes field names to support both legacy (camelCase)
+   * and v3 (snake_case) formats. The stored format uses camelCase for
+   * backward compatibility with existing UI components.
+   * 
+   * v3 Analytics fields that should be preserved:
+   * - analysis_reliability: Epistemic reliability (0-1)
+   * - filler_word_frequency: Filler density (use for scoring, NOT filler_count)
+   */
   addSession: (session) => {
-    // normalize fields (pure computation)
-    const durationSecVal = session.durationSec || session.duration_seconds || 0;
-    const wordsCountVal = session.wordsCount || session.words_count || Math.max(0, Math.round(((session.transcript || '').split(/\s+/) || []).filter(Boolean).length));
-    const wordsPerMinuteVal = session.wordsPerMinute || session.words_per_minute || (wordsCountVal && durationSecVal ? Math.round((wordsCountVal / (durationSecVal / 60))) : 0);
+    // Map legacy fields using v3 analytics utility
+    const mapped = mapLegacySession(session);
+    
+    const durationSecVal = mapped.duration_seconds || session.durationSec || 0;
+    const wordsCountVal = mapped.word_count || session.wordsCount || 
+      Math.max(0, Math.round(((session.transcript || '').split(/\s+/) || []).filter(Boolean).length));
+    const wordsPerMinuteVal = mapped.words_per_minute || session.wordsPerMinute || 
+      (wordsCountVal && durationSecVal ? Math.round((wordsCountVal / (durationSecVal / 60))) : 0);
 
     const s = {
       id: session.id || `local-${Date.now()}`,
-      createdAt: session.createdAt || new Date().toISOString(),
-  // preserve title when provided so Library can show the user-entered name
-  title: session.title || session.question || '',
+      createdAt: session.createdAt || session.created_at || new Date().toISOString(),
+      title: session.title || session.question || '',
       type: session.type || 'speak',
       question: session.question || '',
       transcript: session.transcript || '',
       durationSec: durationSecVal,
       wordsCount: wordsCountVal,
-      confidenceScore: session.confidenceScore || session.confidence_score || 0,
-      fillerCount: session.fillerCount || session.filler_count || 0,
+      // v3 Analytics fields (use mapped values)
+      confidenceScore: mapped.confidence_score || 0,
+      clarityScore: mapped.clarity_score || 0,
+      fillerCount: mapped.filler_word_count || 0,
+      filler_word_frequency: mapped.filler_word_frequency || 0, // v3: Use for scoring
+      analysis_reliability: mapped.analysis_reliability || 0.5, // v3: Epistemic reliability
       wordsPerMinute: wordsPerMinuteVal,
     };
     // update state
     set(prev => ({ ...prev, sessions: [s, ...(prev.sessions || [])] }));
-    // side-effect: persist locally (do not mutate state here)
+    // side-effect: persist locally
     try { saveLocalRecording(s); } catch (e) {}
   },
   removeSession: (id) => {

@@ -753,7 +753,8 @@ async def websocket_live_transcribe(
 @app.websocket("/ws/listen")
 async def websocket_listen(
     websocket: WebSocket,
-    token: Optional[str] = Query(None, description="JWT authentication token")
+    token: Optional[str] = Query(None, description="JWT authentication token"),
+    detect_fillers: Optional[bool] = Query(None, description="Enable filler word detection (overrides user setting)")
 ):
     """
     WebSocket endpoint for live transcription using MediaRecorder (audio/webm).
@@ -764,12 +765,18 @@ async def websocket_listen(
     Configuration:
     - model: nova-2
     - language: en-US
-    - smart_format: true
+    - smart_format: depends on filler detection mode
     - interim_results: true
+    
+    Filler Detection:
+    - If detect_fillers=true: Preserves filler words, reports counts
+    - If detect_fillers=false: Uses smart_format for clean output
+    - If not provided: Uses user's setting (filler_word_detection)
+    - Practice mode should always pass detect_fillers=true
     
     Authentication:
     - Token must be provided via query parameter: ?token=YOUR_JWT_TOKEN
-    - Example: ws://localhost:8000/ws/listen?token=xxx
+    - Example: ws://localhost:8000/ws/listen?token=xxx&detect_fillers=true
     
     Protocol:
     - Client sends binary audio chunks (audio/webm)
@@ -777,7 +784,9 @@ async def websocket_listen(
       {
         "type": "partial" | "final" | "error",
         "text": "transcribed text",
-        "confidence": 0.95
+        "confidence": 0.95,
+        "fillers_in_segment": 0,  // Only when filler detection enabled
+        "total_fillers": 0        // Only when filler detection enabled
       }
     """
     # Check authentication BEFORE accepting the connection
@@ -810,8 +819,23 @@ async def websocket_listen(
     await websocket.accept()
     logger.info(f"[WebSocket /ws/listen] Connection accepted for user {user['id']}")
     
-    # Initialize Deepgram provider
-    provider = DeepgramWebmProvider()
+    # Determine if filler detection should be enabled
+    # Priority: explicit parameter > user setting > default (false)
+    enable_filler_detection = detect_fillers
+    if enable_filler_detection is None:
+        # Check user's setting
+        try:
+            user_settings = await get_user_settings(user['id'])
+            enable_filler_detection = user_settings.get('filler_word_detection', False)
+            logger.info(f"[WebSocket] Using user setting for filler detection: {enable_filler_detection}")
+        except Exception as e:
+            logger.warning(f"[WebSocket] Could not fetch user settings, defaulting to no filler detection: {e}")
+            enable_filler_detection = False
+    else:
+        logger.info(f"[WebSocket] Using explicit filler detection parameter: {enable_filler_detection}")
+    
+    # Initialize Deepgram provider with filler detection mode
+    provider = DeepgramWebmProvider(detect_fillers=enable_filler_detection)
     
     try:
         # Connect to Deepgram first
@@ -969,13 +993,20 @@ async def analyze_transcript_endpoint(
             company_name=request.company_name
         )
         
+        # Build full analytics response (v3 contract)
         return AnalyzeResponse(
             refined_text=result["refined_text"],
             confidence_score=result["confidence_score"],
             clarity_score=result["clarity_score"],
+            analysis_reliability=result.get("analysis_reliability", 0.5),
             filler_word_count=result["filler_word_count"],
             filler_word_frequency=result["filler_word_frequency"],
             filler_word_breakdown=result["filler_word_breakdown"],
+            signal_validity=result.get("signal_validity"),
+            explanation=result.get("explanation"),
+            baseline=result.get("baseline"),
+            drift=result.get("drift"),
+            metrics=result.get("metrics"),
         )
     
     except ValueError as e:
@@ -1165,6 +1196,95 @@ async def upload_reference_file(
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
         raise HTTPException(status_code=500, detail="Internal server error during file upload")
+
+
+# =============================================================================
+# User Settings Endpoints (Phase 1 - Lean)
+# =============================================================================
+
+from models import UserSettings, UserSettingsUpdate
+
+async def get_user_settings(user_id: str) -> dict:
+    """
+    Get or create user settings from database.
+    
+    Phase 1: Only filler_word_detection is persisted.
+    Returns defaults if database operations fail.
+    """
+    try:
+        # Try to get existing settings
+        response = supabase.table("user_settings").select("*").eq("user_id", user_id).single().execute()
+        if response.data:
+            return response.data
+    except Exception as e:
+        logger.debug(f"Settings not found for user {user_id}, will create: {e}")
+    
+    # Create default settings if not found
+    try:
+        response = supabase.table("user_settings").insert({
+            "user_id": user_id,
+            "filler_word_detection": False
+        }).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        logger.error(f"Error creating user settings: {e}")
+    
+    # Return defaults if database operations fail (graceful degradation)
+    return {
+        "user_id": user_id,
+        "filler_word_detection": False,
+        "created_at": None,
+        "updated_at": None
+    }
+
+
+@app.get("/user/settings", response_model=UserSettings)
+async def get_settings(user: dict = Depends(get_current_user)):
+    """
+    Get current user's settings (Phase 1).
+    
+    Returns filler_word_detection setting.
+    Auto-creates settings row if user doesn't have one.
+    """
+    settings_data = await get_user_settings(user["id"])
+    return UserSettings(**settings_data)
+
+
+@app.put("/user/settings", response_model=UserSettings)
+async def update_settings(
+    settings_update: UserSettingsUpdate,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Update current user's settings (Phase 1).
+    
+    Only filler_word_detection can be updated in Phase 1.
+    """
+    # Get current settings first (ensures row exists)
+    current_settings = await get_user_settings(user["id"])
+    
+    # Build update dict with only provided fields (Phase 1: only filler_word_detection)
+    update_data = {}
+    if settings_update.filler_word_detection is not None:
+        update_data["filler_word_detection"] = settings_update.filler_word_detection
+    
+    if not update_data:
+        # No updates provided
+        return UserSettings(**current_settings)
+    
+    try:
+        response = supabase.table("user_settings").update(update_data).eq("user_id", user["id"]).execute()
+        if response.data and len(response.data) > 0:
+            logger.info(f"Settings updated for user {user['id']}: filler_word_detection={update_data.get('filler_word_detection')}")
+            return UserSettings(**response.data[0])
+        else:
+            # Fallback to current with updates applied
+            current_settings.update(update_data)
+            return UserSettings(**current_settings)
+    except Exception as e:
+        logger.error(f"Error updating user settings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update settings")
 
 
 # =============================================================================

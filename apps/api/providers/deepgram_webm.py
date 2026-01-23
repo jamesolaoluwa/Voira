@@ -22,14 +22,28 @@ class DeepgramWebmProvider:
     """
     Deepgram live transcription provider using websockets library.
     Handles WebM audio streaming and real-time transcript events.
+    
+    Supports two modes:
+    1. Standard mode (smart_format=true): Removes fillers, clean output
+    2. Filler detection mode (filler_words=true): Preserves and tags filler words
     """
     
-    def __init__(self):
+    def __init__(self, detect_fillers: bool = False):
+        """
+        Initialize the Deepgram provider.
+        
+        Args:
+            detect_fillers: If True, enables filler word detection.
+                           Fillers are preserved in transcript and tagged in word metadata.
+                           If False, smart_format removes fillers for clean output.
+        """
         self._ws: Optional[WebSocketClientProtocol] = None
         self._connected = False
         self._receive_task: Optional[asyncio.Task] = None
         self._transcript_queue: asyncio.Queue = asyncio.Queue()
         self._closed = False
+        self._detect_fillers = detect_fillers
+        self._filler_count = 0  # Track filler words detected in this session
     
     async def connect(self) -> None:
         """
@@ -41,14 +55,29 @@ class DeepgramWebmProvider:
         if self._connected:
             raise RuntimeError("Stream already connected")
         
-        # Build Deepgram WebSocket URL with query parameters (excluding token)
-        # Token goes in Authorization header instead
-        params = {
-            "model": "nova-2",
-            "language": "en-US",
-            "smart_format": "true",
-            "interim_results": "true",
-        }
+        # Build Deepgram WebSocket URL with query parameters
+        # Configuration depends on filler detection mode
+        if self._detect_fillers:
+            # Filler detection mode: disable smart_format, enable filler_words
+            # This preserves fillers in transcript and tags them in word metadata
+            params = {
+                "model": "nova-2",
+                "language": "en-US",
+                "smart_format": "false",  # Don't remove fillers
+                "filler_words": "true",   # Tag filler words in response
+                "interim_results": "true",
+                "punctuate": "true",      # Still add punctuation
+            }
+            logger.info("[Deepgram] Connecting with FILLER DETECTION mode enabled")
+        else:
+            # Standard mode: smart_format removes fillers for clean output
+            params = {
+                "model": "nova-2",
+                "language": "en-US",
+                "smart_format": "true",   # Clean output, removes fillers
+                "interim_results": "true",
+            }
+            logger.info("[Deepgram] Connecting in STANDARD mode (fillers removed)")
         
         query_string = "&".join([f"{k}={v}" for k, v in params.items()])
         ws_url = f"{DEEPGRAM_WS_URL}?{query_string}"
@@ -171,10 +200,37 @@ class DeepgramWebmProvider:
             
             confidence = None
             words = alternative.get("words", [])
+            
+            # Track filler words if in detection mode
+            fillers_in_segment = 0
+            filler_words_found = []
+            
             if words:
                 confidences = [w.get("confidence", 0) for w in words if "confidence" in w]
                 if confidences:
                     confidence = sum(confidences) / len(confidences)
+                
+                # Count filler words (Deepgram tags them when filler_words=true)
+                if self._detect_fillers:
+                    for word_info in words:
+                        word_text = word_info.get("word", "").lower()
+                        # Deepgram may tag fillers with a "type" field or we check common fillers
+                        is_filler = word_info.get("type") == "filler"
+                        
+                        # Also check for common fillers that might not be tagged
+                        common_fillers = ["um", "uh", "er", "ah", "like", "you know", "basically", 
+                                         "actually", "literally", "right", "so", "well", "i mean"]
+                        if not is_filler and word_text in common_fillers:
+                            is_filler = True
+                        
+                        if is_filler:
+                            fillers_in_segment += 1
+                            filler_words_found.append(word_text)
+                    
+                    # Update session filler count (only for final transcripts to avoid double-counting)
+                    if is_final and fillers_in_segment > 0:
+                        self._filler_count += fillers_in_segment
+                        logger.info(f"[Deepgram] Detected {fillers_in_segment} filler(s): {filler_words_found}. Session total: {self._filler_count}")
             else:
                 confidence = alternative.get("confidence")
             
@@ -184,8 +240,15 @@ class DeepgramWebmProvider:
                 "confidence": confidence,
             }
             
+            # Include filler info if in detection mode
+            if self._detect_fillers:
+                event["fillers_in_segment"] = fillers_in_segment
+                event["filler_words"] = filler_words_found
+                event["total_fillers"] = self._filler_count
+            
             # Log every transcript event with details
-            logger.info(f"[Deepgram] TranscriptReceived - {event_type.upper()}: '{transcript_text[:100]}{'...' if len(transcript_text) > 100 else ''}' (confidence: {confidence})")
+            filler_info = f", fillers: {fillers_in_segment}" if self._detect_fillers else ""
+            logger.info(f"[Deepgram] TranscriptReceived - {event_type.upper()}: '{transcript_text[:100]}{'...' if len(transcript_text) > 100 else ''}' (confidence: {confidence}{filler_info})")
             
             await self._transcript_queue.put(event)
         
@@ -271,3 +334,11 @@ class DeepgramWebmProvider:
     def is_connected(self) -> bool:
         """Check if stream is connected."""
         return self._connected and not self._closed
+    
+    def get_filler_count(self) -> int:
+        """Get the total filler word count for this session."""
+        return self._filler_count
+    
+    def is_filler_detection_enabled(self) -> bool:
+        """Check if filler detection mode is enabled."""
+        return self._detect_fillers

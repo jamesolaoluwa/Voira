@@ -196,7 +196,7 @@ VITE_SENTRY_DSN=https://xxx@sentry.io/xxx
 In Supabase SQL Editor, run each migration file in order:
 
 1. **Create tables** (`20250101_create_tables.sql`):
-   - Creates `profiles`, `sessions`, `admin_emails` tables
+   - Creates `recordings`, `user_profiles`, `admin_emails`, `credits_ledger` tables
 
 2. **Enable RLS** (`20250101_enable_rls.sql`):
    - Enables Row Level Security on all tables
@@ -207,10 +207,41 @@ In Supabase SQL Editor, run each migration file in order:
    - Adds triggers for automatic profile creation
 
 4. **Voice profiles** (`20251231_create_voice_profiles.sql`):
-   - Creates `voice_profiles` table
+   - Creates `voice_profiles` table for storing user voice profile data
 
 5. **Voice profiles RLS** (`20251231_voice_profiles_rls.sql`):
-   - Enables RLS for voice profiles
+   - Enables RLS on voice_profiles table
+   - Creates owner-only access policies
+
+6. **User settings (Phase 1)** (`20260123_user_settings.sql`):
+   - Creates lean `user_settings` table with only essential settings
+   - Primary key is `user_id` (references auth.users)
+   - `get_or_create_user_settings` function for auto-initialization
+   - Auto-updating `updated_at` trigger
+
+**Phase 1 Schema (Lean):**
+```sql
+user_settings (
+  user_id uuid PRIMARY KEY,
+  filler_word_detection boolean DEFAULT false,
+  created_at timestamptz,
+  updated_at timestamptz
+)
+```
+
+**Filler Word Behavior by Mode (hardcoded in application logic):**
+
+| Mode | Detect Fillers | Remove Fillers | Show Count |
+|------|---------------|----------------|------------|
+| **Practice** | Always ON | Never | Always ON |
+| **Application** | User setting | Always | User setting |
+| **Interview** | User setting | Default OFF | User setting |
+| **Free Speak** | User setting | Default OFF | User setting |
+
+- `filler_word_detection` controls **detection** only (counting/analytics)
+- Filler **removal** is mode-specific and hardcoded in application logic
+- Practice mode ignores user setting and always detects fillers
+- Application mode always removes fillers from output (for clean submissions)
 
 ### Verify Setup
 

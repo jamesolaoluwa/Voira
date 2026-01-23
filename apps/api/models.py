@@ -126,14 +126,77 @@ class AnalyzeRequest(BaseModel):
     company_name: Optional[str] = Field(None, max_length=100, description="Company name for interview responses (used for research when context is empty)")
 
 
+class ScoreExplanationModel(BaseModel):
+    """Explanation for a score (confidence or clarity)."""
+    score: int = Field(..., ge=0, le=100)
+    raw_score: float
+    reliability: float = Field(..., ge=0, le=1)
+    baseline_expectation: float
+    epistemic_adjustment: float
+    reliability_note: str
+    top_positive: List[Dict] = Field(default_factory=list)
+    top_negative: List[Dict] = Field(default_factory=list)
+    counterfactuals: List[Dict] = Field(default_factory=list)
+
+
+class BaselineInfoModel(BaseModel):
+    """Baseline information used for scoring."""
+    is_user_specific: bool
+    sample_count: int
+    confidence_expectation: float
+    clarity_expectation: float
+    filler_density_ci: List[float] = Field(default_factory=list)
+    stance_ratio_ci: List[float] = Field(default_factory=list)
+
+
+class DriftInfoModel(BaseModel):
+    """Drift tracking information."""
+    drift_tracked: bool
+    filler_drift: Optional[Dict] = None
+    stance_drift: Optional[Dict] = None
+
+
+class SignalValidityModel(BaseModel):
+    """Signal validity information."""
+    is_valid: bool
+    reliability: float
+    reliability_factors: Dict
+    reason: str
+
+
 class AnalyzeResponse(BaseModel):
-    """Response model for transcript analysis and refinement."""
+    """
+    Response model for transcript analysis and refinement.
+    
+    This is the CANONICAL analytics response contract (v3).
+    Frontend MUST consume this as-is without recomputing metrics.
+    """
     refined_text: str = Field(..., description="Polished response")
+    
+    # Core scores
     confidence_score: int = Field(..., ge=0, le=100, description="Confidence score (0-100)")
     clarity_score: int = Field(..., ge=0, le=100, description="Clarity score (0-100)")
-    filler_word_count: int = Field(..., ge=0, description="Total number of filler words detected")
-    filler_word_frequency: float = Field(..., ge=0.0, description="Filler word frequency as percentage")
+    
+    # Epistemic reliability
+    analysis_reliability: float = Field(default=0.5, ge=0, le=1, description="Reliability of the analysis (0-1)")
+    
+    # Filler metrics
+    filler_word_count: int = Field(..., ge=0, description="Total number of filler words detected (display only)")
+    filler_word_frequency: float = Field(..., ge=0.0, description="Filler density per 100 words (use for scoring)")
     filler_word_breakdown: Dict[str, int] = Field(default_factory=dict, description="Breakdown of filler words by type")
+    
+    # Signal validity
+    signal_validity: Optional[SignalValidityModel] = Field(None, description="Signal quality analysis")
+    
+    # Detailed explanations (for advanced views)
+    explanation: Optional[Dict] = Field(None, description="Score explanations with counterfactuals")
+    
+    # Baseline and drift
+    baseline: Optional[BaselineInfoModel] = Field(None, description="Baseline used for scoring")
+    drift: Optional[DriftInfoModel] = Field(None, description="Drift tracking info")
+    
+    # Normalized metrics (for charts)
+    metrics: Optional[Dict] = Field(None, description="Normalized metrics for visualization")
 
 
 class FileUploadResponse(BaseModel):
@@ -151,4 +214,30 @@ class AudioUploadResponse(BaseModel):
     file_size: int = Field(..., ge=0, description="Size of the file in bytes")
     storage_path: str = Field(..., description="Internal storage path")
     session_id: Optional[str] = Field(None, description="Associated session ID")
+
+
+# ============================================
+# User Settings Models (Phase 1 - Lean)
+# ============================================
+
+class UserSettings(BaseModel):
+    """
+    Response model for user settings (Phase 1).
+    
+    Note: filler_word_detection controls DETECTION only.
+    Filler REMOVAL is handled per-mode in application logic:
+    - Practice: Always detect, never remove
+    - Application: Detect per setting, always remove
+    - Interview: Detect per setting, default no removal
+    - Free Speak: Detect per setting, default no removal
+    """
+    user_id: str
+    filler_word_detection: bool = Field(default=False, description="Enable filler word detection during transcription")
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class UserSettingsUpdate(BaseModel):
+    """Request model for updating user settings (Phase 1)."""
+    filler_word_detection: Optional[bool] = Field(None, description="Enable filler word detection during transcription")
 

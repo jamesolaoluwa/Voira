@@ -34,13 +34,22 @@ const getTranscriptionWebSocketUrl = () => {
   return wsUrl;
 };
 
-export default function useAudioRecorder() {
+/**
+ * useAudioRecorder - Hook for audio recording with live transcription
+ * 
+ * @param {Object} options - Configuration options
+ * @param {boolean} options.detectFillers - Enable filler word detection (for Practice mode)
+ */
+export default function useAudioRecorder(options = {}) {
+  const { detectFillers = false } = options;
+  
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
   const [error, setError] = useState(null);
   const [amplitude, setAmplitude] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState('');
+  const [fillerCount, setFillerCount] = useState(0); // Live filler count (when detectFillers=true)
   
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -48,6 +57,12 @@ export default function useAudioRecorder() {
   const hasAudioChunksRef = useRef(false); // Track if at least one audio chunk was received
   const recorderStateRef = useRef('idle'); // Track recorder state: 'idle' | 'recording' | 'stopping' | 'stopped'
   const wsStatusRef = useRef('idle'); // Track WebSocket status: 'idle' | 'connecting' | 'open' | 'error' | 'closed'
+  const detectFillersRef = useRef(detectFillers); // Store the detectFillers option
+  
+  // Update ref when option changes
+  useEffect(() => {
+    detectFillersRef.current = detectFillers;
+  }, [detectFillers]);
   
   // Live transcription WebSocket connection
   const wsRef = useRef(null);
@@ -154,7 +169,13 @@ export default function useAudioRecorder() {
 
       // Build WebSocket URL - ensure it points to backend, never frontend
       const baseWsUrl = getTranscriptionWebSocketUrl();
-      const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}`;
+      // Include detect_fillers parameter if enabled (for Practice mode or user setting)
+      const fillerParam = detectFillersRef.current ? '&detect_fillers=true' : '';
+      const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}${fillerParam}`;
+      
+      if (detectFillersRef.current) {
+        console.log('[TranscriptionWS] Filler word detection ENABLED');
+      }
       
       // Final validation: ensure URL is not pointing to frontend
       const url = new URL(wsUrl);
@@ -224,6 +245,13 @@ export default function useAudioRecorder() {
                   ? accumulatedTranscriptRef.current + ' ' + trimmedText
                   : trimmedText;
                 setLiveTranscript(displayText);
+              }
+              
+              // Update filler count if filler detection is enabled
+              // Backend sends total_fillers with each transcript event when detect_fillers=true
+              if (detectFillersRef.current && typeof data.total_fillers === 'number') {
+                setFillerCount(data.total_fillers);
+                console.log('[Live Transcription] Filler count updated:', data.total_fillers);
               }
             } else {
               console.log('[Live Transcription] Received transcript message but text is empty');
@@ -398,6 +426,7 @@ export default function useAudioRecorder() {
     // This ensures no stale state from previous recording blocks re-entry
     console.log('[AudioRecorder] Resetting all refs/flags for new recording');
     setLiveTranscript('');
+    setFillerCount(0); // Reset filler count for new recording
     accumulatedTranscriptRef.current = '';
     pendingChunksRef.current = [];
     hasAudioChunksRef.current = false;
@@ -904,6 +933,7 @@ export default function useAudioRecorder() {
     amplitude,
     error,
     liveTranscript,
+    fillerCount, // Live filler count (only when detectFillers=true)
     startRecording,
     pauseRecording,
     resumeRecording,

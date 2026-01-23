@@ -6,13 +6,81 @@ and context-aware prompts for different session types.
 import logging
 import os
 import re
-from typing import Optional, Dict, List, Callable
+from typing import Optional, Dict, List, Callable, Tuple
 from openai import OpenAI
 import tiktoken
 from config import settings
 from db import supabase
 
+# Import context-aware filler processing from adaptive analytics
+from adaptive_analytics import remove_fillers_context_aware
+
 logger = logging.getLogger(__name__)
+
+# ============================================
+# Filler Word Removal (Post-Processing)
+# ============================================
+
+def remove_fillers_from_text(text: str) -> str:
+    """
+    Remove filler words from text using context-aware processing.
+    
+    This function uses the adaptive analytics engine's ContextAwareFillerProcessor
+    which provides:
+    - Position-aware removal (sentence start vs mid-sentence)
+    - Repetition pattern handling
+    - Sentence structure preservation
+    - Semantic loss prevention
+    
+    Used for:
+    - Application mode: Always remove fillers from output
+    - Other modes: Based on mode-specific rules in application logic
+    
+    Args:
+        text: Raw transcript or text with potential filler words
+    
+    Returns:
+        Text with filler words removed (context-aware)
+    """
+    if not text:
+        return text
+    
+    processed_text, fillers_removed = remove_fillers_context_aware(text)
+    
+    if fillers_removed > 0:
+        logger.debug(f"[FillerRemoval] Removed {fillers_removed} fillers using context-aware processing")
+    
+    return processed_text
+
+
+def should_remove_fillers_for_mode(session_type: str) -> bool:
+    """
+    Determine if fillers should be removed based on session type.
+    
+    Mode-based removal rules (hardcoded product defaults):
+    - Practice: NEVER remove (keep for learning feedback)
+    - Application: ALWAYS remove (clean output for submission)
+    - Interview: Default OFF (keep raw by default)
+    - Free Speak: Default OFF (keep raw by default)
+    
+    Args:
+        session_type: One of 'practice', 'application', 'interview', 'free'
+    
+    Returns:
+        True if fillers should be removed, False otherwise
+    """
+    # Product rule: Application mode ALWAYS removes fillers
+    if session_type == 'application':
+        return True
+    
+    # Product rule: Practice mode NEVER removes fillers
+    if session_type == 'practice':
+        return False
+    
+    # Interview and Free Speak: Default to NOT removing
+    # (User could opt-in via future per-mode settings, but for now, default OFF)
+    return False
+
 
 # ============================================
 # Prompt Block Caching (In-Memory, Per-Process)
@@ -922,15 +990,23 @@ async def analyze_and_refine(
     goal: Optional[str] = None,
     user_id: Optional[str] = None,
     voice_profile: Optional[Dict] = None,
-    company_name: Optional[str] = None
+    company_name: Optional[str] = None,
+    filler_detection_enabled: bool = False,
+    filler_count_from_transcription: Optional[int] = None
 ) -> Dict:
     """
     Analyze transcript and generate refined version with context-aware prompts.
     
     This combines analytics (non-LLM) with LLM refinement.
     
+    Mode-based filler removal rules (applied AFTER LLM refinement):
+    - Practice: NEVER remove fillers (keep for learning feedback)
+    - Application: ALWAYS remove fillers (clean output for submission)
+    - Interview: Default OFF (keep raw by default)
+    - Free Speak: Default OFF (keep raw by default)
+    
     Args:
-        raw_transcript: Verbatim user speech (includes filler words)
+        raw_transcript: Verbatim user speech (may include filler words if detection was ON)
         session_type: Type of session (free, application, interview, practice, refine)
         desired_tone: Desired tone (confident, concise, reflective, etc.)
         user_context: Optional context from prompt input
@@ -939,22 +1015,45 @@ async def analyze_and_refine(
         goal: Optional user's goal for the session
         user_id: Optional user ID to fetch voice profile
         voice_profile: Optional voice profile data
+        filler_detection_enabled: Whether filler detection was ON during transcription
+        filler_count_from_transcription: Filler count from Deepgram (if detection was ON)
     
     Returns:
-        Dictionary with:
+        Dictionary with full v3 analytics contract:
         {
             "refined_text": str,
             "confidence_score": int,
             "clarity_score": int,
+            "analysis_reliability": float,
             "filler_word_count": int,
             "filler_word_frequency": float,
             "filler_word_breakdown": Dict[str, int],
+            "signal_validity": Dict,
+            "explanation": Dict,
+            "baseline": Dict,
+            "drift": Dict,
+            "metrics": Dict,
         }
     """
     from analytics import analyze_transcript
     
-    # Run analytics (non-LLM, deterministic)
-    analytics = analyze_transcript(raw_transcript)
+    # Run analytics - now always returns full v3 structure
+    # Analytics engine handles detection ON/OFF internally
+    if filler_detection_enabled:
+        logger.info(f"[Filler Detection] ENABLED for session_type={session_type}")
+        analytics = analyze_transcript(raw_transcript, user_id=user_id)
+        # Use Deepgram's filler count if provided (more accurate than regex)
+        if filler_count_from_transcription is not None:
+            analytics["filler_word_count"] = filler_count_from_transcription
+            logger.info(f"[Filler Detection] Using Deepgram count: {filler_count_from_transcription}")
+    else:
+        # Detection OFF: still run analytics but note it's less reliable
+        logger.info(f"[Filler Detection] DISABLED for session_type={session_type}")
+        analytics = analyze_transcript(raw_transcript, user_id=user_id)
+        # Override filler data to 0 since we didn't detect
+        analytics["filler_word_count"] = 0
+        analytics["filler_word_frequency"] = 0.0
+        analytics["filler_word_breakdown"] = {}
     
     # Run LLM refinement with context-aware prompts
     refined_text = await refine_transcript(
@@ -972,11 +1071,26 @@ async def analyze_and_refine(
         company_name=company_name
     )
     
+    # Post-processing: Apply mode-based filler removal
+    # This happens AFTER LLM refinement to ensure clean output for Application mode
+    if should_remove_fillers_for_mode(session_type):
+        original_length = len(refined_text)
+        refined_text = remove_fillers_from_text(refined_text)
+        chars_removed = original_length - len(refined_text)
+        logger.info(f"[Filler Removal] Applied for session_type={session_type}, chars_removed={chars_removed}")
+    
+    # Return full v3 analytics contract
     return {
         "refined_text": refined_text,
         "confidence_score": analytics["confidence_score"],
         "clarity_score": analytics["clarity_score"],
+        "analysis_reliability": analytics.get("analysis_reliability", 0.5),
         "filler_word_count": analytics["filler_word_count"],
         "filler_word_frequency": analytics["filler_word_frequency"],
         "filler_word_breakdown": analytics["filler_word_breakdown"],
+        "signal_validity": analytics.get("signal_validity"),
+        "explanation": analytics.get("explanation"),
+        "baseline": analytics.get("baseline"),
+        "drift": analytics.get("drift"),
+        "metrics": analytics.get("metrics"),
     }

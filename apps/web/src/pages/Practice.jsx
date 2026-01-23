@@ -95,18 +95,20 @@ export default function Practice() {
   });
   const [sessionData, setSessionData] = useState(null);
   
-  // Use real AudioRecorder hook
+  // Use real AudioRecorder hook WITH filler detection enabled for Practice mode
+  // Practice mode ALWAYS has filler tracking regardless of user settings
   const {
     isRecording,
     isPaused,
     amplitude,
     liveTranscript,
+    fillerCount: liveFillerCount, // Live filler count from transcription
     startRecording,
     pauseRecording,
     resumeRecording,
     stopRecording,
     uploadAndTranscribe,
-  } = useAudioRecorder();
+  } = useAudioRecorder({ detectFillers: true }); // Always true for Practice mode
   
   const intervalRef = useRef(null);
   const addSessionToStore = useSessionStore(state => state.addSession);
@@ -201,17 +203,23 @@ export default function Practice() {
       });
       
       // Map backend response to feedback format
+      // NOTE: Use filler_word_count for display (raw count), NOT for scoring
+      // Scoring uses filler_word_frequency (density) - see v3 analytics contract
       const mappedFeedback = {
         clarity: analysis.clarity_score || 0,
         confidence: analysis.confidence_score || 0,
-        fillers: analysis.filler_word_count || 0,
-        relevance: 85, // Calculate or use a default - backend doesn't provide this
+        fillers: analysis.filler_word_count || 0, // Display only
+        relevance: 85, // Backend doesn't provide this
         improvedAnswer: analysis.refined_text || '',
+        // v3 Analytics metadata
+        analysis_reliability: analysis.analysis_reliability || 0.5,
+        explanation: analysis.explanation || null,
       };
       
       setFeedback(mappedFeedback);
       setRefinedTranscript(analysis.refined_text || '');
       
+      // Store full v3 analytics data for session saving
       setSessionData({
         transcript: frozenRawTranscript,
         audio_url: audioUrl,
@@ -219,6 +227,9 @@ export default function Practice() {
         clarityScore: analysis.clarity_score,
         confidenceScore: analysis.confidence_score,
         fillerCount: analysis.filler_word_count,
+        // v3: Store filler density for proper aggregation
+        filler_word_frequency: analysis.filler_word_frequency || 0,
+        analysis_reliability: analysis.analysis_reliability || 0.5,
         question: currentQuestion,
         type: 'practice',
         duration_seconds: duration,
@@ -294,6 +305,9 @@ export default function Practice() {
           clarity_score: sessionData.clarityScore || 0,
           confidence_score: sessionData.confidenceScore || 0,
           filler_count: sessionData.fillerCount || 0,
+          // v3 Analytics: Include filler density for proper aggregation
+          filler_word_frequency: sessionData.filler_word_frequency || 0,
+          analysis_reliability: sessionData.analysis_reliability || 0.5,
           words_per_minute: sessionData.duration_seconds > 0 
             ? Math.round((sessionData.transcript.split(/\s+/).filter(Boolean).length / sessionData.duration_seconds) * 60)
             : 0,
@@ -501,30 +515,45 @@ export default function Practice() {
                   amplitude={amplitude}
                 />
                 
-                {/* Live Performance Indicators */}
+                {/* Live Performance Indicators - Practice mode always tracks thinking pauses for learning */}
                 {isRecording && (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="mt-8 grid grid-cols-3 gap-4 w-full max-w-xl"
+                    className="mt-8 grid grid-cols-4 gap-3 w-full max-w-2xl"
                   >
                     <div className="bg-white dark:bg-[hsl(var(--card))] rounded-xl p-4 text-center shadow-sm dark:shadow-none border border-zinc-200 dark:border-white/5">
                       <div className="text-2xl font-bold text-teal-600 dark:text-teal-400 mb-1">
-                        {Math.round(duration / 60)}m {duration % 60}s
+                        {Math.round(duration / 60)}:{String(duration % 60).padStart(2, '0')}
                       </div>
                       <div className="text-xs text-zinc-600 dark:text-zinc-500">Duration</div>
                     </div>
                     <div className="bg-white dark:bg-[hsl(var(--card))] rounded-xl p-4 text-center shadow-sm dark:shadow-none border border-zinc-200 dark:border-white/5">
-                      <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mb-1">
+                      <div className="text-2xl font-bold text-violet-600 dark:text-violet-400 mb-1">
                         {rawTranscript.split(/\s+/).filter(Boolean).length}
                       </div>
                       <div className="text-xs text-zinc-600 dark:text-zinc-500">Words</div>
                     </div>
                     <div className="bg-white dark:bg-[hsl(var(--card))] rounded-xl p-4 text-center shadow-sm dark:shadow-none border border-zinc-200 dark:border-white/5">
-                      <div className="text-2xl font-bold text-violet-600 dark:text-violet-400 mb-1">
+                      <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-1">
                         {duration > 0 ? Math.round((rawTranscript.split(/\s+/).filter(Boolean).length / duration) * 60) : 0}
                       </div>
                       <div className="text-xs text-zinc-600 dark:text-zinc-500">WPM</div>
+                    </div>
+                    {/* Live Thinking Pause Counter - Practice mode always tracks for learning */}
+                    <div className={`rounded-xl p-4 text-center shadow-sm dark:shadow-none border transition-colors duration-300 ${
+                      liveFillerCount > 5 
+                        ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/30' 
+                        : 'bg-white dark:bg-[hsl(var(--card))] border-zinc-200 dark:border-white/5'
+                    }`}>
+                      <div className={`text-2xl font-bold mb-1 ${
+                        liveFillerCount > 5 
+                          ? 'text-amber-600 dark:text-amber-400' 
+                          : 'text-amber-500 dark:text-amber-500'
+                      }`}>
+                        {liveFillerCount}
+                      </div>
+                      <div className="text-xs text-zinc-600 dark:text-zinc-500">Pauses</div>
                     </div>
                   </motion.div>
                 )}
@@ -626,7 +655,7 @@ export default function Practice() {
                     <div className="grid grid-cols-2 gap-4">
                       <ScoreCard label="Clarity" value={feedback.clarity} color="violet" delay={0} />
                       <ScoreCard label="Confidence" value={feedback.confidence} color="teal" delay={0.1} />
-                      <ScoreCard label="Filler Words" value={feedback.fillers} maxValue={10} color="amber" delay={0.2} />
+                      <ScoreCard label="Thinking Pauses" value={feedback.fillers} maxValue={10} color="amber" delay={0.2} />
                       <ScoreCard label="Relevance" value={feedback.relevance} color="violet" delay={0.3} />
                     </div>
                   )}
@@ -667,7 +696,7 @@ export default function Practice() {
                           <p>• <strong className="text-zinc-300">Pacing:</strong> Your speaking rate was steady—ideal for clarity</p>
                           <p>• <strong className="text-zinc-300">Emotional Tone:</strong> Confident and authentic with moments of genuine passion</p>
                           <p>• <strong className="text-zinc-300">Voice Pattern:</strong> Clarity improved since last session</p>
-                          <p>• <strong className="text-zinc-300">Filler Analysis:</strong> Fillers appear mainly during transitions—practice bridging phrases</p>
+                          <p>• <strong className="text-zinc-300">Pause Patterns:</strong> Thinking pauses tend to occur during transitions—try bridging phrases</p>
                           <p>• <strong className="text-zinc-300">Recommendation:</strong> Add specific metrics to strengthen impact</p>
                         </div>
                       </div>

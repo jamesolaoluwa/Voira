@@ -52,12 +52,37 @@ export default function Speak() {
   const urlParams = new URLSearchParams(window.location.search);
   const type = urlParams.get('type') || 'free';
   
+  const { user: authUser, session, isLoading: authLoading, isAdmin } = useAuth();
+  
+  // User settings - filler detection can be enabled in settings
+  const [fillerDetectionEnabled, setFillerDetectionEnabled] = useState(false);
+  
+  // Load user's filler detection setting
+  useEffect(() => {
+    const loadFillerSetting = async () => {
+      if (!session?.access_token) return;
+      try {
+        const { apiClient } = await import('@/lib/apiClient');
+        const settings = await apiClient.get('/user/settings');
+        if (settings?.filler_word_detection) {
+          setFillerDetectionEnabled(true);
+          console.log('[Speak] Filler detection enabled from user settings');
+        }
+      } catch (error) {
+        console.warn('[Speak] Could not load user settings for filler detection:', error);
+      }
+    };
+    loadFillerSetting();
+  }, [session?.access_token]);
+  
+  // Use AudioRecorder with optional filler detection based on user setting
   const {
     isRecording: audioIsRecording,
     isPaused: audioIsPaused,
     amplitude: audioAmplitude,
     error: audioError,
     liveTranscript: audioLiveTranscript, // Real-time transcript from WebSocket
+    fillerCount: liveFillerCount, // Live filler count (only when fillerDetectionEnabled)
     startRecording: audioStartRecording,
     pauseRecording: audioPauseRecording,
     resumeRecording: audioResumeRecording,
@@ -65,9 +90,8 @@ export default function Speak() {
     uploadAndTranscribe,
     getAccumulatedTranscript, // CRITICAL: Use to capture transcript synchronously
     clearTranscript, // Call after session saved or discarded
-  } = useAudioRecorder();
+  } = useAudioRecorder({ detectFillers: fillerDetectionEnabled });
   
-  const { user: authUser, session, isLoading: authLoading, isAdmin } = useAuth();
   const [user, setUser] = useState(null);
   const [userCredits, setUserCredits] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -81,7 +105,6 @@ export default function Speak() {
   const [contextPrompt, setContextPrompt] = useState(''); // Interview question or application question
   const [companyName, setCompanyName] = useState(''); // Company name for interviews (for research when context is empty)
   const [companyContext, setCompanyContext] = useState(''); // Company/role context for interviews
-  const [fillerCount, setFillerCount] = useState(0);
   const [confidenceLevel, setConfidenceLevel] = useState(0);
   const [sessionIntent, setSessionIntent] = useState('');
   const [showNamingModal, setShowNamingModal] = useState(false);
@@ -235,7 +258,7 @@ export default function Speak() {
     setRawTranscript(''); // Clear raw transcript (verbatim speech)
     setRefinedTranscript(''); // Clear refined transcript (LLM output)
     setTranscript(''); // Deprecated: kept for backward compatibility
-    setFillerCount(0);
+    // Note: fillerCount is now managed by useAudioRecorder hook and resets automatically
     setConfidenceLevel(0);
     // audioLiveTranscript is cleared by useAudioRecorder when starting a NEW recording
     // DO NOT set recordingState here - wait until MediaRecorder actually starts
@@ -503,7 +526,7 @@ export default function Speak() {
       setRefinedTranscript(analysis.refined_text || '');
       
       // Update session data with complete transcription and analysis results
-      // This updates the modal data if it's already open, or prepares it for when user opens it
+      // This updates the modal data with full v3 analytics
       setSessionData({
         transcript: frozenRawTranscript, // Raw verbatim transcript (includes filler words)
         audio_url: audioUrl,
@@ -511,6 +534,9 @@ export default function Speak() {
         clarityScore: analysis.clarity_score || 70,
         confidenceScore: analysis.confidence_score || 70,
         fillerCount: analysis.filler_word_count || 0,
+        // v3 Analytics: Include filler density and reliability
+        filler_word_frequency: analysis.filler_word_frequency || 0,
+        analysis_reliability: analysis.analysis_reliability || 0.5,
         question: contextPrompt,
         type,
       });
@@ -605,10 +631,28 @@ export default function Speak() {
         throw error;
       }
 
-      // Add to unified session store so all pages update
-  try { addSessionToStore({ id: recording.id || `local-${Date.now()}`, title: sessionName || recording.title, createdAt: recording.created_date || new Date().toISOString(), type: recording.type || type, question: payload.question, transcript: payload.transcript, durationSec: recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration, wordsCount: payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0, confidenceScore: recording.confidence_score || payload.confidence_score || 0, fillerCount: recording.filler_count || payload.filler_count || 0, wordsPerMinute: recording.words_per_minute || Math.round((payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0) / Math.max(1, (recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration) / 60)) }); } catch (e) { console.warn('addSessionToStore failed', e); }
+      // Add to unified session store so all pages update (with v3 analytics fields)
+      try { 
+        addSessionToStore({ 
+          id: recording.id || `local-${Date.now()}`, 
+          title: sessionName || recording.title, 
+          createdAt: recording.created_date || new Date().toISOString(), 
+          type: recording.type || type, 
+          question: payload.question, 
+          transcript: payload.transcript, 
+          durationSec: recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration, 
+          wordsCount: payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0, 
+          confidenceScore: recording.confidence_score || payload.confidence_score || 0, 
+          clarityScore: recording.clarity_score || payload.clarity_score || 0,
+          fillerCount: recording.filler_count || payload.filler_count || 0, 
+          // v3 Analytics fields
+          filler_word_frequency: recording.filler_word_frequency || payload.filler_word_frequency || 0,
+          analysis_reliability: recording.analysis_reliability || payload.analysis_reliability || 0.5,
+          wordsPerMinute: recording.words_per_minute || Math.round((payload.transcript ? payload.transcript.split(/\s+/).filter(Boolean).length : 0) / Math.max(1, (recording.duration_seconds || payload.duration_seconds || payload.durationSec || duration) / 60)) 
+        }); 
+      } catch (e) { console.warn('addSessionToStore failed', e); }
 
-      // Optimistic cache update so Library shows saved session
+      // Optimistic cache update so Library shows saved session (with v3 analytics)
       try {
         queryClient.setQueryData(['recordings'], (old = []) => {
           const recObj = {
@@ -619,9 +663,14 @@ export default function Speak() {
             durationSec: recording.duration_seconds || payload.duration_seconds || 0,
             createdAt: recording.created_date || new Date().toISOString(),
             confidenceScore: recording.confidence_score,
+            clarityScore: recording.clarity_score,
+            fillerCount: recording.filler_count,
+            // v3 Analytics fields
+            filler_word_frequency: recording.filler_word_frequency || 0,
+            analysis_reliability: recording.analysis_reliability || 0.5,
           };
           const merged = [recObj, ...old.filter(r => r?.id !== recObj.id)];
-          // also persist locally as a fallback in case backend list isn't visible in this runtime
+          // also persist locally as a fallback
           try { saveLocalRecording(recObj); } catch (e) {}
           return merged;
         });
@@ -930,17 +979,24 @@ export default function Speak() {
           </motion.div>
         )}
         
-        {/* Live Indicators */}
+        {/* Live Indicators - Only show pause count if user has enabled tracking in settings */}
         {recordingState === 'recording' && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="flex items-center gap-6 mb-8"
           >
-            <div className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
-              <div className="w-2 h-2 rounded-full bg-amber-400" />
-              <span className="text-xs text-zinc-700 dark:text-zinc-400">Fillers: {fillerCount}</span>
-            </div>
+            {/* Thinking pause count - only shown when tracking is enabled in user settings */}
+            {fillerDetectionEnabled && (
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-sm dark:shadow-none transition-colors ${
+                liveFillerCount > 5 
+                  ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/30' 
+                  : 'bg-white dark:bg-[hsl(var(--card))] border-zinc-200 dark:border-white/5'
+              }`}>
+                <div className={`w-2 h-2 rounded-full ${liveFillerCount > 5 ? 'bg-amber-500 animate-pulse' : 'bg-amber-400'}`} />
+                <span className="text-xs text-zinc-700 dark:text-zinc-400">Pauses: {liveFillerCount}</span>
+              </div>
+            )}
             <div className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
               <div className="w-2 h-2 rounded-full bg-teal-400" />
               <span className="text-xs text-zinc-700 dark:text-zinc-400">Confidence: {confidenceLevel}%</span>

@@ -6,6 +6,7 @@ Provides:
 - Usage metrics collection
 - Session analytics
 - Performance metrics
+- Transcript analysis (filler words, confidence, clarity)
 
 Events are stored in Supabase and can be queried for dashboards.
 In production, consider using a dedicated analytics service like
@@ -18,7 +19,70 @@ from datetime import datetime, timedelta
 from db import supabase
 from config import settings
 
+# Import adaptive analytics engine
+from adaptive_analytics import (
+    analyze_transcript_adaptive,
+    analyze_transcript as _analyze_transcript_adaptive,
+    remove_fillers_context_aware,
+    SignalAnalyzer,
+    MetricsCalculator,
+    BaselineManager,
+)
+
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Transcript Analysis
+# =============================================================================
+
+def analyze_transcript(
+    raw_transcript: str,
+    duration_seconds: Optional[float] = None,
+    user_id: Optional[str] = None,
+    historical_sessions: Optional[List[Dict]] = None
+) -> Dict[str, Any]:
+    """
+    Analyze a transcript for quality metrics using adaptive algorithms.
+    
+    This function uses the adaptive analytics engine which:
+    - Validates signal quality before computing metrics
+    - Uses normalized densities instead of raw counts for scoring
+    - Applies composite multi-feature models for confidence and clarity
+    - Supports user-specific baselines for personalized scoring
+    
+    Args:
+        raw_transcript: Raw transcript text
+        duration_seconds: Optional recording duration for WPM calculation
+        user_id: Optional user ID for personalized baselines
+        historical_sessions: Optional past sessions for baseline computation
+    
+    Returns:
+        Dict containing:
+        - confidence_score: 0-100 composite score (multi-feature)
+        - clarity_score: 0-100 composite score (structure-focused)
+        - filler_word_count: total number of filler words detected
+        - filler_word_frequency: fillers per 100 words (normalized)
+        - filler_word_breakdown: count of each filler word type
+        - signal_validity: (optional) signal quality analysis
+        - metrics: (optional) detailed normalized metrics
+    """
+    result = analyze_transcript_adaptive(
+        raw_transcript=raw_transcript,
+        duration_seconds=duration_seconds,
+        user_id=user_id,
+        historical_sessions=historical_sessions
+    )
+    
+    logger.info(
+        f"[Analytics] Transcript analyzed: "
+        f"confidence={result['confidence_score']}, "
+        f"clarity={result['clarity_score']}, "
+        f"filler_count={result['filler_word_count']}, "
+        f"signal_valid={result['signal_validity']['is_valid']}"
+    )
+    
+    return result
 
 # =============================================================================
 # Event Types
