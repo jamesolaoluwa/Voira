@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { 
   ArrowLeft, 
   Copy, 
@@ -20,10 +20,10 @@ import {
   Target,
   Mic,
   Loader2,
-  Wand2
+  Wand2,
+  MousePointerClick,
+  Type
 } from 'lucide-react';
-import RecordButton from '@/components/ui/RecordButton';
-import { base44 } from '@/api/base44Client';
 import { sessions } from '@/components/services/api';
 import { toast } from '@/components/ui/use-toast';
 
@@ -129,7 +129,7 @@ function extractThemes(transcript) {
     { keywords: ['grew', 'growth', 'learned', 'changed', 'transformed'], theme: 'Personal Growth' },
     { keywords: ['challenge', 'overcome', 'difficult', 'obstacle', 'persever'], theme: 'Resilience' },
     { keywords: ['passion', 'love', 'excited', 'enthusiast', 'dedicate'], theme: 'Passion' },
-    { keywords: ['creative', 'innovat', 'design', 'build', 'create'], theme: 'Innovation' },
+    { keywords: ['creative', 'innovate', 'design', 'build', 'create'], theme: 'Innovation' },
     { keywords: ['family', 'parent', 'sibling', 'home', 'upbringing'], theme: 'Family' },
     { keywords: ['work', 'job', 'career', 'profession', 'intern'], theme: 'Professional Experience' },
     { keywords: ['school', 'university', 'education', 'study', 'academic'], theme: 'Education' },
@@ -236,12 +236,29 @@ export default function Draft() {
   const [loadError, setLoadError] = useState(null);
   const [currentRecording, setCurrentRecording] = useState(null);
   
-  // Section refinement state
-  const [refinementInput, setRefinementInput] = useState('');
+  /**
+   * HIGHLIGHT-DRIVEN REFINEMENT STATE
+   * 
+   * Flow:
+   * 1. User highlights text in the refined draft
+   * 2. selectedText and selectionRange are captured
+   * 3. User enters instruction (no {} [] syntax needed)
+   * 4. On apply: only the selected section is refined
+   * 5. Animation shows what changed
+   */
+  const [selectedText, setSelectedText] = useState('');
+  const [selectionRange, setSelectionRange] = useState(null); // { start: number, end: number }
+  const [refinementInstruction, setRefinementInstruction] = useState('');
   const [isApplyingRefinement, setIsApplyingRefinement] = useState(false);
+  const [refinementError, setRefinementError] = useState('');
+  
+  // Animation state for showing refined section
+  const [animatedRange, setAnimatedRange] = useState(null); // { start, end } of recently refined text
+  const [isAnimating, setIsAnimating] = useState(false);
   
   // Ref to scroll to refined content after applying refinement
   const refinedContentRef = useRef(null);
+  const refinedTextRef = useRef(null); // Ref for the text container to detect selection
   
   useEffect(() => {
     loadDraftData();
@@ -321,13 +338,6 @@ export default function Draft() {
             : 'Consider restructuring your response to better address the question.'
         }
       });
-      
-      // Pre-populate refinement input with example format if we have refined text
-      if (refinedText) {
-        // Extract a sample phrase from refined text for the example
-        const samplePhrase = refinedText.split(/[.!?]/)[0]?.substring(0, 40) || 'your text here';
-        setRefinementInput(`{${samplePhrase}...}[make this more specific]`);
-      }
       
     } catch (error) {
       console.error('Error loading draft:', error);
@@ -425,56 +435,81 @@ export default function Draft() {
     }
   };
   
-  // Track refinement input validation error for inline display
-  const [refinementError, setRefinementError] = useState('');
+  /**
+   * Handle text selection in the refined draft.
+   * Captures selectedText and selectionRange when user highlights text.
+   */
+  const handleTextSelection = useCallback(() => {
+    const selection = window.getSelection();
+    const selectedStr = selection?.toString().trim();
+    
+    if (selectedStr && selectedStr.length > 0 && refinedTextRef.current) {
+      // Ensure selection is within our refined text container
+      const container = refinedTextRef.current;
+      const range = selection.getRangeAt(0);
+      
+      if (container.contains(range.commonAncestorContainer)) {
+        // Calculate the range within the draft text
+        const fullText = draft?.refined || '';
+        const start = fullText.indexOf(selectedStr);
+        
+        if (start !== -1) {
+          setSelectedText(selectedStr);
+          setSelectionRange({ start, end: start + selectedStr.length });
+          setRefinementError(''); // Clear any previous error
+          console.log('[Draft] Text selected:', { text: selectedStr.substring(0, 50), start, end: start + selectedStr.length });
+        }
+      }
+    }
+  }, [draft?.refined]);
+  
+  // Add selection listener
+  useEffect(() => {
+    document.addEventListener('mouseup', handleTextSelection);
+    document.addEventListener('keyup', handleTextSelection); // For keyboard selection
+    
+    return () => {
+      document.removeEventListener('mouseup', handleTextSelection);
+      document.removeEventListener('keyup', handleTextSelection);
+    };
+  }, [handleTextSelection]);
   
   /**
-   * Apply section-specific refinement.
-   * Extracts {highlighted section} and [instruction] from refinementInput.
-   * Sends context-aware request to LLM that preserves everything except highlighted section.
+   * Clear the current selection
+   */
+  const clearSelection = () => {
+    setSelectedText('');
+    setSelectionRange(null);
+    window.getSelection()?.removeAllRanges();
+  };
+  
+  /**
+   * Apply highlight-driven refinement.
    * 
-   * VALIDATION: Shows inline error if syntax is invalid.
+   * VALIDATION:
+   * - Must have highlighted text (selectedText)
+   * - Must have instruction (refinementInstruction)
+   * 
+   * NO {} [] syntax required - selection is implicit from highlight.
    */
   const handleApplyRefinement = async () => {
     // Clear previous error
     setRefinementError('');
     
-    if (!refinementInput.trim() || !draft?.refined) {
-      setRefinementError('Please add refinement instructions using {text}[instruction] format.');
+    // VALIDATION: Check for highlighted text
+    if (!selectedText || !selectionRange) {
+      setRefinementError('Highlight a section of the draft first.');
       return;
     }
     
-    // Parse {highlighted section} and [instruction]
-    const sectionMatch = refinementInput.match(/\{([^}]+)\}/);
-    const instructionMatch = refinementInput.match(/\[([^\]]+)\]/);
-    
-    // EDGE CASE: Show inline validation error for invalid syntax
-    if (!sectionMatch && !instructionMatch) {
-      setRefinementError('Please wrap the section in {} and add instructions in [].');
+    // VALIDATION: Check for instruction
+    if (!refinementInstruction.trim()) {
+      setRefinementError('Please describe how you want this section refined.');
       return;
     }
     
-    if (!sectionMatch) {
-      setRefinementError('Missing section to edit. Wrap your text in {curly braces}.');
-      return;
-    }
-    
-    if (!instructionMatch) {
-      setRefinementError('Missing instruction. Add your instruction in [square brackets].');
-      return;
-    }
-    
-    const highlightedSection = sectionMatch[1].trim();
-    const instruction = instructionMatch[1].trim();
-    
-    // Check if the highlighted section exists in the refined text
-    if (!draft.refined.toLowerCase().includes(highlightedSection.toLowerCase().substring(0, 20))) {
-      toast({
-        title: 'Section not found',
-        description: 'The highlighted text was not found in the refined draft. Copy the exact text you want to edit.',
-        variant: 'destructive',
-        duration: 4000
-      });
+    if (!draft?.refined) {
+      setRefinementError('No draft available to refine.');
       return;
     }
     
@@ -482,20 +517,24 @@ export default function Draft() {
     try {
       const { apiClient } = await import('@/lib/apiClient');
       
-      console.log('[Draft] Applying section refinement:', { highlightedSection: highlightedSection.substring(0, 50), instruction });
+      console.log('[Draft] Applying highlight-driven refinement:', { 
+        selectedText: selectedText.substring(0, 50), 
+        instruction: refinementInstruction,
+        range: selectionRange 
+      });
       
       // CONTEXT-AWARE REFINEMENT: Include full context so LLM only edits the specific section
       // CRITICAL: Always include the question as the anchor
       const response = await apiClient.post('/refine', {
-        raw_transcript: draft.original, // Original context
+        raw_transcript: draft.original,
         session_type: 'section_refine',
         desired_tone: selectedTone,
-        goal: instruction,
-        // REQUIRED: Question is the anchor - ensures refinement stays on-topic
+        goal: refinementInstruction,
+        // REQUIRED: Question is the anchor
         question: draft.question || undefined,
-        // OPTIONAL: Reference content (used as supporting context only)
+        // OPTIONAL: Reference content
         reference_text: draft.referenceText || undefined,
-        // Pass the full refined essay and the section to edit
+        // Context-aware prompt
         user_context: `IMPORTANT: You are editing a specific section of an already-refined essay.
 ${draft.question ? `\nORIGINAL QUESTION BEING ANSWERED:\n"${draft.question}"\n` : ''}
 FULL CURRENT ESSAY:
@@ -503,29 +542,60 @@ FULL CURRENT ESSAY:
 ${draft.refined}
 """
 
-SECTION TO EDIT (keep everything else unchanged):
+SECTION TO EDIT (the user has highlighted this exact text):
 """
-${highlightedSection}
+${selectedText}
 """
 
-INSTRUCTION: ${instruction}
-${draft.referenceText ? '\nNote: Use reference material only to inform tone and style. Do not copy content.' : ''}
-Return the COMPLETE essay with ONLY the highlighted section modified. Do not change any other part of the essay. Preserve all tone, structure, and content except for the specific section being refined.`,
+INSTRUCTION: ${refinementInstruction}
+
+CRITICAL RULES:
+1. Return ONLY the refined version of the highlighted section - NOT the full essay
+2. The refined text should directly replace the highlighted section
+3. Preserve tone and voice while applying the instruction
+4. Keep similar length unless the instruction specifically asks for expansion/condensation
+${draft.referenceText ? '\nNote: Use reference material only to inform tone and style. Do not copy content.' : ''}`,
       });
       
-      if (response?.refined_text) {
+      // Get the refined section text
+      const refinedSection = response?.refined_text?.trim();
+      
+      if (refinedSection) {
+        // Replace the selected section in-place
+        const beforeSelection = draft.refined.substring(0, selectionRange.start);
+        const afterSelection = draft.refined.substring(selectionRange.end);
+        const newRefinedText = beforeSelection + refinedSection + afterSelection;
+        
+        // Calculate the new range for animation
+        const newRange = {
+          start: selectionRange.start,
+          end: selectionRange.start + refinedSection.length
+        };
+        
+        // Update draft with new text
         setDraft({
           ...draft,
-          refined: response.refined_text
-        });
-        console.log('[Draft] Section refinement successful');
-        toast({
-          title: 'Section refined',
-          description: 'The highlighted section has been updated.',
-          duration: 3000
+          refined: newRefinedText
         });
         
-        // Scroll to refined content
+        // Trigger animation
+        setAnimatedRange(newRange);
+        setIsAnimating(true);
+        
+        // Clear animation after duration
+        setTimeout(() => {
+          setIsAnimating(false);
+          setAnimatedRange(null);
+        }, 900); // Animation duration
+        
+        console.log('[Draft] Section refinement successful');
+        
+        // Clear selection and instruction
+        setSelectedText('');
+        setSelectionRange(null);
+        setRefinementInstruction('');
+        
+        // Scroll to refined content (no toast, no modal - direct feedback via animation)
         if (refinedContentRef.current) {
           refinedContentRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
@@ -648,6 +718,7 @@ Return the COMPLETE essay with ONLY the highlighted section modified. Do not cha
                 className="space-y-6"
               >
                 {/* REFINED OUTPUT - Primary content, most prominent */}
+                {/* Users can highlight text here to select sections for refinement */}
                 <div 
                   ref={refinedContentRef}
                   className={`bg-white dark:bg-[#1a1a24] rounded-2xl border-2 border-violet-400 dark:border-violet-500/30 shadow-lg dark:shadow-violet-500/5 p-6 ${isExpanded ? 'min-h-[400px]' : ''}`}
@@ -657,19 +728,74 @@ Return the COMPLETE essay with ONLY the highlighted section modified. Do not cha
                       <Sparkles className="w-5 h-5 text-violet-500" />
                       <h3 className="text-lg font-semibold text-violet-700 dark:text-violet-300">After (Refined)</h3>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setIsExpanded(!isExpanded)}
-                      className="text-zinc-400 hover:text-violet-400"
-                    >
-                      {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {/* Selection indicator */}
+                      {selectedText && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="flex items-center gap-1.5 px-2 py-1 bg-violet-500/10 border border-violet-500/30 rounded-lg"
+                        >
+                          <MousePointerClick className="w-3 h-3 text-violet-400" />
+                          <span className="text-xs text-violet-400">Text selected</span>
+                          <button 
+                            onClick={clearSelection}
+                            className="ml-1 text-violet-400 hover:text-violet-300"
+                          >
+                            ×
+                          </button>
+                        </motion.div>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        className="text-zinc-400 hover:text-violet-400"
+                      >
+                        {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                      </Button>
+                    </div>
                   </div>
-                  {draft.refined ? (
-                    <p className="text-zinc-900 dark:text-zinc-100 leading-relaxed whitespace-pre-wrap">
-                      {draft.refined}
+                  
+                  {/* Hint for users */}
+                  {!selectedText && draft.refined && (
+                    <p className="text-xs text-zinc-400 dark:text-zinc-500 mb-3 flex items-center gap-1.5">
+                      <MousePointerClick className="w-3 h-3" />
+                      Highlight text to refine specific sections
                     </p>
+                  )}
+                  
+                  {draft.refined ? (
+                    <div 
+                      ref={refinedTextRef}
+                      className="text-zinc-900 dark:text-zinc-100 leading-relaxed whitespace-pre-wrap select-text cursor-text"
+                      style={{ userSelect: 'text' }}
+                    >
+                      {/* Render text with animation for refined sections */}
+                      {animatedRange && isAnimating ? (
+                        <>
+                          {draft.refined.substring(0, animatedRange.start)}
+                          <motion.span
+                            initial={{ backgroundColor: 'rgba(139, 92, 246, 0.3)', scale: 1.02 }}
+                            animate={{ 
+                              backgroundColor: ['rgba(139, 92, 246, 0.4)', 'rgba(139, 92, 246, 0.1)', 'rgba(139, 92, 246, 0)'],
+                              scale: [1.02, 1.01, 1]
+                            }}
+                            transition={{ 
+                              duration: 0.9, 
+                              ease: 'easeOut',
+                              times: [0, 0.5, 1]
+                            }}
+                            className="inline rounded px-0.5"
+                          >
+                            {draft.refined.substring(animatedRange.start, animatedRange.end)}
+                          </motion.span>
+                          {draft.refined.substring(animatedRange.end)}
+                        </>
+                      ) : (
+                        draft.refined
+                      )}
+                    </div>
                   ) : (
                     <div className="text-center py-8">
                       <p className="text-zinc-500 dark:text-zinc-400 mb-4">No refined output yet.</p>
@@ -869,55 +995,105 @@ Return the COMPLETE essay with ONLY the highlighted section modified. Do not cha
             </Button>
           </motion.div>
           
-          {/* Inline Refinement Instructions */}
+          {/* Highlight-Driven Refinement */}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
             className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
           >
-            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-3">Refine Specific Sections</h3>
-            <p className="text-xs text-zinc-600 dark:text-zinc-500 mb-3">
-              Use <code className="bg-violet-500/20 text-violet-400 px-1 rounded">{'{text}'}</code> to highlight and <code className="bg-teal-500/20 text-teal-400 px-1 rounded">[instruction]</code> to instruct:
+            <div className="flex items-center gap-2 mb-3">
+              <Wand2 className="w-4 h-4 text-violet-500" />
+              <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">Refine a Section</h3>
+            </div>
+            
+            <p className="text-xs text-zinc-600 dark:text-zinc-500 mb-4">
+              Highlight the text you want to refine above, then describe how you want it improved.
             </p>
             
-            {/* Editable refinement input */}
-            <Textarea
-              value={refinementInput}
-              onChange={(e) => {
-                setRefinementInput(e.target.value);
-                // Clear error as user types
-                if (refinementError) setRefinementError('');
-              }}
-              placeholder="{copy text from your draft}[make it more confident]"
-              className={`mb-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-200 dark:border-white/10 text-zinc-800 dark:text-zinc-200 font-mono text-sm min-h-[80px] resize-none ${
-                refinementError ? 'border-red-400 dark:border-red-500/50' : ''
-              }`}
-            />
+            {/* Selected text preview */}
+            <AnimatePresence mode="wait">
+              {selectedText ? (
+                <motion.div
+                  key="selected"
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  className="mb-4 p-3 bg-violet-500/10 border border-violet-500/20 rounded-lg"
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-medium text-violet-400">Selected text:</span>
+                    <button 
+                      onClick={clearSelection}
+                      className="text-xs text-violet-400 hover:text-violet-300"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <p className="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-3">
+                    "{selectedText}"
+                  </p>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="empty"
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  className="mb-4 p-3 bg-zinc-50 dark:bg-[#13131a] border border-dashed border-zinc-300 dark:border-white/10 rounded-lg text-center"
+                >
+                  <MousePointerClick className="w-5 h-5 text-zinc-400 mx-auto mb-1.5" />
+                  <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                    Highlight the part of the draft you want to refine.
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            
+            {/* Instruction input - NO {} [] syntax required */}
+            <div className="mb-3">
+              <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5 block">
+                How should it be improved?
+              </label>
+              <Input
+                value={refinementInstruction}
+                onChange={(e) => {
+                  setRefinementInstruction(e.target.value);
+                  if (refinementError) setRefinementError('');
+                }}
+                placeholder="Make this more confident and remove hesitation"
+                className={`bg-zinc-50 dark:bg-[#13131a] border-zinc-200 dark:border-white/10 text-zinc-800 dark:text-zinc-200 ${
+                  refinementError && !selectedText ? '' : refinementError ? 'border-red-400 dark:border-red-500/50' : ''
+                }`}
+              />
+            </div>
+            
+            {/* Example (non-interactive) */}
+            <p className="text-xs text-zinc-400 dark:text-zinc-600 mb-3 italic">
+              Example: "Make this more confident and remove hesitation."
+            </p>
             
             {/* Inline validation error */}
             {refinementError && (
-              <p className="text-xs text-red-500 dark:text-red-400 mb-2 flex items-center gap-1">
-                <span className="inline-block w-1 h-1 rounded-full bg-red-500" />
+              <motion.p 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-xs text-red-500 dark:text-red-400 mb-3 flex items-center gap-1.5"
+              >
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500" />
                 {refinementError}
-              </p>
-            )}
-            
-            {!refinementError && (
-              <p className="text-xs text-zinc-500 dark:text-zinc-600 mb-3">
-                <strong>Tip:</strong> Copy the exact text from the refined draft above, wrap it in {'{}'}, then add your instruction in [].
-              </p>
+              </motion.p>
             )}
             
             <Button 
               onClick={handleApplyRefinement}
-              disabled={isApplyingRefinement || !refinementInput.trim()}
-              className="w-full bg-violet-500/20 hover:bg-violet-500/30 text-violet-700 dark:text-violet-300 border border-violet-500/30 disabled:opacity-50"
+              disabled={isApplyingRefinement || !selectedText}
+              className="w-full bg-violet-500/20 hover:bg-violet-500/30 text-violet-700 dark:text-violet-300 border border-violet-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isApplyingRefinement ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Applying...
+                  Refining...
                 </>
               ) : (
                 <>
@@ -928,34 +1104,53 @@ Return the COMPLETE essay with ONLY the highlighted section modified. Do not cha
             </Button>
           </motion.div>
           
-          {/* Quick Actions */}
+          {/* Quick Instruction Presets */}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.4 }}
             className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
           >
-            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-4">Quick Actions</h3>
+            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 mb-3">Quick Instructions</h3>
+            <p className="text-xs text-zinc-500 dark:text-zinc-600 mb-3">
+              Select text above, then click a preset:
+            </p>
             <div className="space-y-2">
               <Button 
                 variant="outline" 
-                onClick={() => {
-                  setRefinementInput(`{${draft.refined?.substring(0, 50) || 'your text'}...}[expand this with more specific details and examples]`);
-                }}
-                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+                onClick={() => setRefinementInstruction('Expand this with more specific details and examples')}
+                disabled={!selectedText}
+                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-50"
               >
                 <Maximize2 className="w-4 h-4 mr-2" />
-                Expand Content
+                Expand with details
               </Button>
               <Button 
                 variant="outline" 
-                onClick={() => {
-                  setRefinementInput(`{${draft.refined?.substring(0, 50) || 'your text'}...}[make this more concise while keeping the key points]`);
-                }}
-                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+                onClick={() => setRefinementInstruction('Make this more concise while keeping the key points')}
+                disabled={!selectedText}
+                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-50"
               >
                 <Minimize2 className="w-4 h-4 mr-2" />
-                Make Concise
+                Make concise
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => setRefinementInstruction('Make this sound more confident and assertive')}
+                disabled={!selectedText}
+                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-50"
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                More confident
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => setRefinementInstruction('Add a specific example or story to illustrate this point')}
+                disabled={!selectedText}
+                className="w-full justify-start border-zinc-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white disabled:opacity-50"
+              >
+                <Type className="w-4 h-4 mr-2" />
+                Add example
               </Button>
             </div>
           </motion.div>
