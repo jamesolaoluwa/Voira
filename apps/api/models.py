@@ -241,3 +241,149 @@ class UserSettingsUpdate(BaseModel):
     """Request model for updating user settings (Phase 1)."""
     filler_word_detection: Optional[bool] = Field(None, description="Enable filler word detection during transcription")
 
+
+# ============================================
+# Interview Refinement Models (GAP-011)
+# ============================================
+
+class InterviewRefinementRequest(BaseModel):
+    """
+    Request model for turn-based interview response refinement.
+    
+    This is a single-turn pipeline that produces:
+    1. A refined, high-quality interview response (ALWAYS)
+    2. Targeted feedback on the recorded response (ONLY if transcript provided)
+    
+    NOT Practice Mode. NOT multi-turn. NOT real-time.
+    """
+    # Required fields
+    interview_question: str = Field(
+        ...,
+        min_length=5,
+        max_length=1000,
+        description="The interview question being answered (required)"
+    )
+    desired_style: str = Field(
+        ...,
+        min_length=2,
+        max_length=200,
+        description="Desired response style, e.g., 'Confident but humble, story-driven, concise' (required)"
+    )
+    
+    # Optional company context fields
+    company_name: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Company name for alignment (e.g., Google, Microsoft). LLM infers culture if provided."
+    )
+    company_role_context: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="User-provided company & role context. Overrides all inferred context if provided."
+    )
+    
+    # Optional transcript (enables feedback)
+    transcript: Optional[str] = Field(
+        None,
+        max_length=50000,
+        description="User's recorded answer transcript. If provided, feedback will be generated."
+    )
+    
+    # EXPLICITLY REJECTED FIELDS (validation will fail if these are provided)
+    # These are out of scope for v1
+    reference_text: Optional[str] = Field(
+        None,
+        description="NOT SUPPORTED in v1. Reference upload is disabled for Interview Response."
+    )
+    reference_file_url: Optional[str] = Field(
+        None,
+        description="NOT SUPPORTED in v1. Reference upload is disabled for Interview Response."
+    )
+    
+    @classmethod
+    def validate_no_reference_material(cls, v, info):
+        """Reject any reference material - explicitly out of scope."""
+        if v is not None:
+            raise ValueError(
+                "Reference material upload is not supported for Interview Response in v1. "
+                "This feature may be added in a future release."
+            )
+        return v
+    
+    # Apply validators
+    from pydantic import field_validator
+    
+    @field_validator('reference_text', 'reference_file_url')
+    @classmethod
+    def reject_reference_material(cls, v):
+        if v is not None:
+            raise ValueError(
+                "Reference material upload is not supported for Interview Response in v1. "
+                "This feature may be added in a future release."
+            )
+        return v
+
+
+class FeedbackItem(BaseModel):
+    """Individual feedback item for the user's recorded response."""
+    category: str = Field(..., description="Feedback category (clarity, structure, alignment, tone, content)")
+    observation: str = Field(..., description="What was observed in the response")
+    suggestion: str = Field(..., description="Specific improvement suggestion")
+    priority: str = Field(default="medium", pattern="^(high|medium|low)$", description="Priority level")
+
+
+class InterviewRefinementResponse(BaseModel):
+    """
+    Response model for turn-based interview response refinement.
+    
+    Always includes:
+    - refined_answer_text: The polished, submission-ready response
+    - alignment_signals_used: What company/role signals were applied
+    - improvements_applied: List of improvements made
+    
+    Conditionally includes (only if transcript was provided):
+    - feedback: Targeted feedback on the recorded response
+    - assumptions_or_limits: Any caveats about the refinement
+    """
+    # Always returned
+    refined_answer_text: str = Field(
+        ...,
+        min_length=10,
+        description="The refined, high-quality interview response"
+    )
+    alignment_signals_used: List[str] = Field(
+        default_factory=list,
+        description="Company/role alignment signals applied (e.g., 'innovation', 'customer obsession')"
+    )
+    improvements_applied: List[str] = Field(
+        default_factory=list,
+        description="List of improvements made to the response"
+    )
+    
+    # Metadata
+    context_source: str = Field(
+        ...,
+        pattern="^(user_provided|company_inferred|generic)$",
+        description="Source of company/role context: user_provided, company_inferred, or generic"
+    )
+    
+    # Conditionally returned (only if transcript was provided)
+    feedback: Optional[List[FeedbackItem]] = Field(
+        None,
+        description="Targeted feedback on the recorded response (only if transcript provided)"
+    )
+    assumptions_or_limits: Optional[List[str]] = Field(
+        None,
+        description="Any assumptions made or limitations of the refinement"
+    )
+    suggested_follow_up: Optional[str] = Field(
+        None,
+        description="Optional suggestion for follow-up practice or improvement"
+    )
+    
+    # Telemetry (for billing and observability)
+    token_usage: Optional[Dict[str, int]] = Field(
+        None,
+        description="Token usage for this request (prompt_tokens, completion_tokens, total_tokens)"
+    )
+

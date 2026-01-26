@@ -18,7 +18,8 @@ from auth import get_current_user, check_is_admin, security, get_user_from_webso
 from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
     TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
-    FileUploadResponse, AudioUploadResponse
+    FileUploadResponse, AudioUploadResponse,
+    InterviewRefinementRequest, InterviewRefinementResponse, FeedbackItem
 )
 from storage import storage_service, StorageService
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
@@ -34,7 +35,7 @@ from transcription import (
 from providers.deepgram_streaming import DeepgramStreamingProvider
 from providers.deepgram_webm import DeepgramWebmProvider
 from datetime import datetime
-from llm_refinement import refine_transcript, analyze_and_refine
+from llm_refinement import refine_transcript, analyze_and_refine, refine_interview_response
 
 # Initialize logging FIRST (before any other imports that might log)
 from logging_config import setup_logging, get_logger, set_request_id, get_request_id
@@ -1014,6 +1015,119 @@ async def analyze_transcript_endpoint(
     except Exception as e:
         logger.error(f"Error analyzing transcript for user {user['id']}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze transcript: {str(e)}")
+
+
+# ============================================
+# Interview Refinement Endpoint (GAP-011)
+# ============================================
+
+@app.post("/refine-interview", response_model=InterviewRefinementResponse)
+async def refine_interview_endpoint(
+    request: InterviewRefinementRequest,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Refine an interview response using the turn-based pipeline.
+    
+    This is a single-turn refinement flow (one question → one refined response).
+    NOT Practice Mode. NOT multi-turn. NOT real-time.
+    
+    **Required Fields:**
+    - interview_question: The interview question being answered
+    - desired_style: Desired response style (e.g., "Confident but humble, story-driven")
+    
+    **Optional Fields:**
+    - company_name: Company name for alignment (LLM infers culture)
+    - company_role_context: User-provided context (overrides company_name inference)
+    - transcript: User's recorded answer (enables feedback generation)
+    
+    **NOT Supported (v1):**
+    - reference_text, reference_file_url: Reference upload is disabled
+    
+    **Returns:**
+    - refined_answer_text: Polished, submission-ready response (ALWAYS)
+    - feedback: Targeted feedback on recorded response (ONLY if transcript provided)
+    - alignment_signals_used: Company/role signals applied
+    - improvements_applied: List of improvements made
+    - context_source: "user_provided" | "company_inferred" | "generic"
+    - token_usage: Token usage for billing
+    """
+    # Rate limit by user ID
+    rate_limit_middleware(f"refine_interview:{user['id']}")
+    
+    # Check if user is admin
+    is_admin = await check_is_admin(user)
+    
+    # Check credits (interview refinement costs 1 credit)
+    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
+    if not has_credits:
+        raise HTTPException(
+            status_code=402,
+            detail="Insufficient credits for interview refinement."
+        )
+    
+    try:
+        # Call the refinement pipeline
+        result = await refine_interview_response(
+            interview_question=request.interview_question,
+            desired_style=request.desired_style,
+            company_name=request.company_name,
+            company_role_context=request.company_role_context,
+            transcript=request.transcript,
+            user_id=user['id']
+        )
+        
+        # Deduct credit ONLY after successful refinement (unless admin)
+        if not is_admin:
+            try:
+                await decrement_credits(
+                    user["id"],
+                    amount=1,
+                    reason="interview_refinement",
+                    is_admin=False
+                )
+            except Exception as e:
+                # Log but don't fail the request - refinement was successful
+                logger.error(f"Failed to deduct credits for user {user['id']} after interview refinement: {e}")
+        
+        # Log telemetry
+        logger.info(
+            f"[InterviewRefinement:Endpoint] Success for user {user['id']}: "
+            f"context_source={result['context_source']}, "
+            f"has_transcript={request.transcript is not None}, "
+            f"tokens={result.get('token_usage', {}).get('total_tokens', 0)}"
+        )
+        
+        # Build response with proper FeedbackItem models
+        feedback_items = None
+        if result.get("feedback"):
+            feedback_items = [
+                FeedbackItem(
+                    category=f.get("category", "content"),
+                    observation=f.get("observation", ""),
+                    suggestion=f.get("suggestion", ""),
+                    priority=f.get("priority", "medium")
+                )
+                for f in result["feedback"]
+                if isinstance(f, dict)
+            ]
+        
+        return InterviewRefinementResponse(
+            refined_answer_text=result["refined_answer_text"],
+            alignment_signals_used=result.get("alignment_signals_used", []),
+            improvements_applied=result.get("improvements_applied", []),
+            context_source=result["context_source"],
+            feedback=feedback_items,
+            assumptions_or_limits=result.get("assumptions_or_limits"),
+            suggested_follow_up=result.get("suggested_follow_up"),
+            token_usage=result.get("token_usage")
+        )
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error in interview refinement for user {user['id']}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to refine interview response: {str(e)}")
 
 
 # ============================================

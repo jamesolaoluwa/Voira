@@ -127,14 +127,16 @@ export default function Speak() {
    * 
    * canStartRecording is true ONLY when:
    * - For 'application' type: contextPrompt (question) is non-empty
-   * - For 'interview' type: contextPrompt (question) is non-empty
+   * - For 'interview' type: contextPrompt (question) AND goalInput (desired style) are non-empty
    * - For 'free'/'refine' types: always allowed (no question required)
    * - AND not currently recording/processing
    * 
-   * Reference and tone inputs do NOT affect this boolean.
+   * Reference inputs do NOT affect this boolean.
    */
   const requiresQuestion = type === 'application' || type === 'interview';
+  const requiresDesiredStyle = type === 'interview'; // GAP-011: desired style required for interview
   const hasValidQuestion = contextPrompt.trim().length > 0;
+  const hasValidDesiredStyle = goalInput.trim().length > 0;
   const hasReferenceOnly = (uploadedFileUrl || referenceText) && !hasValidQuestion;
   
   const canStartRecording = useMemo(() => {
@@ -145,8 +147,11 @@ export default function Speak() {
     // For types that require a question, validate it exists
     if (requiresQuestion && !hasValidQuestion) return false;
     
+    // For interview type, desired style is also required (GAP-011)
+    if (requiresDesiredStyle && !hasValidDesiredStyle) return false;
+    
     return true;
-  }, [recordingState, isTranscribing, isGenerating, requiresQuestion, hasValidQuestion]);
+  }, [recordingState, isTranscribing, isGenerating, requiresQuestion, hasValidQuestion, requiresDesiredStyle, hasValidDesiredStyle]);
   
   /**
    * Get the validation warning message to display
@@ -162,6 +167,11 @@ export default function Speak() {
       return type === 'application' 
         ? 'Please enter the application essay question before recording.'
         : 'Please enter the interview question before recording.';
+    }
+    
+    // GAP-011: Desired style is required for interview mode
+    if (requiresDesiredStyle && !hasValidDesiredStyle) {
+      return 'Please describe what you want this response to sound like before recording.';
     }
     
     return null;
@@ -782,6 +792,7 @@ export default function Speak() {
                 {type === 'application' 
                   ? 'Paste the application question' 
                   : 'Enter the interview question you\'re answering'}
+                {requiresQuestion && <span className="text-red-500 ml-1">*</span>}
               </Label>
               <Input
                 value={contextPrompt}
@@ -872,21 +883,36 @@ export default function Speak() {
           className="w-full max-w-2xl mx-auto mb-8"
         >
           <div className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6 space-y-6">
-            {/* Free-form Goal Input */}
+            {/* Free-form Goal Input - Required for interview mode (GAP-011) */}
             <div>
               <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">
                 What do you want this response to sound like?
+                {requiresDesiredStyle && <span className="text-red-500 ml-1">*</span>}
               </Label>
               <Input
                 value={goalInput}
-                onChange={(e) => setGoalInput(e.target.value)}
+                onChange={(e) => {
+                  setGoalInput(e.target.value);
+                  // Clear validation warning as user types
+                  if (e.target.value.trim().length > 0) {
+                    setHasAttemptedStart(false);
+                  }
+                }}
                 placeholder="e.g., Confident but humble, story-driven with impact..."
-                className="bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 h-12"
+                className={`bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 h-12 ${
+                  validationWarning && requiresDesiredStyle && !hasValidDesiredStyle ? 'border-red-400 dark:border-red-500/50 focus:border-red-500' : ''
+                }`}
                 onBlur={(e) => e.target.value && setSessionIntent(e.target.value)}
               />
+              {requiresDesiredStyle && (
+                <p className="text-xs text-zinc-600 dark:text-zinc-500 mt-2">
+                  Required for interview responses. Describe the tone, confidence level, and style you want.
+                </p>
+              )}
             </div>
 
-            {/* Style Reference Upload */}
+            {/* Style Reference Upload - Hidden for interview mode (GAP-011: out of scope for v1) */}
+            {type !== 'interview' && (
             <FileUpload
               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif"
               label="Upload Reference Material (Optional)"
@@ -945,6 +971,7 @@ export default function Speak() {
                 }
               }}
             />
+            )}
           </div>
         </motion.div>
       )}

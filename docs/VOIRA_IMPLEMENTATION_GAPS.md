@@ -8,75 +8,40 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P0 - Critical (Blocking Core Functionality)
 
-**GAP-001: Voice Profile Integration with LLM Refinement** ✅ COMPLETED
-- Location: `apps/api/llm_refinement.py`
-- Status: **PRODUCTION-READY** - All 8 hard requirements + enhancements implemented
-- Implementation Date: 2026-01-25
-
-**Hard Requirements Implemented:**
-1. ✅ **Non-Optional Injection**: Every LLM call receives validated `VoiceProfileResult` (never None)
-2. ✅ **Single Loading Path**: All flows use `get_voice_profile_for_llm()` - no bypasses
-3. ✅ **Schema Validation**: `VoiceProfile` Pydantic model with field validators
-4. ✅ **Request-Scoped Caching**: `VoiceProfileResult` dataclass with `.cache_key` property
-5. ✅ **Cache-Key Safety**: Format `{hashed_user_id}:{version}:{is_user}` - version changes invalidate
-6. ✅ **Telemetry/Observability**: `VoiceProfileMetrics` counters with structured logging
-7. ✅ **Prompt Construction Rules**: `build_voice_profile_system_instructions()` with safety guardrails
-8. ✅ **Explicit Non-Goals**: Voice profiles affect LLM refinement ONLY, never Deepgram transcription
-
-**Production Enhancements Added:**
-- ✅ **TTL Cache**: 5-minute in-memory cache reduces DB load (`VOICE_PROFILE_CACHE_TTL_SECONDS`)
-- ✅ **Privacy-Safe Logging**: User IDs hashed (SHA-256, 12 chars) in all logs via `_hash_user_id()`
-- ✅ **Cache Invalidation**: `clear_voice_profile_cache(user_id)` function for profile updates
-- ✅ **Loading Metadata**: `VoiceProfileResult.loaded_from_cache` and `.age_seconds` properties
-- ✅ **Thread-Safety Documented**: Metrics counters documented as per-process (not distributed)
-- ✅ **DB Auto-Increment Trigger**: Profile version auto-increments on UPDATE (in migrations)
-
-**Key Types Introduced:**
-- `VoiceProfile`: Pydantic BaseModel with validation (tone, confidence_level, etc.)
-- `VoiceProfileResult`: Request-scoped container with `.cache_key`, `.loaded_from_cache`, `.age_seconds`
-- `VoiceProfileMetrics`: Telemetry counters for observability
-
-**Functions Updated:**
-- `get_voice_profile_for_llm()` - Single entry point with TTL cache
-- `build_voice_profile_system_instructions()` - Takes `VoiceProfileResult`
-- `build_context_specific_system_prompt()` - Takes `VoiceProfileResult`
-- `refine_transcript()` - Uses `VoiceProfileResult`
-- `analyze_and_refine()` - Uses `VoiceProfileResult`
-- `clear_voice_profile_cache()` - New: invalidate cache on profile update
-
-**GAP-002: Credit Consumption for Analysis Endpoint**
+**GAP-001: Credit Consumption for Analysis Endpoint**
 - Location: `apps/api/main.py` `/analyze` endpoint (lines 1032-1095)
 - Status: The `/analyze` endpoint does not consume credits, only `/refine` does
 - Impact: Users can run unlimited analytics without credit cost, potentially expensive LLM calls for "improvement suggestions"
 - Fix: Add `await consume_credit(user_id, "analysis")` call, or document that analysis is free
 
-**GAP-003: Word Limit Enforcement on LLM Output**
-- Location: `apps/api/llm_refinement.py` `extract_word_limit()` (line 103) and `refine_transcript()` (lines 150-300)
+**GAP-002: Word Limit Enforcement on LLM Output**
+- Location: `apps/api/llm_refinement.py` `extract_word_limit()` (line 535) and `refine_transcript()` (lines 1452-1632)
 - Status: Word limit is extracted from prompt via regex but never validated on the returned output
 - Impact: LLM may exceed requested word limit; no retry or truncation logic exists
 - Fix: Count words in LLM response, retry with stricter prompt if over limit, or truncate with warning
 
 ### P1 - High (Feature Gaps)
 
-**GAP-004: Session Resume/Continue Recording**
+**GAP-003: Session Resume/Continue Recording**
 - Location: `apps/web/src/pages/Speak.jsx` (entire file)
 - Status: No mechanism to resume a paused session across page reloads
 - Impact: If user accidentally navigates away, recording is lost
 - Fix: Store interim audio chunks and transcript in IndexedDB or sessionStorage
+- Note: Users should also be able to edit live transcribed text in case of wrong transcription
 
-**GAP-005: Offline Transcription Fallback**
+**GAP-004: Offline Transcription Fallback**
 - Location: `apps/web/src/components/recording/AudioRecorder.jsx`
 - Status: WebSocket failure aborts recording entirely
 - Impact: Users in poor network conditions cannot record at all
 - Fix: Allow recording without live transcription, queue audio for later upload
 
-**GAP-006: Rate Limit Persistence**
+**GAP-005: Rate Limit Persistence**
 - Location: `apps/api/rate_limit.py` (entire file)
 - Status: In-memory rate limiter resets on server restart; Redis integration is optional and may not be configured
 - Impact: Rate limits ineffective across deployments or restarts
 - Fix: Make Redis required for production, or implement persistent fallback
 
-**GAP-007: Admin Dashboard**
+**GAP-006: Admin Dashboard**
 - Location: References in `apps/api/models.py` (`admin_emails` table) but no admin UI exists
 - Status: Admin role check exists but no admin interface
 - Impact: Cannot manage users, view analytics, or moderate content without direct DB access
@@ -84,23 +49,39 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P2 - Medium (Nice-to-Have)
 
-**GAP-008: Email Notifications for Credit Depletion**
+**GAP-007: Email Notifications for Credit Depletion**
 - Location: `apps/api/notifications.py` (empty/stub file)
 - Status: No email integration exists
 - Impact: Users have no warning when credits are low
 - Fix: Integrate email service (SendGrid, SES), trigger on credit thresholds
 
-**GAP-009: Batch Export of Sessions**
+**GAP-008: Batch Export of Sessions**
 - Location: `apps/api/main.py` `/export-data` endpoint (lines 1350-1386)
 - Status: GDPR export exists but no UI-driven batch export of selected sessions
 - Impact: Users must export one session at a time
 - Fix: Add multi-select in Library, endpoint for batch export as ZIP
 
-**GAP-010: Search/Filter in Library**
+**GAP-009: Search/Filter in Library**
 - Location: `apps/web/src/pages/Library.jsx`
 - Status: Sessions are listed but not searchable or filterable
 - Impact: Users with many sessions cannot find specific recordings
 - Fix: Add client-side filtering by date, topic, or keywords from transcript
+
+---
+
+## Recently Implemented
+
+**Interview Response Refinement Pipeline (GAP-011)** - ✅ COMPLETED
+- Implemented: 2026-01-26
+- Location: `apps/api/llm_refinement.py`, `apps/api/main.py`, `apps/api/models.py`
+- Features:
+  - `POST /refine-interview` endpoint for turn-based interview response refinement
+  - `InterviewRefinementRequest` and `InterviewRefinementResponse` Pydantic schemas
+  - Company context resolution (user_provided > company_inferred > generic)
+  - Transcript delimiter safety for prompt injection prevention
+  - Voice profile integration preserved
+  - Token usage logging for observability
+  - Frontend wiring with required field indicators and validation
 
 ---
 
@@ -219,7 +200,7 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 - Fix: Move to environment variable or feature flag
 
 **HARDCODE-002: LLM Model Selection**
-- Location: `apps/api/llm_refinement.py` line 50 (approximate)
+- Location: `apps/api/llm_refinement.py` line 1575 (approximate)
 - Value: `model="gpt-4o-mini"` hardcoded
 - Issue: Cannot A/B test models or switch without code change
 - Fix: Move to config.py with environment variable override
@@ -263,19 +244,19 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 ### P0 - Critical
 
 **LLM-001: No Output Validation**
-- Location: `apps/api/llm_refinement.py` `refine_transcript()` (lines 200-400)
+- Location: `apps/api/llm_refinement.py` `refine_transcript()` (lines 1452-1632)
 - Issue: LLM response parsed directly without schema validation
 - Risk: Malformed JSON, missing fields, or hallucinated structure crashes the endpoint
 - Fix: Use Pydantic model to validate response, return error if invalid
 
 **LLM-002: Prompt Injection Vulnerability**
-- Location: `apps/api/llm_refinement.py` prompt construction (lines 150-200)
+- Location: `apps/api/llm_refinement.py` prompt construction (lines 1189-1449)
 - Issue: User transcript inserted directly into prompt without sanitization
 - Risk: Malicious transcript content could manipulate LLM behavior
 - Fix: Escape or delimit user content, use structured message format
 
 **LLM-003: No Retry Logic on LLM Failure**
-- Location: `apps/api/llm_refinement.py` OpenAI call (lines 300-350)
+- Location: `apps/api/llm_refinement.py` OpenAI call (lines 1601-1606)
 - Issue: Single attempt; network blip fails the request
 - Risk: Intermittent failures frustrate users
 - Fix: Implement retry with exponential backoff (max 3 attempts)
@@ -367,7 +348,26 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ---
 
-## 7. Recommended Fix Order
+## 7. Transition Note: Next Focus
+
+### Next Priority: GAP-001 (Credit Consumption & Analysis Endpoint)
+
+**Schema/API Decisions Needed:**
+1. Should `/analyze` remain free or consume credits?
+2. How is token usage attributed per request type?
+3. Credit cost table by operation type:
+   - `refine` (existing) - 1 credit
+   - `refine-interview` (implemented) - 1 credit
+   - `analyze` (currently free) - TBD
+
+**Impact of Longer Prompts:**
+- Interview refinement with company context uses more tokens
+- Should credit cost vary by prompt complexity?
+- Token usage is now logged for `/refine-interview` endpoint
+
+---
+
+## 8. Recommended Fix Order
 
 Priority is determined by: User impact, Data risk, Effort, Dependencies.
 
@@ -383,51 +383,54 @@ Priority is determined by: User impact, Data risk, Effort, Dependencies.
 | 6 | LLM-002 | Sanitize user content in prompts | 1 hr |
 | 7 | PARTIAL-001 | Add WebSocket reconnection logic | 4 hr |
 
-### Phase 2: Data Integrity (Week 2-3)
+### Phase 2: Credit System & Configuration (Week 2-3)
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 8 | DATA-001 | Audit and add FK constraints | 3 hr |
-| 9 | DATA-002 | Implement auto-save drafts | 4 hr |
-| 10 | DATA-005 | Delete storage files on session delete | 1 hr |
-| 11 | PARTIAL-002 | Fix session save race condition | 2 hr |
-| 12 | GAP-003 | Validate LLM word limit compliance | 2 hr |
+| 8 | GAP-001 | Implement analysis credit cost | 1 hr |
+| 9 | HARDCODE-001 | Externalize default credit amount | 30 min |
+| 10 | HARDCODE-002 | Externalize LLM model selection | 30 min |
+| 11 | PARTIAL-003 | Enforce analytics contract versioning | 2 hr |
+| 12 | LLM-005 | Add prompt versioning | 3 hr |
+| 13 | BUG-004 | Map WebSocket close codes to messages | 1 hr |
 
-### Phase 3: Feature Completion (Week 3-4)
-
-| Order | ID | Summary | Effort |
-|-------|------|---------|--------|
-| 13 | GAP-001 | Integrate voice profiles with transcription | 4 hr |
-| 14 | GAP-002 | Decide and implement analysis credit cost | 1 hr |
-| 15 | BUG-003 | Rename computeStrongestMoment or add LLM call | 3 hr |
-| 16 | LLM-003 | Add retry logic to LLM calls | 2 hr |
-| 17 | LLM-004 | Log token usage for cost monitoring | 1 hr |
-
-### Phase 4: Configuration & Observability (Week 4-5)
+### Phase 3: Data Integrity (Week 3-4)
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 18 | HARDCODE-001 | Externalize default credit amount | 30 min |
-| 19 | HARDCODE-002 | Externalize LLM model selection | 30 min |
-| 20 | PARTIAL-003 | Enforce analytics contract versioning | 2 hr |
-| 21 | LLM-005 | Add prompt versioning | 3 hr |
-| 22 | BUG-004 | Map WebSocket close codes to messages | 1 hr |
+| 14 | DATA-001 | Audit and add FK constraints | 3 hr |
+| 15 | DATA-002 | Implement auto-save drafts | 4 hr |
+| 16 | DATA-005 | Delete storage files on session delete | 1 hr |
+| 17 | PARTIAL-002 | Fix session save race condition | 2 hr |
+| 18 | DATA-003 | Add audio file size limit | 1 hr |
+
+### Phase 4: Data Integrity Continued (Week 4-5)
+
+| Order | ID | Summary | Effort |
+|-------|------|---------|--------|
+| 19 | DATA-004 | Transcript UTF-8 handling | 2 hr |
+| 20 | DATA-006 | Concurrent edit conflicts | 2 hr |
+| 21 | DATA-007 | Persist analytics results | 3 hr |
+| 22 | GAP-002 | Validate LLM word limit compliance | 2 hr |
+| 23 | LLM-003 | Add retry logic to LLM calls | 2 hr |
+| 24 | LLM-008 | Make temperature configurable | 1 hr |
 
 ### Phase 5: Polish (Week 5+)
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 23 | GAP-010 | Add search/filter to Library | 3 hr |
-| 24 | LLM-006 | Stream LLM responses to client | 4 hr |
-| 25 | GAP-004 | Session resume after navigation | 6 hr |
-| 26 | PARTIAL-004 | Feature flag refresh mechanism | 2 hr |
-| 27 | BUG-006 | Fix filler detection double-counting | 2 hr |
+| 25 | GAP-009 | Add search/filter to Library | 3 hr |
+| 26 | LLM-006 | Stream LLM responses to client | 4 hr |
+| 27 | GAP-003 | Session resume after navigation | 6 hr |
+| 28 | PARTIAL-004 | Feature flag refresh mechanism | 2 hr |
+| 29 | BUG-006 | Fix filler detection double-counting | 2 hr |
+| 30 | GAP-004 | Offline transcription fallback | 4 hr |
 
 ### Deferred / Low Priority
 
-- GAP-007 (Admin Dashboard) - Build only when needed
-- GAP-008 (Email Notifications) - Requires email provider setup
-- GAP-009 (Batch Export) - Nice-to-have for power users
+- GAP-006 (Admin Dashboard) - Build only when needed
+- GAP-007 (Email Notifications) - Requires email provider setup
+- GAP-008 (Batch Export) - Nice-to-have for power users
 - HARDCODE-005 (Filler Word List) - Current list adequate for MVP
 - LLM-007 (Prompt Caching) - Optimization, not correctness
 
@@ -437,8 +440,8 @@ Priority is determined by: User impact, Data risk, Effort, Dependencies.
 
 | File | Gap IDs |
 |------|---------|
-| `apps/api/main.py` | GAP-001, GAP-002, DATA-003, DATA-005, DATA-006 |
-| `apps/api/llm_refinement.py` | GAP-003, LLM-001 through LLM-008 |
+| `apps/api/main.py` | GAP-001, DATA-003, DATA-005, DATA-006 |
+| `apps/api/llm_refinement.py` | GAP-002, LLM-001 through LLM-008 |
 | `apps/api/adaptive_analytics.py` | BUG-006, HARDCODE-004, HARDCODE-005 |
 | `apps/api/credits.py` | BUG-005, HARDCODE-001 |
 | `apps/web/src/hooks/useLiveTranscription.ts` | BUG-001 |
