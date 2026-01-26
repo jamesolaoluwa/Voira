@@ -60,6 +60,7 @@ __all__ = [
     # Constants
     "SYSTEM_DEFAULT_VOICE_PROFILE",
     "DEFAULT_VOICE_PROFILE",  # Legacy dict alias
+    "MIN_REASONABLE_WORD_LIMIT",
     # Utility functions (for testing)
     "build_voice_profile_system_instructions",
     "build_context_specific_system_prompt",
@@ -67,6 +68,10 @@ __all__ = [
     "build_interview_refinement_user_prompt",  # GAP-011
     "get_voice_profile_metrics",
     "clear_voice_profile_cache",
+    # Word limit utilities (GAP-001)
+    "count_words",
+    "truncate_to_word_limit",
+    "extract_word_limit",
 ]
 
 
@@ -556,22 +561,98 @@ WORD_LIMIT_REGEX = re.compile(
 )
 
 # Minimum reasonable word limit (prevents broken outputs from accidental tiny limits)
+# POLICY: Limits below this threshold are clamped UP to this value.
+# Rationale: Very small limits (e.g., "10 words") produce unusable, low-signal outputs
+# that fail to convey meaningful content. Clamping prevents degraded UX.
+# Revisit if: User research shows demand for micro-responses (unlikely for refinement).
 MIN_REASONABLE_WORD_LIMIT = 50
+
+# Word limit enforcement constants
+# NOTE: This instruction is appended to the system prompt on retry.
+# It must be forceful enough to override the LLM's tendency to be verbose.
+WORD_LIMIT_RETRY_INSTRUCTION = (
+    "HARD CONSTRAINT: Your response MUST be under {word_limit} words. "
+    "Exceeding this limit will invalidate your response. "
+    "Prioritize conciseness. Cut secondary details if needed to comply."
+)
+
+
+def count_words(text: str) -> int:
+    """
+    Count words in text using deterministic whitespace splitting.
+    
+    SEMANTICS (intentional design choices):
+    - Whitespace-based splitting is used for DETERMINISM, not linguistic accuracy.
+    - Hyphenated words ("state-of-the-art") count as 1 word.
+    - Contractions ("don't", "won't") count as 1 word.
+    - Numbers ("2024", "3.14") count as 1 word.
+    - Punctuation is NOT stripped - "hello," is 1 word.
+    
+    This approach ensures:
+    1. Consistent, reproducible counts across all inputs
+    2. Alignment with user expectations ("500 words" means ~500 tokens)
+    3. Predictable cost control for LLM output
+    
+    Args:
+        text: Text to count words in
+        
+    Returns:
+        Number of words (0 for empty/None input)
+    
+    Examples:
+        count_words("Hello world") -> 2
+        count_words("Hello,  world!") -> 2
+        count_words("state-of-the-art") -> 1
+        count_words("") -> 0
+    """
+    if not text:
+        return 0
+    return len(text.split())
+
+
+def truncate_to_word_limit(text: str, word_limit: int) -> str:
+    """
+    Deterministically truncate text to a word limit.
+    
+    Truncation rules:
+    1. Split on whitespace
+    2. Take first {word_limit} words
+    3. Rejoin with single spaces
+    
+    Args:
+        text: Text to truncate
+        word_limit: Maximum number of words
+        
+    Returns:
+        Truncated text (may be shorter than original)
+    """
+    if not text or word_limit <= 0:
+        return ""
+    words = text.split()
+    if len(words) <= word_limit:
+        return text
+    return " ".join(words[:word_limit])
 
 
 def extract_word_limit(*texts) -> Optional[int]:
     """
-    Extract word limit from user input (question, user_context, goal).
-    Looks for patterns like "500 words", "1000 word", etc.
+    DEPRECATED: Extract word limit from user input (question, user_context, goal).
     
+    This function is deprecated in favor of explicit word_limit from UI.
+    New flows should pass word_limit directly via the API request payload.
+    This function remains for backward compatibility with older clients.
+    
+    Looks for patterns like "500 words", "1000 word", etc.
     Extracts ALL word limits and returns the smallest (most conservative) value.
-    This handles cases like "500 words max, ideally closer to 300 words" correctly.
     
     Args:
         *texts: Variable number of text strings to search
         
     Returns:
         Smallest word limit as integer if found, None otherwise
+    
+    Deprecated:
+        Use explicit word_limit parameter in API requests instead.
     """
     limits = []
     for text in texts:
@@ -1507,7 +1588,8 @@ async def refine_transcript(
     goal: Optional[str] = None,
     user_id: Optional[str] = None,
     voice_profile_result: Optional[VoiceProfileResult] = None,
-    company_name: Optional[str] = None
+    company_name: Optional[str] = None,
+    word_limit: Optional[int] = None
 ) -> str:
     """
     Refine raw transcript using OpenAI API with context-aware prompts.
@@ -1515,10 +1597,11 @@ async def refine_transcript(
     Voice profile is ALWAYS applied to ensure consistent tone/style.
     If no profile exists, sensible defaults are used.
     
-    GAP-001 REQUIREMENTS:
-    - voice_profile_result should be pre-loaded via get_voice_profile_for_llm()
-    - If not provided, this function will load it (single loading path)
-    - VoiceProfileResult contains validated profile, is_user_profile flag, and cache_key
+    WORD LIMIT HANDLING:
+    - If word_limit is provided explicitly (from UI), use it directly
+    - If word_limit is None, fall back to extract_word_limit() from prompt text (deprecated)
+    - word_limit < 20 is ignored (treated as no limit)
+    - word_limit > 1000 is clamped to 1000
     
     Args:
         raw_transcript: Verbatim user speech (includes filler words)
@@ -1531,6 +1614,7 @@ async def refine_transcript(
         user_id: User ID to fetch voice profile (required for profile-aware refinement)
         voice_profile_result: Pre-loaded VoiceProfileResult (avoids redundant DB call if already loaded)
         company_name: Company name for interview context
+        word_limit: Explicit word limit from UI (preferred over prompt extraction)
     
     Returns:
         Refined text (polished response)
@@ -1627,11 +1711,48 @@ async def refine_transcript(
         # Feature-specific output caps with word-aware logic
         base_cap = OUTPUT_CAPS.get(session_type, 800)
         
-        word_limit = extract_word_limit(question, user_context, goal)
+        # WORD LIMIT RESOLUTION (explicit UI value preferred)
+        # Priority: 1) Explicit word_limit param, 2) Extracted from prompt (deprecated)
+        effective_word_limit = None
+        word_limit_source = None
         
-        # Clamp unreasonably low word limits to prevent broken outputs
-        if word_limit and word_limit < MIN_REASONABLE_WORD_LIMIT:
-            word_limit = MIN_REASONABLE_WORD_LIMIT
+        if word_limit is not None:
+            # Explicit word_limit from UI - use directly
+            if word_limit < 20:
+                # Ignore unreasonably small limits
+                logger.info(f"[WordLimit:Explicit] Ignoring too-small limit: {word_limit}")
+                effective_word_limit = None
+                word_limit_source = "ignored_too_small"
+            elif word_limit > 1000:
+                # Clamp to max 1000
+                logger.info(f"[WordLimit:Explicit] Clamping to max: {word_limit} -> 1000")
+                effective_word_limit = 1000
+                word_limit_source = "explicit_clamped"
+            else:
+                effective_word_limit = word_limit
+                word_limit_source = "explicit"
+                logger.info(f"[WordLimit:Explicit] Using UI word limit: {word_limit}")
+        else:
+            # DEPRECATED: Fall back to prompt extraction for backward compatibility
+            # New flows should always pass word_limit explicitly from UI
+            extracted_limit = extract_word_limit(question, user_context, goal)
+            if extracted_limit:
+                effective_word_limit = extracted_limit
+                word_limit_source = "extracted_deprecated"
+                logger.info(f"[WordLimit:Extracted] Using prompt-extracted limit: {extracted_limit} (deprecated)")
+        
+        # POLICY: Clamp unreasonably low word limits to MIN_REASONABLE_WORD_LIMIT
+        # Limits < 50 words produce unusable outputs that fail to convey meaning.
+        # We clamp UP (not reject) to preserve user intent while ensuring quality.
+        if effective_word_limit and effective_word_limit < MIN_REASONABLE_WORD_LIMIT:
+            logger.info(
+                f"[WordLimit:Policy] Clamping small limit: "
+                f"requested={effective_word_limit}, clamped_to={MIN_REASONABLE_WORD_LIMIT}"
+            )
+            effective_word_limit = MIN_REASONABLE_WORD_LIMIT
+        
+        # Use effective_word_limit for the rest of the function
+        word_limit = effective_word_limit
         
         # NOTE:
         # max_tokens is dynamically derived to respect explicit word limits
@@ -1653,7 +1774,110 @@ async def refine_transcript(
         
         refined_text = response.choices[0].message.content.strip()
         
-        logger.info(f"Successfully refined transcript (length: {len(refined_text)}, type: {session_type})")
+        # ============================================
+        # Word Limit Enforcement (GAP-001 Fix)
+        # ============================================
+        # If a word limit was extracted and is valid (>= MIN_REASONABLE_WORD_LIMIT),
+        # enforce it on the LLM output with retry + truncation fallback.
+        
+        word_limit_enforced = False
+        word_limit_retry_attempted = False
+        word_limit_truncated = False
+        original_word_count = count_words(refined_text)
+        
+        if word_limit and word_limit >= MIN_REASONABLE_WORD_LIMIT:
+            if original_word_count > word_limit:
+                logger.warning(
+                    f"[WordLimit] LLM output exceeds limit: "
+                    f"word_count={original_word_count}, limit={word_limit}, "
+                    f"session_type={session_type}"
+                )
+                
+                # RETRY ONCE with explicit word limit instruction
+                word_limit_retry_attempted = True
+                retry_system_prompt = (
+                    system_prompt + "\n\n" + 
+                    WORD_LIMIT_RETRY_INSTRUCTION.format(word_limit=word_limit)
+                )
+                
+                try:
+                    if use_vision:
+                        retry_messages = [
+                            {"role": "system", "content": retry_system_prompt},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": user_prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": reference_file_url}
+                                    }
+                                ]
+                            }
+                        ]
+                    else:
+                        retry_messages = [
+                            {"role": "system", "content": retry_system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ]
+                    
+                    retry_response = client.chat.completions.create(
+                        model=model,
+                        messages=retry_messages,
+                        temperature=0.3,  # Lower temperature for stricter adherence
+                        max_tokens=max_tokens,
+                    )
+                    
+                    retry_text = retry_response.choices[0].message.content.strip()
+                    retry_word_count = count_words(retry_text)
+                    
+                    logger.info(
+                        f"[WordLimit] Retry result: "
+                        f"word_count={retry_word_count}, limit={word_limit}"
+                    )
+                    
+                    if retry_word_count <= word_limit:
+                        # Retry succeeded
+                        refined_text = retry_text
+                        word_limit_enforced = True
+                        logger.info(
+                            f"[WordLimit] Retry succeeded: "
+                            f"original={original_word_count}, retry={retry_word_count}, limit={word_limit}"
+                        )
+                    else:
+                        # Retry still exceeds limit - truncate
+                        refined_text = truncate_to_word_limit(retry_text, word_limit)
+                        word_limit_enforced = True
+                        word_limit_truncated = True
+                        logger.warning(
+                            f"[WordLimit] Retry failed, truncating: "
+                            f"retry_count={retry_word_count}, truncated_to={word_limit}"
+                        )
+                        
+                except Exception as retry_error:
+                    # Retry failed due to LLM error - fall back to truncating original
+                    logger.error(
+                        f"[WordLimit] Retry LLM call failed: {retry_error}. "
+                        f"Falling back to truncation."
+                    )
+                    refined_text = truncate_to_word_limit(refined_text, word_limit)
+                    word_limit_enforced = True
+                    word_limit_truncated = True
+            else:
+                # Output already within limit
+                word_limit_enforced = True
+                logger.info(
+                    f"[WordLimit] Output within limit: "
+                    f"word_count={original_word_count}, limit={word_limit}"
+                )
+        
+        final_word_count = count_words(refined_text)
+        logger.info(
+            f"Successfully refined transcript "
+            f"(length={len(refined_text)}, words={final_word_count}, type={session_type}, "
+            f"word_limit={word_limit}, enforced={word_limit_enforced}, "
+            f"retry={word_limit_retry_attempted}, truncated={word_limit_truncated})"
+        )
         
         return refined_text
     
@@ -2206,7 +2430,8 @@ async def analyze_and_refine(
     voice_profile_result: Optional[VoiceProfileResult] = None,
     company_name: Optional[str] = None,
     filler_detection_enabled: bool = False,
-    filler_count_from_transcription: Optional[int] = None
+    filler_count_from_transcription: Optional[int] = None,
+    word_limit: Optional[int] = None
 ) -> Dict:
     """
     Analyze transcript and generate refined version with context-aware prompts.
@@ -2303,7 +2528,8 @@ async def analyze_and_refine(
         goal=goal,
         user_id=user_id,
         voice_profile_result=voice_profile_result,  # Pass already-loaded VoiceProfileResult
-        company_name=company_name
+        company_name=company_name,
+        word_limit=word_limit  # Explicit word limit from UI (preferred)
     )
     
     # Post-processing: Apply mode-based filler removal

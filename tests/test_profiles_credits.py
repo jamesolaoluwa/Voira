@@ -370,6 +370,186 @@ class TestCreditEnforcementViaAPI:
         app.dependency_overrides.clear()
 
 
+class TestAnalyzeEndpointCreditConsumption:
+    """Tests for /analyze endpoint credit consumption (GAP-001)."""
+    
+    def test_analyze_requires_credits(self):
+        """Test that /analyze endpoint fails without sufficient credits."""
+        mock_user = {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "full_name": "Test User",
+            "role": "free_user",
+            "credits_remaining": 0,
+            "credits_reset_at": None,
+        }
+        
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        
+        with patch('main.check_is_admin', return_value=False):
+            with patch('main.check_credits_available', return_value=(False, {"credits_remaining": 0})):
+                response = client.post("/analyze", json={
+                    "raw_transcript": "This is a test transcript for analysis.",
+                    "session_type": "free",
+                })
+                assert response.status_code == 402  # Payment required
+                assert "Insufficient credits" in response.json()["detail"]
+        
+        app.dependency_overrides.clear()
+    
+    def test_analyze_consumes_one_credit_on_success(self):
+        """Test that /analyze decrements exactly 1 credit on success."""
+        mock_user = {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "full_name": "Test User",
+            "role": "free_user",
+            "credits_remaining": 5,
+            "credits_reset_at": None,
+        }
+        
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        
+        with patch('main.check_is_admin', return_value=False):
+            with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 5})):
+                with patch('main.analyze_and_refine') as mock_analyze:
+                    # Mock successful analysis result
+                    mock_analyze.return_value = {
+                        "refined_text": "Refined transcript",
+                        "confidence_score": 75,
+                        "clarity_score": 80,
+                        "analysis_reliability": 0.9,
+                        "filler_word_count": 2,
+                        "filler_word_frequency": 0.05,
+                        "filler_word_breakdown": {"um": 1, "uh": 1},
+                    }
+                    
+                    with patch('main.decrement_credits') as mock_decrement:
+                        response = client.post("/analyze", json={
+                            "raw_transcript": "This is a test transcript for analysis.",
+                            "session_type": "free",
+                        })
+                        
+                        assert response.status_code == 200
+                        # Verify credits were decremented exactly once with amount=1 and reason="analysis"
+                        mock_decrement.assert_called_once()
+                        call_args = mock_decrement.call_args
+                        assert call_args[1]["amount"] == 1
+                        assert call_args[1]["reason"] == "analysis"
+        
+        app.dependency_overrides.clear()
+    
+    def test_analyze_does_not_consume_credits_on_failure(self):
+        """Test that /analyze does NOT decrement credits when analysis fails."""
+        mock_user = {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "full_name": "Test User",
+            "role": "free_user",
+            "credits_remaining": 5,
+            "credits_reset_at": None,
+        }
+        
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        
+        with patch('main.check_is_admin', return_value=False):
+            with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 5})):
+                with patch('main.analyze_and_refine') as mock_analyze:
+                    # Mock analysis failure
+                    mock_analyze.side_effect = Exception("LLM API error")
+                    
+                    with patch('main.decrement_credits') as mock_decrement:
+                        response = client.post("/analyze", json={
+                            "raw_transcript": "This is a test transcript.",
+                            "session_type": "free",
+                        })
+                        
+                        assert response.status_code == 500
+                        # Credits should NOT be decremented on failure
+                        mock_decrement.assert_not_called()
+        
+        app.dependency_overrides.clear()
+    
+    def test_analyze_admin_bypasses_credit_check(self):
+        """Test that admin users bypass credit check for /analyze."""
+        mock_admin = {
+            "id": "admin-user-id",
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "role": "admin",
+            "credits_remaining": 0,  # Even with 0 credits
+            "credits_reset_at": None,
+        }
+        
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        
+        with patch('main.check_is_admin', return_value=True):
+            # Admin bypasses credit check, so check_credits_available returns True
+            with patch('main.check_credits_available', return_value=(True, {})):
+                with patch('main.analyze_and_refine') as mock_analyze:
+                    mock_analyze.return_value = {
+                        "refined_text": "Refined",
+                        "confidence_score": 75,
+                        "clarity_score": 80,
+                        "analysis_reliability": 0.9,
+                        "filler_word_count": 0,
+                        "filler_word_frequency": 0.0,
+                        "filler_word_breakdown": {},
+                    }
+                    
+                    with patch('main.decrement_credits') as mock_decrement:
+                        response = client.post("/analyze", json={
+                            "raw_transcript": "Test transcript",
+                            "session_type": "free",
+                        })
+                        
+                        assert response.status_code == 200
+                        # Admin should NOT have credits decremented
+                        mock_decrement.assert_not_called()
+        
+        app.dependency_overrides.clear()
+    
+    def test_analyze_uses_distinct_operation_key(self):
+        """Test that /analyze uses 'analysis' as the credit reason, not 'refine'."""
+        mock_user = {
+            "id": "test-user-id",
+            "email": "test@example.com",
+            "full_name": "Test User",
+            "role": "free_user",
+            "credits_remaining": 10,
+            "credits_reset_at": None,
+        }
+        
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        
+        with patch('main.check_is_admin', return_value=False):
+            with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 10})):
+                with patch('main.analyze_and_refine') as mock_analyze:
+                    mock_analyze.return_value = {
+                        "refined_text": "Refined",
+                        "confidence_score": 75,
+                        "clarity_score": 80,
+                        "analysis_reliability": 0.9,
+                        "filler_word_count": 0,
+                        "filler_word_frequency": 0.0,
+                        "filler_word_breakdown": {},
+                    }
+                    
+                    with patch('main.decrement_credits') as mock_decrement:
+                        response = client.post("/analyze", json={
+                            "raw_transcript": "Test",
+                            "session_type": "free",
+                        })
+                        
+                        assert response.status_code == 200
+                        # Verify the reason is "analysis" (distinct from "refine")
+                        call_args = mock_decrement.call_args
+                        assert call_args[1]["reason"] == "analysis"
+                        assert call_args[1]["reason"] != "refine"
+        
+        app.dependency_overrides.clear()
+
+
 class TestMonthlyCreditReset:
     """Tests for monthly credit reset functionality."""
     

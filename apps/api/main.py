@@ -949,7 +949,8 @@ async def refine_draft(
             question=request.question,
             goal=request.goal,
             user_id=user['id'],
-            company_name=request.company_name
+            company_name=request.company_name,
+            word_limit=request.word_limit  # Explicit word limit from UI
         )
         
         return RefineResponse(refined_text=refined_text)
@@ -975,9 +976,38 @@ async def analyze_transcript_endpoint(
     
     Uses voice profile data and session type to generate personalized,
     context-aware refinements. Returns both analytics and refined text.
+    
+    **Credit Consumption:**
+    - Costs 1 credit per request (includes LLM refinement)
+    - Admins bypass credit consumption
+    - Credit is deducted AFTER successful analysis
+    
+    **Tradeoffs (GAP-001 Resolution):**
+    - Why credits: /analyze triggers expensive LLM calls for refinement
+    - Why flat cost (1 credit): Simplifies billing; tiered pricing deferred
+    - Future: May revisit for free preview mode or tiered analysis depth
     """
     # Rate limit by user ID
     rate_limit_middleware(f"analyze:{user['id']}")
+    
+    # Check if user is admin (admins bypass credit checks)
+    # ADMIN BYPASS SCOPE:
+    # - Admin is determined by email presence in `admin_emails` table (auth.py:check_is_admin)
+    # - This is intended for internal/testing use only
+    # - Admins bypass: credit checks, credit deductions, some rate limits
+    # - RISK: If admin_emails table is compromised, attacker gets unlimited free usage
+    # - Do NOT expand admin bypass to broader roles (e.g., "premium_user") without review
+    is_admin = await check_is_admin(user)
+    
+    # Check credits BEFORE any LLM calls (unless admin)
+    # Credit is deducted AFTER successful analysis to avoid charging for failures
+    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
+    if not has_credits:
+        logger.info(f"[Analyze:CreditCheck] Insufficient credits for user {user['id']}")
+        raise HTTPException(
+            status_code=402,
+            detail="Insufficient credits for analysis. Please upgrade or wait for monthly reset."
+        )
     
     try:
         result = await analyze_and_refine(
@@ -991,11 +1021,12 @@ async def analyze_transcript_endpoint(
             question=request.question,
             goal=request.goal,
             user_id=user['id'],
-            company_name=request.company_name
+            company_name=request.company_name,
+            word_limit=request.word_limit  # Explicit word limit from UI
         )
         
         # Build full analytics response (v3 contract)
-        return AnalyzeResponse(
+        response = AnalyzeResponse(
             refined_text=result["refined_text"],
             confidence_score=result["confidence_score"],
             clarity_score=result["clarity_score"],
@@ -1015,6 +1046,36 @@ async def analyze_transcript_endpoint(
     except Exception as e:
         logger.error(f"Error analyzing transcript for user {user['id']}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze transcript: {str(e)}")
+    
+    # Deduct credit ONLY after successful analysis (unless admin)
+    # This ensures users are not charged for failed requests
+    #
+    # CONCURRENCY: BUG-005 FIXED
+    # decrement_credits() now uses atomic_decrement_credits() Postgres function.
+    # Single UPDATE with WHERE clause prevents race conditions and negative balances.
+    #
+    # POST-SUCCESS DEDUCTION TRADEOFF:
+    # We deduct AFTER success to avoid charging users for failed requests.
+    # Exploit vector: User could intentionally trigger failures to get free retries.
+    # This is accepted because:
+    # - UX fairness: Users should not pay for our failures
+    # - Low abuse risk: Failures are logged and rate-limited
+    # - Revisit when: Abuse patterns detected (>10% failure rate per user)
+    if not is_admin:
+        try:
+            await decrement_credits(
+                user["id"],
+                amount=1,
+                reason="analysis",  # Distinct from "refine" for billing clarity
+                is_admin=False
+            )
+            logger.info(f"[Analyze:CreditDeducted] User {user['id']} charged 1 credit for analysis")
+        except Exception as e:
+            # Log but don't fail the request - analysis was successful
+            # User got value, we should not break their experience
+            logger.error(f"[Analyze:CreditError] Failed to deduct credit for user {user['id']}: {e}")
+    
+    return response
 
 
 # ============================================

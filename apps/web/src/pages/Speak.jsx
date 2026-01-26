@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
 import FileUpload from '@/components/ui/FileUpload';
 import RecordButton from '@/components/ui/RecordButton';
@@ -116,6 +117,7 @@ export default function Speak() {
   const [uploadedFileUrl, setUploadedFileUrl] = useState(null);
   const [uploadedFileType, setUploadedFileType] = useState(null); // MIME type of uploaded file
   const [referenceText, setReferenceText] = useState(''); // Extracted text from reference file
+  const [wordLimit, setWordLimit] = useState('auto'); // Word limit: 'auto' (default) or numeric string
   
   // Validation state - tracks whether user has attempted to start recording
   const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
@@ -502,7 +504,13 @@ export default function Speak() {
           }
         }
         
-        console.log('[Speak] Calling /analyze with transcript length:', rawTextForAnalysis.length);
+        // Parse word_limit from UI dropdown (only when explicitly set, not 'auto')
+        // 'auto' means no word_limit is sent, letting backend use its default behavior
+        const explicitWordLimit = (type === 'application' || type === 'interview') && wordLimit && wordLimit !== 'auto'
+          ? parseInt(wordLimit, 10) 
+          : undefined;
+        
+        console.log('[Speak] Calling /analyze with transcript length:', rawTextForAnalysis.length, 'word_limit:', explicitWordLimit);
         analysis = await apiClient.post('/analyze', {
           raw_transcript: rawTextForAnalysis,
           session_type: type,
@@ -514,6 +522,7 @@ export default function Speak() {
           question: contextPrompt || undefined,
           goal: sessionIntent || goalInput || undefined,
           company_name: type === 'interview' ? interviewCompanyName : undefined,
+          word_limit: explicitWordLimit,
         });
         console.log('[Speak] /analyze response received, refined_text length:', analysis?.refined_text?.length || 0);
       } catch (analysisError) {
@@ -794,22 +803,42 @@ export default function Speak() {
                   : 'Enter the interview question you\'re answering'}
                 {requiresQuestion && <span className="text-red-500 ml-1">*</span>}
               </Label>
-              <Input
-                value={contextPrompt}
-                onChange={(e) => {
-                  setContextPrompt(e.target.value);
-                  // Clear validation warning as user types
-                  if (e.target.value.trim().length > 0) {
-                    setHasAttemptedStart(false);
-                  }
-                }}
-                placeholder={type === 'application' 
-                  ? 'e.g., Tell us about a time you demonstrated leadership...' 
-                  : 'e.g., Why do you want to work here?'}
-                className={`bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 h-12 ${
-                  validationWarning && !hasValidQuestion ? 'border-red-400 dark:border-red-500/50 focus:border-red-500' : ''
-                }`}
-              />
+              {/* Question input with embedded word limit dropdown */}
+              <div className="relative">
+                <Input
+                  value={contextPrompt}
+                  onChange={(e) => {
+                    setContextPrompt(e.target.value);
+                    // Clear validation warning as user types
+                    if (e.target.value.trim().length > 0) {
+                      setHasAttemptedStart(false);
+                    }
+                  }}
+                  placeholder={type === 'application' 
+                    ? 'e.g., Tell us about a time you demonstrated leadership...' 
+                    : 'e.g., Why do you want to work here?'}
+                  className={`bg-white dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 h-12 pr-28 ${
+                    validationWarning && !hasValidQuestion ? 'border-red-400 dark:border-red-500/50 focus:border-red-500' : ''
+                  }`}
+                />
+                {/* Embedded word limit dropdown */}
+                <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                  <Select value={wordLimit} onValueChange={setWordLimit}>
+                    <SelectTrigger className="h-8 w-24 bg-zinc-100 dark:bg-zinc-800/50 border-0 text-xs text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700/50 focus:ring-0 focus:ring-offset-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white dark:bg-[#1a1a24] border-zinc-200 dark:border-white/10">
+                      <SelectItem value="auto" className="text-xs">Auto</SelectItem>
+                      <SelectItem value="100" className="text-xs">100 words</SelectItem>
+                      <SelectItem value="150" className="text-xs">150 words</SelectItem>
+                      <SelectItem value="250" className="text-xs">250 words</SelectItem>
+                      <SelectItem value="500" className="text-xs">500 words</SelectItem>
+                      <SelectItem value="750" className="text-xs">750 words</SelectItem>
+                      <SelectItem value="1000" className="text-xs">1000 words</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               
               {/* Validation Warning - Inline, not modal */}
               {validationWarning && (

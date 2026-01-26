@@ -105,6 +105,8 @@ class RefineRequest(BaseModel):
     question: Optional[str] = Field(None, max_length=1000, description="Optional question/prompt the user is responding to")
     goal: Optional[str] = Field(None, max_length=500, description="Optional user's goal for the session")
     company_name: Optional[str] = Field(None, max_length=100, description="Company name for interview responses (used for research when context is empty)")
+    # Explicit word limit from UI (preferred over prompt extraction)
+    word_limit: Optional[int] = Field(None, ge=20, le=1000, description="Explicit word limit from UI dropdown. If provided, bypasses prompt-based extraction.")
 
 
 class RefineResponse(BaseModel):
@@ -124,6 +126,8 @@ class AnalyzeRequest(BaseModel):
     question: Optional[str] = Field(None, max_length=1000, description="Optional question/prompt the user is responding to")
     goal: Optional[str] = Field(None, max_length=500, description="Optional user's goal for the session")
     company_name: Optional[str] = Field(None, max_length=100, description="Company name for interview responses (used for research when context is empty)")
+    # Explicit word limit from UI (preferred over prompt extraction)
+    word_limit: Optional[int] = Field(None, ge=20, le=1000, description="Explicit word limit from UI dropdown. If provided, bypasses prompt-based extraction.")
 
 
 class ScoreExplanationModel(BaseModel):
@@ -287,6 +291,14 @@ class InterviewRefinementRequest(BaseModel):
         None,
         max_length=50000,
         description="User's recorded answer transcript. If provided, feedback will be generated."
+    )
+    
+    # Explicit word limit from UI (preferred over prompt extraction)
+    word_limit: Optional[int] = Field(
+        None,
+        ge=20,
+        le=1000,
+        description="Explicit word limit from UI dropdown. If provided, bypasses prompt-based extraction."
     )
     
     # EXPLICITLY REJECTED FIELDS (validation will fail if these are provided)

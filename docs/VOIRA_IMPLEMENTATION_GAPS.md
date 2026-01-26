@@ -6,42 +6,31 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ## 1. Not Implemented at All
 
-### P0 - Critical (Blocking Core Functionality)
-
-**GAP-001: Credit Consumption for Analysis Endpoint**
-- Location: `apps/api/main.py` `/analyze` endpoint (lines 1032-1095)
-- Status: The `/analyze` endpoint does not consume credits, only `/refine` does
-- Impact: Users can run unlimited analytics without credit cost, potentially expensive LLM calls for "improvement suggestions"
-- Fix: Add `await consume_credit(user_id, "analysis")` call, or document that analysis is free
-
-**GAP-002: Word Limit Enforcement on LLM Output**
-- Location: `apps/api/llm_refinement.py` `extract_word_limit()` (line 535) and `refine_transcript()` (lines 1452-1632)
-- Status: Word limit is extracted from prompt via regex but never validated on the returned output
-- Impact: LLM may exceed requested word limit; no retry or truncation logic exists
-- Fix: Count words in LLM response, retry with stricter prompt if over limit, or truncate with warning
-
 ### P1 - High (Feature Gaps)
 
-**GAP-003: Session Resume/Continue Recording**
+**GAP-002: Session Resume/Continue Recording**
 - Location: `apps/web/src/pages/Speak.jsx` (entire file)
 - Status: No mechanism to resume a paused session across page reloads
 - Impact: If user accidentally navigates away, recording is lost
 - Fix: Store interim audio chunks and transcript in IndexedDB or sessionStorage
 - Note: Users should also be able to edit live transcribed text in case of wrong transcription
 
-**GAP-004: Offline Transcription Fallback**
+**Bug**
+- User sessions doesn't load when clicked from library, it gives this error: "Error loading draft: Error: Session not found at Object.getSessionById (api.jsx:183:13) at async loadDraftData"**
+
+**GAP-003: Offline Transcription Fallback**
 - Location: `apps/web/src/components/recording/AudioRecorder.jsx`
 - Status: WebSocket failure aborts recording entirely
 - Impact: Users in poor network conditions cannot record at all
 - Fix: Allow recording without live transcription, queue audio for later upload
 
-**GAP-005: Rate Limit Persistence**
+**GAP-004: Rate Limit Persistence**
 - Location: `apps/api/rate_limit.py` (entire file)
 - Status: In-memory rate limiter resets on server restart; Redis integration is optional and may not be configured
 - Impact: Rate limits ineffective across deployments or restarts
 - Fix: Make Redis required for production, or implement persistent fallback
 
-**GAP-006: Admin Dashboard**
+**GAP-005: Admin Dashboard**
 - Location: References in `apps/api/models.py` (`admin_emails` table) but no admin UI exists
 - Status: Admin role check exists but no admin interface
 - Impact: Cannot manage users, view analytics, or moderate content without direct DB access
@@ -49,19 +38,19 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P2 - Medium (Nice-to-Have)
 
-**GAP-007: Email Notifications for Credit Depletion**
+**GAP-006: Email Notifications for Credit Depletion**
 - Location: `apps/api/notifications.py` (empty/stub file)
 - Status: No email integration exists
 - Impact: Users have no warning when credits are low
 - Fix: Integrate email service (SendGrid, SES), trigger on credit thresholds
 
-**GAP-008: Batch Export of Sessions**
+**GAP-007: Batch Export of Sessions**
 - Location: `apps/api/main.py` `/export-data` endpoint (lines 1350-1386)
 - Status: GDPR export exists but no UI-driven batch export of selected sessions
 - Impact: Users must export one session at a time
 - Fix: Add multi-select in Library, endpoint for batch export as ZIP
 
-**GAP-009: Search/Filter in Library**
+**GAP-008: Search/Filter in Library**
 - Location: `apps/web/src/pages/Library.jsx`
 - Status: Sessions are listed but not searchable or filterable
 - Impact: Users with many sessions cannot find specific recordings
@@ -70,6 +59,42 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 ---
 
 ## Recently Implemented
+
+**Word Limit Enforcement on LLM Output (GAP-001)** - ✅ COMPLETED
+- Implemented: 2026-01-26
+- Location: `apps/api/llm_refinement.py`
+- Changes:
+  - Added `count_words(text)` - deterministic word counting (whitespace split)
+  - Added `truncate_to_word_limit(text, limit)` - deterministic truncation
+  - Modified `refine_transcript()` to enforce word limits:
+    - If output exceeds limit: retry ONCE with stricter instruction
+    - If retry fails: truncate deterministically
+    - Logging for: original count, limit, retry attempted, truncation applied
+  - Edge cases handled: no limit, limit < 20 (clamped to MIN_REASONABLE_WORD_LIMIT)
+- Tests: `tests/test_word_limit.py`
+
+**Atomic Credit Deduction (BUG-005 Fix)** - ✅ COMPLETED
+- Implemented: 2026-01-26
+- Location: `apps/api/credits.py`, `supabase/migrations/20260126_atomic_credit_deduction.sql`
+- Changes:
+  - New Postgres function `atomic_decrement_credits()` performs check-and-decrement atomically
+  - Single UPDATE with WHERE clause prevents race conditions
+  - CHECK constraint `credits_remaining >= 0` prevents negative balances
+  - Python code updated to use atomic function with legacy fallback
+  - All credit-consuming endpoints now race-condition safe
+- **Migration required:** Run `supabase/migrations/20260126_atomic_credit_deduction.sql`
+
+**Credit Consumption for Analysis Endpoint** - ✅ COMPLETED
+- Implemented: 2026-01-26
+- Location: `apps/api/main.py` `/analyze` endpoint
+- Changes:
+  - `/analyze` now consumes 1 credit per request (same as other LLM endpoints)
+  - Credit check performed BEFORE any LLM calls
+  - Credit deducted AFTER successful analysis (users not charged for failures)
+  - Distinct operation key `"analysis"` for billing clarity (not reusing `"refine"`)
+  - Admin bypass preserved
+  - Observability logging for credit consumption success/failure
+- Tradeoffs documented in endpoint docstring
 
 **Interview Response Refinement Pipeline (GAP-011)** - ✅ COMPLETED
 - Implemented: 2026-01-26
@@ -162,11 +187,14 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 - Impact: Users cannot distinguish auth failure from network issues
 - Fix: Map close codes to specific error messages (4001=auth, 4002=rate limit, etc.)
 
-**BUG-005: Credits Can Go Negative**
-- Location: `apps/api/credits.py` `consume_credit()` and `supabase/migrations/20250101_credits_functions.sql`
-- Issue: Race condition between balance check and deduction; no database-level constraint
-- Impact: Under concurrent requests, credits can become negative
-- Fix: Use Postgres transaction with `SELECT FOR UPDATE`, or add CHECK constraint
+**BUG-005: ~~Credits Can Go Negative (Race Condition)~~ — FIXED**
+- Status: ✅ FIXED (2026-01-26)
+- Fix applied:
+  - New migration: `supabase/migrations/20260126_atomic_credit_deduction.sql`
+  - New DB function: `atomic_decrement_credits(user_id, amount, reason)` 
+  - CHECK constraint: `credits_remaining >= 0` (defense in depth)
+  - Updated `apps/api/credits.py` to use atomic function
+  - Legacy fallback preserved for gradual migration
 
 **BUG-006: Filler Detection Double-Counting**
 - Location: `apps/api/adaptive_analytics.py` FILLER_PATTERNS regex (lines 100-150)
@@ -350,7 +378,7 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ## 7. Transition Note: Next Focus
 
-### Next Priority: GAP-001 (Credit Consumption & Analysis Endpoint)
+### Next Priority: GAP-002 (Session Resume/Continue Recording)
 
 **Schema/API Decisions Needed:**
 1. Should `/analyze` remain free or consume credits?
@@ -377,7 +405,7 @@ Priority is determined by: User impact, Data risk, Effort, Dependencies.
 |-------|------|---------|--------|
 | 1 | BUG-001 | Delete fake useLiveTranscription hook | 5 min |
 | 2 | BUG-002 | Remove or implement confidenceLevel display | 30 min |
-| 3 | BUG-005 | Fix credits race condition with DB lock | 2 hr |
+| 3 | ~~BUG-005~~ | ~~Fix credits race condition~~ | ✅ DONE |
 | 4 | DATA-003 | Add audio file size limit | 1 hr |
 | 5 | LLM-001 | Add Pydantic validation to LLM responses | 2 hr |
 | 6 | LLM-002 | Sanitize user content in prompts | 1 hr |
@@ -387,7 +415,7 @@ Priority is determined by: User impact, Data risk, Effort, Dependencies.
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 8 | GAP-001 | Implement analysis credit cost | 1 hr |
+| 8 | ~~GAP-001~~ | ~~Implement analysis credit cost~~ | ✅ DONE |
 | 9 | HARDCODE-001 | Externalize default credit amount | 30 min |
 | 10 | HARDCODE-002 | Externalize LLM model selection | 30 min |
 | 11 | PARTIAL-003 | Enforce analytics contract versioning | 2 hr |
@@ -411,7 +439,7 @@ Priority is determined by: User impact, Data risk, Effort, Dependencies.
 | 19 | DATA-004 | Transcript UTF-8 handling | 2 hr |
 | 20 | DATA-006 | Concurrent edit conflicts | 2 hr |
 | 21 | DATA-007 | Persist analytics results | 3 hr |
-| 22 | GAP-002 | Validate LLM word limit compliance | 2 hr |
+| 22 | ~~GAP-001~~ | ~~Validate LLM word limit compliance~~ | ✅ DONE |
 | 23 | LLM-003 | Add retry logic to LLM calls | 2 hr |
 | 24 | LLM-008 | Make temperature configurable | 1 hr |
 
@@ -419,18 +447,18 @@ Priority is determined by: User impact, Data risk, Effort, Dependencies.
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 25 | GAP-009 | Add search/filter to Library | 3 hr |
+| 25 | GAP-008 | Add search/filter to Library | 3 hr |
 | 26 | LLM-006 | Stream LLM responses to client | 4 hr |
-| 27 | GAP-003 | Session resume after navigation | 6 hr |
+| 27 | GAP-002 | Session resume after navigation | 6 hr |
 | 28 | PARTIAL-004 | Feature flag refresh mechanism | 2 hr |
 | 29 | BUG-006 | Fix filler detection double-counting | 2 hr |
-| 30 | GAP-004 | Offline transcription fallback | 4 hr |
+| 30 | GAP-003 | Offline transcription fallback | 4 hr |
 
 ### Deferred / Low Priority
 
-- GAP-006 (Admin Dashboard) - Build only when needed
-- GAP-007 (Email Notifications) - Requires email provider setup
-- GAP-008 (Batch Export) - Nice-to-have for power users
+- GAP-005 (Admin Dashboard) - Build only when needed
+- GAP-006 (Email Notifications) - Requires email provider setup
+- GAP-007 (Batch Export) - Nice-to-have for power users
 - HARDCODE-005 (Filler Word List) - Current list adequate for MVP
 - LLM-007 (Prompt Caching) - Optimization, not correctness
 
@@ -440,10 +468,10 @@ Priority is determined by: User impact, Data risk, Effort, Dependencies.
 
 | File | Gap IDs |
 |------|---------|
-| `apps/api/main.py` | GAP-001, DATA-003, DATA-005, DATA-006 |
-| `apps/api/llm_refinement.py` | GAP-002, LLM-001 through LLM-008 |
+| `apps/api/main.py` | DATA-003, DATA-005, DATA-006 |
+| `apps/api/llm_refinement.py` | LLM-001 through LLM-008 |
 | `apps/api/adaptive_analytics.py` | BUG-006, HARDCODE-004, HARDCODE-005 |
-| `apps/api/credits.py` | BUG-005, HARDCODE-001 |
+| `apps/api/credits.py` | HARDCODE-001 |
 | `apps/web/src/hooks/useLiveTranscription.ts` | BUG-001 |
 | `apps/web/src/pages/Speak.jsx` | BUG-002, BUG-008, PARTIAL-002 |
 | `apps/web/src/pages/Draft.jsx` | BUG-003, HARDCODE-007 |
