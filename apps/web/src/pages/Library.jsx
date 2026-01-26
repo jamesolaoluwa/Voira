@@ -94,6 +94,7 @@ export default function Library() {
         const fetchedSessions = await sessionsApi.listSessions();
         
         // Normalize backend session data to store format
+        // CRITICAL: Mark source as 'backend' to distinguish from local-only items
         const normalizedSessions = fetchedSessions.map(session => {
           const transcript = session.transcript || '';
           const durationSec = session.duration_seconds || 0;
@@ -121,6 +122,8 @@ export default function Library() {
             createdAt: session.created_at || new Date().toISOString(),
             created_at: session.created_at || new Date().toISOString(),
             created_date: session.created_at || new Date().toISOString(),
+            // CRITICAL: Mark as backend-sourced to prevent invalid API calls
+            source: 'backend',
           };
         });
         
@@ -350,7 +353,16 @@ export default function Library() {
                     
                     {/* Content */}
                     <div className="flex-1 min-w-0">
-                      <Link to={createPageUrl('Draft') + `?id=${recording.id}`}>
+                      <Link 
+                        to={createPageUrl('Draft') + `?id=${recording.id}`}
+                        state={{ 
+                          // Pass full session data to avoid unnecessary API calls
+                          // For backend-sourced items, Draft can still refresh from API
+                          // For local-only items, this prevents 404 errors
+                          sessionData: recording,
+                          source: recording.source || 'local'
+                        }}
+                      >
                         <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 hover:text-violet-600 dark:hover:text-violet-400 transition-colors truncate">
                           {recording.title || recording.question || `${typeLabels[recording.type] || 'Recording'} – ${new Date(recording.createdAt || recording.created_date || Date.now()).toLocaleDateString()}`}
                         </h3>
@@ -405,7 +417,13 @@ export default function Library() {
                           <Trash2 className="w-4 h-4" />
                         )}
                       </Button>
-                      <Link to={createPageUrl('Draft') + `?id=${recording.id}`}>
+                      <Link 
+                        to={createPageUrl('Draft') + `?id=${recording.id}`}
+                        state={{ 
+                          sessionData: recording,
+                          source: recording.source || 'local'
+                        }}
+                      >
                         <Button
                           variant="ghost"
                           size="icon"

@@ -14,7 +14,7 @@ import FileUpload from '@/components/ui/FileUpload';
 import RecordButton from '@/components/ui/RecordButton';
 import SessionNamingModal from '@/components/ui/SessionNamingModal';
 import CreditsDisplay from '@/components/ui/CreditsDisplay';
-import { Mic, Pause, Square, Clock, Type, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { Mic, Pause, Play, Square, Clock, Type, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -46,6 +46,108 @@ const typeLabels = {
   interview: 'Interview Response',
   free: 'Free Speak',
   refine: 'Refine Draft',
+};
+
+/**
+ * ============================================================================
+ * SESSION RESUME / RECOVERY SYSTEM
+ * ============================================================================
+ * 
+ * PURPOSE:
+ * Allows users to recover in-progress recordings if the page is accidentally
+ * refreshed or closed during recording.
+ * 
+ * STORAGE LOCATION:
+ * - Data is stored in browser sessionStorage (not localStorage)
+ * - Data is LOCAL ONLY - never sent to the backend
+ * - Data is NOT persisted across browser restarts
+ * 
+ * LIFETIME:
+ * - sessionStorage is cleared when the browser TAB closes
+ * - This is intentional: session resume is for SHORT-TERM recovery only
+ * - Long-term persistence would require explicit "Save Draft" functionality
+ * 
+ * SINGLE ACTIVE SESSION:
+ * - Only ONE in-progress session is persisted at a time
+ * - Starting a new recording overwrites any previous persisted session
+ * - This is an intentional UX decision to avoid ambiguous resume behavior
+ * - Users who want to preserve multiple drafts must explicitly save them
+ * 
+ * WHAT IS PERSISTED:
+ * - session_id, type, question, desired_style, word_limit
+ * - company_name, company_context (for interview type)
+ * - transcript_text, is_user_edited flag, last_updated timestamp
+ * 
+ * WHAT IS NOT PERSISTED (by design):
+ * - Raw audio blobs (too large, would exceed sessionStorage quota)
+ * - LLM responses (regenerated on save)
+ * - Credit state (fetched fresh from backend)
+ * ============================================================================
+ */
+
+// Session storage key for persisting in-progress recordings
+const SESSION_STORAGE_KEY = 'voira_active_session';
+
+/**
+ * Shape of persisted session data (minimal, no audio blobs or LLM responses)
+ */
+const createSessionSnapshot = (data) => ({
+  session_id: data.session_id || crypto.randomUUID(),
+  type: data.type,
+  question: data.question || '',
+  desired_style: data.desired_style || '',
+  word_limit: data.word_limit || 'auto',
+  company_name: data.company_name || '',
+  company_context: data.company_context || '',
+  transcript_text: data.transcript_text || '',
+  is_user_edited: data.is_user_edited || false,
+  last_updated: Date.now(),
+});
+
+/**
+ * Persist session to sessionStorage (cheap, frequent writes)
+ * Called on: transcript updates, user edits, pause, stop
+ */
+const persistSession = (data) => {
+  try {
+    const snapshot = createSessionSnapshot(data);
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch (e) {
+    // sessionStorage may be full or disabled - log but don't crash
+    console.warn('[Speak] Failed to persist session:', e);
+  }
+};
+
+/**
+ * Load session from sessionStorage
+ * Returns null if no session exists or data is malformed
+ */
+const loadPersistedSession = () => {
+  try {
+    const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Validate shape - reject malformed data
+    if (!parsed.session_id || !parsed.last_updated) return null;
+    return parsed;
+  } catch (e) {
+    // Malformed JSON or other error - clear and return null
+    console.warn('[Speak] Failed to load persisted session:', e);
+    clearPersistedSession();
+    return null;
+  }
+};
+
+/**
+ * Clear persisted session from sessionStorage
+ * Called on: successful save, explicit discard, starting new recording
+ */
+const clearPersistedSession = () => {
+  try {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch (e) {
+    console.warn('[Speak] Failed to clear persisted session:', e);
+  }
 };
 
 export default function Speak() {
@@ -84,6 +186,7 @@ export default function Speak() {
     error: audioError,
     liveTranscript: audioLiveTranscript, // Real-time transcript from WebSocket
     fillerCount: liveFillerCount, // Live filler count (only when fillerDetectionEnabled)
+    isOfflineMode: audioIsOfflineMode, // GAP-003: True if recording without live transcription
     startRecording: audioStartRecording,
     pauseRecording: audioPauseRecording,
     resumeRecording: audioResumeRecording,
@@ -118,6 +221,12 @@ export default function Speak() {
   const [uploadedFileType, setUploadedFileType] = useState(null); // MIME type of uploaded file
   const [referenceText, setReferenceText] = useState(''); // Extracted text from reference file
   const [wordLimit, setWordLimit] = useState('auto'); // Word limit: 'auto' (default) or numeric string
+  
+  // Session resume state
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [pendingResumeSession, setPendingResumeSession] = useState(null);
+  const [isTranscriptUserEdited, setIsTranscriptUserEdited] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState(null);
   
   // Validation state - tracks whether user has attempted to start recording
   const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
@@ -183,6 +292,66 @@ export default function Speak() {
   const queryClient = useQueryClient();
   const addSessionToStore = useSessionStore(state => state.addSession);
   
+  // Check for persisted session on mount
+  useEffect(() => {
+    const persisted = loadPersistedSession();
+    if (persisted && persisted.type === type) {
+      // Only show resume prompt if there's meaningful content
+      const hasContent = persisted.transcript_text?.trim().length > 0 ||
+                        persisted.question?.trim().length > 0;
+      if (hasContent) {
+        console.log('[Speak] Found persisted session:', persisted.session_id);
+        setPendingResumeSession(persisted);
+        setShowResumePrompt(true);
+      } else {
+        // Clear stale empty session
+        clearPersistedSession();
+      }
+    }
+  }, [type]);
+  
+  // Handle resume session
+  const handleResumeSession = () => {
+    if (!pendingResumeSession) return;
+    
+    console.log('[Speak] Resuming session:', pendingResumeSession.session_id);
+    
+    // Restore all fields
+    setContextPrompt(pendingResumeSession.question || '');
+    setGoalInput(pendingResumeSession.desired_style || '');
+    setWordLimit(pendingResumeSession.word_limit || 'auto');
+    setCompanyName(pendingResumeSession.company_name || '');
+    setCompanyContext(pendingResumeSession.company_context || '');
+    setRawTranscript(pendingResumeSession.transcript_text || '');
+    setIsTranscriptUserEdited(pendingResumeSession.is_user_edited || false);
+    setActiveSessionId(pendingResumeSession.session_id);
+    
+    // Clear prompt
+    setShowResumePrompt(false);
+    setPendingResumeSession(null);
+    
+    toast({
+      title: 'Session restored',
+      description: 'Your previous recording has been restored.',
+      duration: 3000
+    });
+  };
+  
+  // Handle discard session
+  const handleDiscardSession = () => {
+    console.log('[Speak] Discarding persisted session');
+    clearPersistedSession();
+    setShowResumePrompt(false);
+    setPendingResumeSession(null);
+    setActiveSessionId(null);
+    
+    toast({
+      title: 'Session discarded',
+      description: 'Starting fresh.',
+      duration: 2000
+    });
+  };
+  
   useEffect(() => {
     checkAuthAndLoadCredits();
   }, [authUser, authLoading, session]);
@@ -230,11 +399,34 @@ export default function Speak() {
   }, [recordingState, audioIsPaused]);
 
   // Update rawTranscript from audioLiveTranscript during recording
+  // If user has edited, append new transcription instead of overwriting
   useEffect(() => {
     if (recordingState === 'recording' && audioLiveTranscript) {
-      setRawTranscript(audioLiveTranscript);
+      if (isTranscriptUserEdited) {
+        // User has edited - don't overwrite, they control the content
+        // New transcription is still captured by AudioRecorder for final save
+      } else {
+        setRawTranscript(audioLiveTranscript);
+      }
     }
-  }, [audioLiveTranscript, recordingState]);
+  }, [audioLiveTranscript, recordingState, isTranscriptUserEdited]);
+
+  // Persist session to sessionStorage during recording (cheap, frequent writes)
+  useEffect(() => {
+    if (recordingState === 'recording' || recordingState === 'processing') {
+      persistSession({
+        session_id: activeSessionId || crypto.randomUUID(),
+        type,
+        question: contextPrompt,
+        desired_style: goalInput,
+        word_limit: wordLimit,
+        company_name: companyName,
+        company_context: companyContext,
+        transcript_text: rawTranscript,
+        is_user_edited: isTranscriptUserEdited,
+      });
+    }
+  }, [recordingState, contextPrompt, goalInput, wordLimit, companyName, companyContext, rawTranscript, isTranscriptUserEdited, type, activeSessionId]);
 
   // Debug: Log liveTranscript updates for debugging
   useEffect(() => {
@@ -264,6 +456,11 @@ export default function Speak() {
       });
       return;
     }
+    
+    // Generate new session ID for this recording
+    const newSessionId = crypto.randomUUID();
+    setActiveSessionId(newSessionId);
+    setIsTranscriptUserEdited(false);
     
     // Start recording (credits will be decremented after a successful save)
     setDuration(0);
@@ -343,11 +540,21 @@ export default function Speak() {
       }
   };
   
-  const handlePause = () => {
+  /**
+   * Handle pause/resume toggle.
+   * On pause: WebSocket is closed to prevent Deepgram 1011 timeout.
+   * On resume: WebSocket is reconnected, transcription appends to existing text.
+   */
+  const handlePause = async () => {
     if (audioIsPaused) {
-      audioResumeRecording();
+      console.log('[Speak] Resuming recording...');
+      // Resume is async because it reconnects WebSocket
+      await audioResumeRecording();
+      console.log('[Speak] Recording resumed');
     } else {
+      console.log('[Speak] Pausing recording...');
       audioPauseRecording();
+      console.log('[Speak] Recording paused');
     }
   };
   
@@ -716,6 +923,11 @@ export default function Speak() {
       setIsSaving(false);
       setRecordingState('idle');
       
+      // CRITICAL: Clear persisted session on successful save
+      clearPersistedSession();
+      setActiveSessionId(null);
+      setIsTranscriptUserEdited(false);
+      
       // CRITICAL: Clear transcript AFTER session is saved
       // This allows the next recording to start fresh
       try { clearTranscript(); } catch (e) { console.warn('clearTranscript failed:', e); }
@@ -763,6 +975,53 @@ export default function Speak() {
   
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10 flex flex-col">
+      {/* Session Resume Banner */}
+      <AnimatePresence>
+        {showResumePrompt && pendingResumeSession && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-lg px-4"
+          >
+            <div className="bg-white dark:bg-[#1a1a24] rounded-xl border border-zinc-200 dark:border-white/10 shadow-lg p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                  <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    Unfinished recording found
+                  </h3>
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">
+                    {pendingResumeSession.transcript_text?.length > 0 
+                      ? `${pendingResumeSession.transcript_text.split(' ').length} words captured`
+                      : 'Question and settings saved'}
+                  </p>
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      size="sm"
+                      onClick={handleResumeSession}
+                      className="bg-violet-600 hover:bg-violet-700 text-white text-xs h-8"
+                    >
+                      Resume
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDiscardSession}
+                      className="text-xs h-8"
+                    >
+                      Discard
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -1107,8 +1366,9 @@ export default function Speak() {
                 variant="outline"
                 onClick={handlePause}
                 className={`h-14 w-14 rounded-2xl border-white/10 ${audioIsPaused ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-300'}`}
+                title={audioIsPaused ? 'Resume recording' : 'Pause recording'}
               >
-                <Pause className="w-5 h-5" />
+                {audioIsPaused ? <Play className="w-5 h-5" /> : <Pause className="w-5 h-5" />}
               </Button>
               <Button
                 size="lg"
@@ -1133,10 +1393,36 @@ export default function Speak() {
         
   {/* Live Transcription - Only show when recording is active and enabled */}
   {/* Shows rawTranscript (verbatim speech, includes filler words) */}
+  {/* User can edit the transcript - edits are preserved and new transcription appends */}
+  {/* GAP-003: In offline mode, show indicator that transcription will be added later */}
   {showTranscription && recordingState === 'recording' && (
-    <LiveTranscription 
-      transcript={rawTranscript || ''}
-    />
+    <>
+      {audioIsOfflineMode && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-2xl mx-auto mb-4"
+        >
+          <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg">
+            <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+            <span className="text-sm text-amber-700 dark:text-amber-400">
+              Recording offline — transcription will be added when you save
+            </span>
+          </div>
+        </motion.div>
+      )}
+      {!audioIsOfflineMode && (
+        <LiveTranscription 
+          transcript={rawTranscript || ''}
+          isEditable={true}
+          isUserEdited={isTranscriptUserEdited}
+          onEdit={(newText) => {
+            setRawTranscript(newText);
+            setIsTranscriptUserEdited(true);
+          }}
+        />
+      )}
+    </>
   )}
       </div>
       

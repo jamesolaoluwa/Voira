@@ -50,6 +50,7 @@ export default function useAudioRecorder(options = {}) {
   const [amplitude, setAmplitude] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [fillerCount, setFillerCount] = useState(0); // Live filler count (when detectFillers=true)
+  const [isOfflineMode, setIsOfflineMode] = useState(false); // True if recording without live transcription
   
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -58,6 +59,7 @@ export default function useAudioRecorder(options = {}) {
   const recorderStateRef = useRef('idle'); // Track recorder state: 'idle' | 'recording' | 'stopping' | 'stopped'
   const wsStatusRef = useRef('idle'); // Track WebSocket status: 'idle' | 'connecting' | 'open' | 'error' | 'closed'
   const detectFillersRef = useRef(detectFillers); // Store the detectFillers option
+  const offlineModeRef = useRef(false); // Track offline mode in ref for synchronous access
   
   // Update ref when option changes
   useEffect(() => {
@@ -465,119 +467,113 @@ export default function useAudioRecorder(options = {}) {
       streamRef.current = stream;
       
       // Start live transcription WebSocket connection if enabled
-      // This ensures the WebSocket is ready before MediaRecorder starts sending chunks
+      // GAP-003: If WebSocket fails, continue recording in offline mode
+      // Audio will be uploaded for transcription when recording stops
+      let transcriptionAvailable = false;
+      
       if (enableLiveTranscription) {
         console.log('[AudioRecorder] Starting live transcription WebSocket...');
         const wsStarted = await startLiveTranscription();
         
         // Check if WebSocket connection was initiated successfully
-        // startLiveTranscription returns true on success, false on failure, or undefined if already connecting
+        // startLiveTranscription returns true on success, false on failure
         if (wsStarted === false) {
-          console.error('[AudioRecorder] WebSocket connection failed to initiate (token validation failed or error)');
-          console.error('[AudioRecorder] wsStarted value:', wsStarted);
-          throw new Error('WebSocket authentication failed - token validation failed');
-        }
-        
-        // Log if WebSocket connection was initiated
-        if (wsStarted === true) {
-          console.log('[AudioRecorder] WebSocket connection initiated successfully');
+          // GAP-003: WebSocket failed - switch to offline mode instead of aborting
+          console.warn('[AudioRecorder] WebSocket connection failed, switching to OFFLINE MODE');
+          console.warn('[AudioRecorder] Recording will continue without live transcription');
+          setIsOfflineMode(true);
+          offlineModeRef.current = true;
+          setError(null); // Clear error - offline mode is not an error state
+          transcriptionAvailable = false;
         } else {
-          console.log('[AudioRecorder] WebSocket connection already in progress (wsStarted:', wsStarted, ')');
+          // Log if WebSocket connection was initiated
+          if (wsStarted === true) {
+            console.log('[AudioRecorder] WebSocket connection initiated successfully');
+          } else {
+            console.log('[AudioRecorder] WebSocket connection already in progress (wsStarted:', wsStarted, ')');
+          }
+          
+          // Wait for WebSocket to be ready (with timeout)
+          // If it fails during wait, switch to offline mode
+          console.log('[AudioRecorder] Waiting for WebSocket to authenticate and open...');
+          try {
+            await waitForWebSocketReady();
+            transcriptionAvailable = true;
+            setIsOfflineMode(false);
+            offlineModeRef.current = false;
+          } catch (wsError) {
+            // GAP-003: WebSocket failed during wait - switch to offline mode
+            console.warn('[AudioRecorder] WebSocket failed during wait, switching to OFFLINE MODE:', wsError.message);
+            setIsOfflineMode(true);
+            offlineModeRef.current = true;
+            setError(null); // Clear error - offline mode is not an error state
+            transcriptionAvailable = false;
+          }
         }
-        
-        // Wait for WebSocket to be ready (with timeout)
-        // CRITICAL: MediaRecorder MUST NOT start until WebSocket is authenticated and open
-        console.log('[AudioRecorder] Waiting for WebSocket to authenticate and open...');
-        const waitForReady = () => {
-          return new Promise((resolve, reject) => {
-            // Check if WebSocket is in error state - don't proceed
+      } else {
+        // Live transcription explicitly disabled
+        setIsOfflineMode(true);
+        offlineModeRef.current = true;
+        transcriptionAvailable = false;
+      }
+      
+      // Log final transcription mode
+      console.log('[AudioRecorder] Transcription mode:', transcriptionAvailable ? 'LIVE' : 'OFFLINE');
+      
+      // Helper function to wait for WebSocket with timeout
+      function waitForWebSocketReady() {
+        return new Promise((resolve, reject) => {
+          // Check if WebSocket is in error state - don't proceed
+          if (wsStatusRef.current === 'error') {
+            reject(new Error('WebSocket in error state'));
+            return;
+          }
+          
+          // Check if WebSocket is already open
+          if (wsReadyRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            console.log('[TranscriptionWS] WebSocket already open, proceeding with MediaRecorder');
+            resolve();
+            return;
+          }
+          
+          // Poll for WebSocket to become ready
+          const checkInterval = setInterval(() => {
+            // Check for error state during wait (e.g., auth failure)
             if (wsStatusRef.current === 'error') {
-              console.error('[TranscriptionWS] WebSocket in error state, aborting recording start');
-              setError('Live transcription connection failed. Please refresh and try again.');
+              clearInterval(checkInterval);
+              clearTimeout(timeout);
               reject(new Error('WebSocket authentication failed'));
               return;
             }
             
-            // Check if WebSocket is already open
+            // Check if WebSocket is now open (after ws.onopen fires)
             if (wsReadyRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              console.log('[TranscriptionWS] WebSocket already open, proceeding with MediaRecorder');
+              clearInterval(checkInterval);
+              clearTimeout(timeout);
+              console.log('[TranscriptionWS] WebSocket authenticated & open, proceeding with MediaRecorder');
               resolve();
               return;
             }
             
-            // Poll for WebSocket to become ready
-            const checkInterval = setInterval(() => {
-              // Check for error state during wait (e.g., auth failure)
-              if (wsStatusRef.current === 'error') {
-                clearInterval(checkInterval);
-                clearTimeout(timeout);
-                console.error('[TranscriptionWS] WebSocket failed during wait (auth failed or connection error), aborting recording start');
-                setError('Live transcription connection failed. Please refresh and try again.');
-                reject(new Error('WebSocket authentication failed'));
-                return;
-              }
-              
-              // Check if WebSocket is now open (after ws.onopen fires)
-              if (wsReadyRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                clearInterval(checkInterval);
-                clearTimeout(timeout);
-                console.log('[TranscriptionWS] WebSocket authenticated & open, proceeding with MediaRecorder');
-                resolve();
-                return;
-              }
-              
-              // Check if WebSocket closed before opening (auth failure)
-              if (wsRef.current && wsRef.current.readyState === WebSocket.CLOSED) {
-                clearInterval(checkInterval);
-                clearTimeout(timeout);
-                console.error('[TranscriptionWS] WebSocket closed before opening (likely auth failure), aborting recording start');
-                wsStatusRef.current = 'error';
-                setError('Authentication failed. Please refresh and try again.');
-                reject(new Error('WebSocket authentication failed - connection closed'));
-                return;
-              }
-            }, WEBSOCKET_READY_CHECK_INTERVAL_MS);
-            
-            // Timeout - if WebSocket hasn't opened by then, likely auth failure
-            const timeout = setTimeout(() => {
+            // Check if WebSocket closed before opening (auth failure)
+            if (wsRef.current && wsRef.current.readyState === WebSocket.CLOSED) {
               clearInterval(checkInterval);
-              // Check if it's an error or just slow connection
-              if (wsStatusRef.current === 'error') {
-                console.error('[TranscriptionWS] WebSocket failed, aborting recording start');
-                setError('Live transcription connection failed. Please refresh and try again.');
-                reject(new Error('WebSocket authentication failed'));
-              } else if (wsRef.current && wsRef.current.readyState === WebSocket.CLOSED) {
-                // WebSocket closed before opening - likely auth failure
-                console.error('[TranscriptionWS] WebSocket closed before opening (likely auth failure), aborting recording start');
-                wsStatusRef.current = 'error';
-                setError('Authentication failed. Please refresh and try again.');
-                reject(new Error('WebSocket authentication failed - connection closed'));
-              } else if (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING) {
-                // Still connecting after timeout - might be slow, but reject to be safe
-                console.error(`[TranscriptionWS] WebSocket still connecting after ${WEBSOCKET_CONNECTION_TIMEOUT_MS}ms, likely auth failure, aborting`);
-                wsStatusRef.current = 'error';
-                setError('Live transcription connection timeout. Please refresh and try again.');
-                reject(new Error('WebSocket connection timeout'));
-              } else {
-                // Unknown state - reject to be safe
-                console.error('[TranscriptionWS] WebSocket in unknown state after timeout, aborting');
-                wsStatusRef.current = 'error';
-                setError('Live transcription connection failed. Please refresh and try again.');
-                reject(new Error('WebSocket connection failed - unknown state'));
-              }
-            }, WEBSOCKET_CONNECTION_TIMEOUT_MS);
-          });
-        };
-        
-        // CRITICAL: Wait for WebSocket authentication before starting MediaRecorder
-        // If WebSocket fails to open (auth failure), this will reject and abort recording
-        try {
-          await waitForReady();
-          console.log('[AudioRecorder] WebSocket ready, proceeding to MediaRecorder setup');
-        } catch (waitErr) {
-          console.error('[AudioRecorder] WebSocket wait failed, aborting recording:', waitErr);
-          throw waitErr; // Re-throw to abort recording
-        }
+              clearTimeout(timeout);
+              reject(new Error('WebSocket closed before opening'));
+              return;
+            }
+          }, WEBSOCKET_READY_CHECK_INTERVAL_MS);
+          
+          // Timeout - if WebSocket hasn't opened by then, switch to offline
+          const timeout = setTimeout(() => {
+            clearInterval(checkInterval);
+            if (wsStatusRef.current === 'error' || 
+                (wsRef.current && wsRef.current.readyState === WebSocket.CLOSED) ||
+                (wsRef.current && wsRef.current.readyState === WebSocket.CONNECTING)) {
+              reject(new Error('WebSocket connection timeout'));
+            }
+          }, WEBSOCKET_CONNECTION_TIMEOUT_MS);
+        });
       }
       
       // Set up MediaRecorder with audio/webm format
@@ -605,8 +601,9 @@ export default function useAudioRecorder(options = {}) {
           audioChunksRef.current.push(event.data);
           console.log('[AudioRecorder] Audio chunk received, total chunks:', audioChunksRef.current.length, 'total size:', audioChunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0));
           
-          // Send to WebSocket for live transcription (will queue if not ready)
-          if (enableLiveTranscription) {
+          // Send to WebSocket for live transcription (only if not in offline mode)
+          // GAP-003: In offline mode, audio is stored locally and transcribed on save
+          if (transcriptionAvailable && !offlineModeRef.current) {
             sendAudioChunk(event.data);
           }
         } else {
@@ -665,18 +662,82 @@ export default function useAudioRecorder(options = {}) {
     }
   };
 
+  /**
+   * Pause recording.
+   * IMPORTANT: Closes WebSocket to prevent Deepgram 1011 timeout errors.
+   * The WebSocket will be reconnected on resume.
+   */
   const pauseRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      console.log('[AudioRecorder] Pausing recording...');
       mediaRecorderRef.current.pause();
       setIsPaused(true);
-      // Note: WebSocket continues but MediaRecorder won't send chunks while paused
+      
+      // CRITICAL: Close WebSocket to prevent Deepgram 1011 timeout
+      // Deepgram expects continuous audio; idle connections cause errors
+      // We'll reconnect on resume
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        console.log('[AudioRecorder] Closing WebSocket on pause to prevent 1011 timeout');
+        try {
+          wsRef.current.close(1000, 'Paused by user'); // Normal closure
+        } catch (err) {
+          console.warn('[AudioRecorder] Error closing WebSocket on pause:', err);
+        }
+      }
+      wsReadyRef.current = false;
+      wsStatusRef.current = 'closed';
+      // Note: We do NOT clear accumulatedTranscriptRef - transcript must be preserved
+      console.log('[AudioRecorder] Recording paused, WebSocket closed, transcript preserved');
     }
   };
 
-  const resumeRecording = () => {
+  /**
+   * Resume recording.
+   * Reconnects WebSocket for live transcription.
+   * New transcription will append to existing accumulated transcript.
+   */
+  const resumeRecording = async () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+      console.log('[AudioRecorder] Resuming recording...');
+      
+      // Resume MediaRecorder first
       mediaRecorderRef.current.resume();
       setIsPaused(false);
+      
+      // Reconnect WebSocket for live transcription (if not in offline mode)
+      if (!offlineModeRef.current) {
+        console.log('[AudioRecorder] Reconnecting WebSocket after resume...');
+        try {
+          const wsStarted = await startLiveTranscription();
+          if (wsStarted === true) {
+            console.log('[AudioRecorder] WebSocket reconnected successfully after resume');
+            // Wait briefly for WebSocket to be ready
+            let attempts = 0;
+            const maxAttempts = 20; // 2 seconds max
+            while (!wsReadyRef.current && attempts < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+              attempts++;
+            }
+            if (wsReadyRef.current) {
+              console.log('[AudioRecorder] WebSocket ready after resume');
+            } else {
+              console.warn('[AudioRecorder] WebSocket not ready after resume, switching to offline mode');
+              setIsOfflineMode(true);
+              offlineModeRef.current = true;
+            }
+          } else {
+            console.warn('[AudioRecorder] Failed to reconnect WebSocket after resume, switching to offline mode');
+            setIsOfflineMode(true);
+            offlineModeRef.current = true;
+          }
+        } catch (err) {
+          console.warn('[AudioRecorder] Error reconnecting WebSocket after resume:', err);
+          setIsOfflineMode(true);
+          offlineModeRef.current = true;
+        }
+      }
+      
+      console.log('[AudioRecorder] Recording resumed');
     }
   };
 
@@ -934,6 +995,7 @@ export default function useAudioRecorder(options = {}) {
     error,
     liveTranscript,
     fillerCount, // Live filler count (only when detectFillers=true)
+    isOfflineMode, // GAP-003: True if recording without live transcription
     startRecording,
     pauseRecording,
     resumeRecording,

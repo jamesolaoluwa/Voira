@@ -79,6 +79,8 @@ export const useSessionStore = create((set, get) => ({
       type: session.type || 'speak',
       question: session.question || '',
       transcript: session.transcript || '',
+      refinedDraft: session.refinedDraft || session.refined_draft || '',
+      refined_draft: session.refinedDraft || session.refined_draft || '',
       durationSec: durationSecVal,
       wordsCount: wordsCountVal,
       // v3 Analytics fields (use mapped values)
@@ -88,6 +90,8 @@ export const useSessionStore = create((set, get) => ({
       filler_word_frequency: mapped.filler_word_frequency || 0, // v3: Use for scoring
       analysis_reliability: mapped.analysis_reliability || 0.5, // v3: Epistemic reliability
       wordsPerMinute: wordsPerMinuteVal,
+      // CRITICAL: Mark source to prevent invalid API calls for local-only items
+      source: session.source || 'local',
     };
     // update state
     set(prev => ({ ...prev, sessions: [s, ...(prev.sessions || [])] }));

@@ -265,9 +265,17 @@ export default function Draft() {
   }, [location.state, recordingId]);
   
   /**
-   * Load draft data from URL parameter or navigation state.
-   * All analysis (strongest moment, themes, structure) is computed from real transcript.
-   * NO hardcoded data is ever used.
+   * Load draft data from navigation state or URL parameter.
+   * 
+   * LOADING STRATEGY (prevents 404 errors):
+   * 1. Check navigation state FIRST (passed from Library or Speak)
+   *    - If source='local', use data directly (NO API call)
+   *    - If source='backend', optionally refresh from API
+   * 2. Only call API if:
+   *    - No navigation state available AND
+   *    - recordingId is present in URL
+   * 
+   * This prevents 404 errors when clicking local-only items in Library.
    */
   const loadDraftData = async () => {
     setLoadError(null);
@@ -279,34 +287,68 @@ export default function Draft() {
       let referenceText = ''; // Optional: reference content for context
       let recording = null;
       
-      // Try loading from URL parameter first (ID-based)
-      if (recordingId) {
-        recording = await sessions.getSessionById(recordingId);
-        if (recording) {
+      // PRIORITY 1: Load from navigation state (passed from Library or Speak)
+      // This is the preferred method as it avoids unnecessary API calls
+      if (location.state?.sessionData) {
+        const { sessionData, source } = location.state;
+        console.log('[Draft] Loading from navigation state, source:', source || 'unknown');
+        console.log('[Draft] Session data:', { 
+          id: sessionData.id, 
+          hasTranscript: !!sessionData.transcript,
+          transcriptLength: sessionData.transcript?.length || 0 
+        });
+        
+        // Use navigation state data directly
+        recording = sessionData;
+        setCurrentRecording(sessionData);
+        transcript = sessionData.transcript || '';
+        refinedText = sessionData.refinedDraft || sessionData.refined_draft || '';
+        clarityScore = sessionData.clarityScore || sessionData.clarity_score || 
+                       sessionData.confidenceScore || sessionData.confidence_score || 80;
+        question = sessionData.question || '';
+        referenceText = sessionData.reference_text || sessionData.referenceText || '';
+        
+        // For backend-sourced items, we could optionally refresh from API
+        // But for now, navigation state is sufficient - no need to re-fetch
+        console.log('[Draft] Loaded from navigation state successfully');
+      }
+      
+      // PRIORITY 2: Fall back to API fetch ONLY if no navigation state
+      // AND we have a recordingId in the URL
+      if (!transcript && !refinedText && recordingId) {
+        console.log('[Draft] No navigation state, attempting API fetch for ID:', recordingId);
+        
+        try {
+          recording = await sessions.getSessionById(recordingId);
+          
+          // Handle session not found (returns null, not exception)
+          if (!recording) {
+            console.warn('[Draft] Session not found for ID:', recordingId);
+            setLoadError('This recording could not be found. It may have been deleted.');
+            setIsLoading(false);
+            return;
+          }
+          
           setCurrentRecording(recording);
           transcript = recording.transcript || '';
           refinedText = recording.refined_draft || '';
-          clarityScore = recording.clarity_score || 80;
+          clarityScore = recording.clarity_score || recording.metrics?.clarity_score || 80;
           question = recording.question || '';
           referenceText = recording.reference_text || '';
+          
+          console.log('[Draft] Loaded session from API, transcript length:', transcript.length);
+        } catch (sessionError) {
+          // Database/network error (not "not found")
+          console.error('[Draft] Error fetching session by ID:', recordingId, sessionError);
+          setLoadError('Failed to load recording. Please check your connection and try again.');
+          setIsLoading(false);
+          return;
         }
-      }
-      
-      // Fall back to state-based loading (from Speak.jsx navigation)
-      if (!transcript && location.state?.sessionData) {
-        const { sessionData } = location.state;
-        console.log('[Draft] Loading from navigation state, transcript length:', sessionData.transcript?.length || 0);
-        console.log('[Draft] Refined draft length:', (sessionData.refinedDraft || sessionData.refined_draft || '').length);
-        transcript = sessionData.transcript || '';
-        refinedText = sessionData.refinedDraft || sessionData.refined_draft || '';
-        clarityScore = sessionData.clarityScore || sessionData.clarity_score || 80;
-        question = sessionData.question || '';
-        referenceText = sessionData.reference_text || sessionData.referenceText || '';
       }
       
       // No data source available - show error state
       if (!transcript && !refinedText) {
-        console.warn('[Draft] No session data available from URL or navigation state');
+        console.warn('[Draft] No session data available from navigation state or API');
         setLoadError('No session data found. Please record a new session.');
         setIsLoading(false);
         return;

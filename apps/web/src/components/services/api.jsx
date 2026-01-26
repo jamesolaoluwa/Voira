@@ -177,45 +177,116 @@ export const sessions = {
     }
   },
 
+  /**
+   * Get a session by ID
+   * 
+   * LOADING STRATEGY:
+   * 1. Try backend API first
+   * 2. If backend returns 404 → return null immediately (NO fallback)
+   * 3. If backend is unavailable → try direct Supabase query
+   * 
+   * This prevents duplicate 404 errors and unnecessary network calls.
+   */
   async getSessionById(id) {
-    const recordings = await base44.entities.Recording.filter({ id });
-    if (!recordings || recordings.length === 0) {
-      throw new Error('Session not found');
+    // Validate ID before querying
+    if (!id || typeof id !== 'string' || id.trim().length === 0) {
+      console.error('[sessions.getSessionById] Invalid session ID:', id);
+      return null;
     }
-    const recording = recordings[0];
     
-    if (recording.highlights && typeof recording.highlights === 'string') {
+    // Track if we got an explicit 404 from backend
+    let backendReturned404 = false;
+    
+    try {
+      // Try backend API first (preferred)
       try {
-        recording.highlights = JSON.parse(recording.highlights);
-      } catch (e) {
-        recording.highlights = [];
+        const { apiClient } = await import('@/lib/apiClient');
+        const session = await apiClient.get(`/sessions/${id}`);
+        if (session) {
+          console.log('[sessions.getSessionById] Loaded from backend API:', id);
+          return session;
+        }
+      } catch (apiError) {
+        const errorMsg = apiError.message || String(apiError);
+        
+        // Check if this is an explicit 404 from the backend
+        if (errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('Not Found')) {
+          console.warn('[sessions.getSessionById] Backend returned 404, NOT retrying:', id);
+          backendReturned404 = true;
+          // DO NOT fall through to direct query - return null immediately
+          return null;
+        }
+        
+        // For other errors (network, CORS, etc.), fall through to direct query
+        console.warn('[sessions.getSessionById] Backend unavailable, trying direct query:', apiError.message);
+      }
+      
+      // ONLY do fallback query if backend was unavailable (not if it returned 404)
+      if (backendReturned404) {
+        return null;
+      }
+      
+      // Fallback: Direct Supabase query via Base44
+      const recordings = await base44.entities.Recording.filter({ id });
+      
+      if (!recordings || recordings.length === 0) {
+        console.warn('[sessions.getSessionById] Session not found in direct query:', id);
+        return null;
+      }
+      
+      const recording = recordings[0];
+      
+      // Parse highlights JSON safely
+      if (recording.highlights && typeof recording.highlights === 'string') {
+        try {
+          recording.highlights = JSON.parse(recording.highlights);
+        } catch (e) {
+          console.warn('[sessions.getSessionById] Failed to parse highlights JSON:', e);
+          recording.highlights = [];
+        }
+      }
+
+      console.log('[sessions.getSessionById] Loaded from direct query:', id);
+      return {
+        id: recording.id,
+        user_id: recording.created_by,
+        title: recording.title,
+        type: recording.type,
+        question: recording.question,
+        goal: recording.goal || null,
+        reference_text: recording.reference_text || null,
+        audio_url: recording.audio_url || null,
+        audio_mime: recording.audio_mime || null,
+        audio_size_bytes: recording.audio_size_bytes || 0,
+        duration_seconds: recording.duration_seconds || 0,
+        transcript: recording.transcript || '',
+        refined_draft: recording.refined_draft || '',
+        metrics: {
+          filler_count: recording.filler_count || 0,
+          words_per_minute: recording.words_per_minute || 0,
+          confidence_score: recording.confidence_score || 0,
+          clarity_score: recording.clarity_score || 0,
+        },
+        highlights: recording.highlights || [],
+        created_at: recording.created_date,
+        updated_at: recording.updated_date,
+        source: 'backend', // Mark as backend-sourced
+      };
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      
+      if (errorMsg.includes('permission') || errorMsg.includes('403') || errorMsg.includes('unauthorized')) {
+        console.error('[sessions.getSessionById] Permission denied for session:', id);
+        throw new Error('You do not have permission to view this recording.');
+      } else if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+        // Should not reach here due to early return above, but handle just in case
+        console.warn('[sessions.getSessionById] Session not found:', id);
+        return null;
+      } else {
+        console.error('[sessions.getSessionById] Database error loading session:', id, error);
+        throw new Error(`Failed to load session: ${errorMsg}`);
       }
     }
-
-    return {
-      id: recording.id,
-      user_id: recording.created_by,
-      title: recording.title,
-      type: recording.type,
-      question: recording.question,
-      goal: recording.goal || null,
-      reference_text: recording.reference_text || null,
-      audio_url: recording.audio_url || null,
-      audio_mime: recording.audio_mime || null,
-      audio_size_bytes: recording.audio_size_bytes || 0,
-      duration_seconds: recording.duration_seconds || 0,
-      transcript: recording.transcript || '',
-      refined_draft: recording.refined_draft || '',
-      metrics: {
-        filler_count: recording.filler_count || 0,
-        words_per_minute: recording.words_per_minute || 0,
-        confidence_score: recording.confidence_score || 0,
-        clarity_score: recording.clarity_score || 0,
-      },
-      highlights: recording.highlights || [],
-      created_at: recording.created_date,
-      updated_at: recording.updated_date,
-    };
   },
 
   async listSessions(filters = {}) {
