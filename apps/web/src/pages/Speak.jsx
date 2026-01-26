@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -14,9 +14,9 @@ import FileUpload from '@/components/ui/FileUpload';
 import RecordButton from '@/components/ui/RecordButton';
 import SessionNamingModal from '@/components/ui/SessionNamingModal';
 import CreditsDisplay from '@/components/ui/CreditsDisplay';
-import { Mic, Pause, Play, Square, Clock, Type, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { Mic, Pause, Play, Square, Clock, Type, ArrowLeft, Loader2, AlertCircle, Save, X } from 'lucide-react';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
-import { auth, sessions, credits as creditsAPI } from '@/components/services/api';
+import { auth, sessions, credits as creditsAPI, drafts as draftsAPI } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/use-toast';
 import { saveLocalRecording } from '@/lib/localRecordings';
@@ -152,6 +152,7 @@ const clearPersistedSession = () => {
 
 export default function Speak() {
   const navigate = useNavigate();
+  const location = useLocation();
   const urlParams = new URLSearchParams(window.location.search);
   const type = urlParams.get('type') || 'free';
   
@@ -194,13 +195,15 @@ export default function Speak() {
     uploadAndTranscribe,
     getAccumulatedTranscript, // CRITICAL: Use to capture transcript synchronously
     clearTranscript, // Call after session saved or discarded
+    forceCleanup: audioForceCleanup, // Force cleanup of all audio resources
   } = useAudioRecorder({ detectFillers: fillerDetectionEnabled });
   
   const [user, setUser] = useState(null);
   const [userCredits, setUserCredits] = useState(0);
   const [duration, setDuration] = useState(0);
   const [recordingState, setRecordingState] = useState('idle');
-  // recordingState: 'idle' | 'recording' | 'processing' | 'finished' | 'error'
+  // recordingState: 'idle' | 'starting' | 'recording' | 'processing' | 'finished' | 'error'
+  // 'starting' = mic permission requested, waiting for MediaRecorder to initialize
   const [showTranscription, setShowTranscription] = useState(true);
   const [showTimer, setShowTimer] = useState(true);
   const [rawTranscript, setRawTranscript] = useState(''); // Raw verbatim transcript (includes filler words, from WebSocket)
@@ -228,6 +231,18 @@ export default function Speak() {
   const [isTranscriptUserEdited, setIsTranscriptUserEdited] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(null);
   
+  // Draft save state (Partial Save / Draft Naming feature)
+  const [showSaveDraftModal, setShowSaveDraftModal] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [currentDraftId, setCurrentDraftId] = useState(null); // Track active draft for autosave
+  const [lastAutosaveContent, setLastAutosaveContent] = useState(''); // Track content to detect changes
+  const autosaveTimerRef = useRef(null);
+  
+  // EDGE CASE 1 FIX: Guard to prevent autosave during/after session finalization
+  // Set to true when handleFinish/handleSaveSession begins, never reset (page navigates away)
+  const isFinalizingRef = useRef(false);
+  
   // Validation state - tracks whether user has attempted to start recording
   const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
   
@@ -251,7 +266,7 @@ export default function Speak() {
   const hasReferenceOnly = (uploadedFileUrl || referenceText) && !hasValidQuestion;
   
   const canStartRecording = useMemo(() => {
-    // Must not be in recording or processing state
+    // Must be in idle state - 'starting' blocks re-entry
     if (recordingState !== 'idle') return false;
     if (isTranscribing || isGenerating) return false;
     
@@ -263,6 +278,9 @@ export default function Speak() {
     
     return true;
   }, [recordingState, isTranscribing, isGenerating, requiresQuestion, hasValidQuestion, requiresDesiredStyle, hasValidDesiredStyle]);
+  
+  // Derived state: is the system currently initializing recording?
+  const isStartingRecording = recordingState === 'starting';
   
   /**
    * Get the validation warning message to display
@@ -356,6 +374,55 @@ export default function Speak() {
     checkAuthAndLoadCredits();
   }, [authUser, authLoading, session]);
   
+  // Handle draft resume from navigation state (e.g., from Library or Draft page)
+  useEffect(() => {
+    if (location.state?.resumeFromDraft) {
+      const {
+        draftId,
+        question,
+        desiredStyle,
+        wordLimit: draftWordLimit,
+        companyName: draftCompanyName,
+        companyContext: draftCompanyContext,
+        transcript,
+        isUserEdited,
+      } = location.state;
+      
+      console.log('[Speak] Resuming from draft:', draftId);
+      
+      // Rehydrate all fields
+      if (draftId) setCurrentDraftId(draftId);
+      if (question) setContextPrompt(question);
+      if (desiredStyle) setGoalInput(desiredStyle);
+      if (draftWordLimit) setWordLimit(String(draftWordLimit));
+      if (draftCompanyName) setCompanyName(draftCompanyName);
+      if (draftCompanyContext) setCompanyContext(draftCompanyContext);
+      if (transcript) {
+        setRawTranscript(transcript);
+        setLastAutosaveContent(JSON.stringify({
+          question,
+          desired_style: desiredStyle,
+          transcript,
+          company_name: draftCompanyName,
+          company_context: draftCompanyContext,
+        }));
+      }
+      if (isUserEdited) setIsTranscriptUserEdited(true);
+      
+      // Clear sessionStorage fallback since we have a backend draft
+      clearPersistedSession();
+      
+      // Clear navigation state to prevent re-loading on refresh
+      navigate(location.pathname + location.search, { replace: true, state: {} });
+      
+      toast({
+        title: 'Draft loaded',
+        description: 'Continue where you left off.',
+        duration: 3000,
+      });
+    }
+  }, [location.state]);
+  
   const checkAuthAndLoadCredits = async () => {
     try {
       // Wait until auth initialization completes
@@ -397,6 +464,23 @@ export default function Speak() {
       clearInterval(intervalRef.current);
     };
   }, [recordingState, audioIsPaused]);
+  
+  // Cleanup on unmount - ensure mic is off when leaving the page
+  useEffect(() => {
+    return () => {
+      console.log('[Speak] Component unmounting, forcing audio cleanup');
+      audioForceCleanup();
+    };
+  }, []);
+  
+  // EDGE CASE 3: Ensure mic is OFF for ALL transitions to idle/error states
+  // This guarantees no lingering mic access after errors, permission denial, or completion
+  useEffect(() => {
+    if (recordingState === 'idle' || recordingState === 'error') {
+      console.log(`[Speak] Recording state is '${recordingState}' - ensuring mic cleanup`);
+      audioForceCleanup();
+    }
+  }, [recordingState]);
 
   // Update rawTranscript from audioLiveTranscript during recording
   // If user has edited, append new transcription instead of overwriting
@@ -412,6 +496,7 @@ export default function Speak() {
   }, [audioLiveTranscript, recordingState, isTranscriptUserEdited]);
 
   // Persist session to sessionStorage during recording (cheap, frequent writes)
+  // This is for ACCIDENTAL recovery only - separate from backend draft autosave
   useEffect(() => {
     if (recordingState === 'recording' || recordingState === 'processing') {
       persistSession({
@@ -427,6 +512,113 @@ export default function Speak() {
       });
     }
   }, [recordingState, contextPrompt, goalInput, wordLimit, companyName, companyContext, rawTranscript, isTranscriptUserEdited, type, activeSessionId]);
+  
+  /**
+   * Autosave to backend draft every 10 seconds during recording.
+   * Only saves if content has changed since last autosave.
+   * Creates draft on first save, updates same draft thereafter.
+   * 
+   * EDGE CASE 1: Autosave is blocked during/after session finalization
+   * EDGE CASE 2: Autosave triggers for setup-only content (question, company, style) even without transcript
+   */
+  useEffect(() => {
+    // Only autosave during active recording or paused state
+    // EDGE CASE 1: Block autosave during processing/finished states (finalization in progress)
+    const canAutosave = recordingState === 'recording' || recordingState === 'paused';
+    if (!canAutosave) {
+      if (autosaveTimerRef.current) {
+        clearInterval(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      return;
+    }
+    
+    const autosave = async () => {
+      // EDGE CASE 1: Block autosave if finalization has begun
+      // This prevents draft resurrection after currentDraftId is cleared
+      if (isFinalizingRef.current) {
+        console.log('[Speak:Autosave] Blocked - finalization in progress');
+        return;
+      }
+      
+      // Get current transcript
+      const currentTranscript = getAccumulatedTranscript() || rawTranscript;
+      
+      // Build content signature to detect changes
+      const contentSignature = JSON.stringify({
+        question: contextPrompt,
+        desired_style: goalInput,
+        transcript: currentTranscript,
+        company_name: companyName,
+        company_context: companyContext,
+      });
+      
+      // Skip if no changes
+      if (contentSignature === lastAutosaveContent) {
+        console.log('[Speak:Autosave] No changes, skipping');
+        return;
+      }
+      
+      // EDGE CASE 2: Allow autosave if ANY meaningful content exists (not just transcript)
+      // This ensures users don't lose setup work (question, company, style) if they navigate away
+      const hasQuestion = contextPrompt?.trim().length > 0;
+      const hasStyle = goalInput?.trim().length > 0;
+      const hasCompanyName = companyName?.trim().length > 0;
+      const hasCompanyContext = companyContext?.trim().length > 0;
+      const hasTranscript = currentTranscript?.trim().length > 0;
+      
+      if (!hasQuestion && !hasStyle && !hasCompanyName && !hasCompanyContext && !hasTranscript) {
+        console.log('[Speak:Autosave] No content to save, skipping');
+        return;
+      }
+      
+      try {
+        const draftData = {
+          name: currentDraftId ? undefined : generateDraftName(contextPrompt), // Only set name on create
+          type,
+          question: contextPrompt || null,
+          desired_style: goalInput || null,
+          word_limit: wordLimit && wordLimit !== 'auto' ? parseInt(wordLimit, 10) : null,
+          company_name: companyName || null,
+          company_context: companyContext || null,
+          transcript_text: currentTranscript || '',
+          is_user_edited: isTranscriptUserEdited,
+        };
+        
+        if (currentDraftId) {
+          // Update existing draft
+          console.log('[Speak:Autosave] Updating draft:', currentDraftId);
+          await draftsAPI.update(currentDraftId, draftData);
+        } else {
+          // Create new draft
+          console.log('[Speak:Autosave] Creating new draft');
+          const savedDraft = await draftsAPI.create(draftData);
+          setCurrentDraftId(savedDraft.id);
+          console.log('[Speak:Autosave] Draft created:', savedDraft.id);
+          
+          // Clear sessionStorage since we now have a backend draft
+          clearPersistedSession();
+        }
+        
+        setLastAutosaveContent(contentSignature);
+        console.log('[Speak:Autosave] Success');
+      } catch (error) {
+        console.error('[Speak:Autosave] Error:', error);
+        // Don't show toast for autosave failures - too noisy
+      }
+    };
+    
+    // Start autosave timer (every 10 seconds)
+    autosaveTimerRef.current = setInterval(autosave, 10000);
+    
+    // Cleanup
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearInterval(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [recordingState, contextPrompt, goalInput, wordLimit, companyName, companyContext, rawTranscript, isTranscriptUserEdited, type, currentDraftId, lastAutosaveContent]);
 
   // Debug: Log liveTranscript updates for debugging
   useEffect(() => {
@@ -457,20 +649,22 @@ export default function Speak() {
       return;
     }
     
+    // CRITICAL: Set 'starting' state IMMEDIATELY to prevent double-clicks
+    // This blocks re-entry via canStartRecording check
+    console.log('[Speak] State transition: idle → starting');
+    setRecordingState('starting');
+    
     // Generate new session ID for this recording
     const newSessionId = crypto.randomUUID();
     setActiveSessionId(newSessionId);
     setIsTranscriptUserEdited(false);
     
-    // Start recording (credits will be decremented after a successful save)
+    // Reset state for new recording
     setDuration(0);
     setRawTranscript(''); // Clear raw transcript (verbatim speech)
     setRefinedTranscript(''); // Clear refined transcript (LLM output)
     setTranscript(''); // Deprecated: kept for backward compatibility
-    // Note: fillerCount is now managed by useAudioRecorder hook and resets automatically
     setConfidenceLevel(0);
-    // audioLiveTranscript is cleared by useAudioRecorder when starting a NEW recording
-    // DO NOT set recordingState here - wait until MediaRecorder actually starts
     
     // Request microphone permission DIRECTLY in click handler to satisfy user gesture requirement
     let stream = null;
@@ -480,64 +674,67 @@ export default function Speak() {
       console.log('[Speak] Microphone permission granted, stream obtained');
     } catch (err) {
       console.error('[Speak] Error requesting microphone permission:', err);
-        setRecordingState('idle'); // Reset to idle state on permission failure
-        toast({ 
-          title: 'Microphone Permission Required', 
-          description: err.name === 'NotAllowedError' 
-            ? 'Please allow microphone access to record audio.' 
-            : err.name === 'NotFoundError'
-            ? 'No microphone found. Please connect a microphone and try again.'
-            : 'Failed to access microphone. Please check your browser settings.',
-          variant: 'destructive',
-          duration: 5000
+      console.log('[Speak] State transition: starting → idle (mic permission failed)');
+      setRecordingState('idle');
+      toast({ 
+        title: 'Microphone Permission Required', 
+        description: err.name === 'NotAllowedError' 
+          ? 'Please allow microphone access to record audio.' 
+          : err.name === 'NotFoundError'
+          ? 'No microphone found. Please connect a microphone and try again.'
+          : 'Failed to access microphone. Please check your browser settings.',
+        variant: 'destructive',
+        duration: 5000
+      });
+      return; // Exit early if permission denied
+    }
+    
+    // Explicitly enable live transcription and pass the stream
+    try {
+      console.log('[Speak] Starting audio recording and live transcription...');
+      console.log('[Speak] Stream active:', stream.active);
+      console.log('[Speak] Stream tracks:', stream.getTracks().length);
+      
+      // startRecording will throw if MediaRecorder fails to start
+      // If it completes successfully, MediaRecorder has started
+      await audioStartRecording({ enableLiveTranscription: true, stream });
+      
+      // startRecording completed successfully - MediaRecorder is now recording
+      console.log('[Speak] State transition: starting → recording');
+      setRecordingState('recording');
+    } catch (err) {
+      console.error('[Speak] Error starting recording:', err);
+      console.error('[Speak] Error name:', err.name);
+      console.error('[Speak] Error message:', err.message);
+      console.log('[Speak] State transition: starting → idle (recording start failed)');
+      setRecordingState('idle');
+      
+      // Clean up stream on error - CRITICAL: Stop mic when recording fails
+      try {
+        console.log('[Speak] Cleaning up stream after recording start failure');
+        stream.getTracks().forEach(track => {
+          console.log(`[Speak] Stopping track: ${track.kind}, state: ${track.readyState}`);
+          track.stop();
         });
-        return; // Exit early if permission denied
+      } catch (cleanupErr) {
+        console.warn('[Speak] Error cleaning up stream after error:', cleanupErr);
       }
       
-      // Explicitly enable live transcription and pass the stream
-      try {
-        console.log('[Speak] Starting audio recording and live transcription...');
-        console.log('[Speak] Stream active:', stream.active);
-        console.log('[Speak] Stream tracks:', stream.getTracks().length);
-        
-        // startRecording will throw if MediaRecorder fails to start
-        // If it completes successfully, MediaRecorder has started
-        await audioStartRecording({ enableLiveTranscription: true, stream });
-        
-        // startRecording completed successfully - MediaRecorder is now recording
-        // setIsRecording(true) is called inside startRecording, but React state is async
-        // We don't need to wait for audioIsRecording to update - we trust that startRecording succeeded
-        console.log('[Speak] Recording started successfully, setting state to recording');
-        setRecordingState('recording');
-      } catch (err) {
-        console.error('[Speak] Error starting recording:', err);
-        console.error('[Speak] Error name:', err.name);
-        console.error('[Speak] Error message:', err.message);
-        console.error('[Speak] Error stack:', err.stack);
-        setRecordingState('idle'); // Reset to idle state on recording start failure
-        
-        // Clean up stream on error
-        try {
-          stream.getTracks().forEach(track => track.stop());
-        } catch (cleanupErr) {
-          console.warn('[Speak] Error cleaning up stream after error:', cleanupErr);
-        }
-        
-        // Provide more specific error message
-        let errorMessage = 'Failed to start recording. Please try again.';
-        if (err.message?.includes('WebSocket') || err.message?.includes('authentication')) {
-          errorMessage = 'Live transcription connection failed. Please refresh and try again.';
-        } else if (err.message?.includes('MediaRecorder')) {
-          errorMessage = 'Failed to initialize audio recorder. Please check your browser settings.';
-        }
-        
-        toast({ 
-          title: 'Recording Failed', 
-          description: errorMessage,
-          variant: 'destructive',
-          duration: 5000
-        });
+      // Provide more specific error message
+      let errorMessage = 'Failed to start recording. Please try again.';
+      if (err.message?.includes('WebSocket') || err.message?.includes('authentication')) {
+        errorMessage = 'Live transcription connection failed. Please refresh and try again.';
+      } else if (err.message?.includes('MediaRecorder')) {
+        errorMessage = 'Failed to initialize audio recorder. Please check your browser settings.';
       }
+      
+      toast({ 
+        title: 'Recording Failed', 
+        description: errorMessage,
+        variant: 'destructive',
+        duration: 5000
+      });
+    }
   };
   
   /**
@@ -558,7 +755,101 @@ export default function Speak() {
     }
   };
   
+  /**
+   * Generate default draft name from question (first ~8 words)
+   */
+  const generateDraftName = (question) => {
+    if (!question || !question.trim()) return 'Untitled Draft';
+    const words = question.trim().split(/\s+/).slice(0, 8);
+    let name = words.join(' ');
+    if (question.trim().split(/\s+/).length > 8) name += '...';
+    return name || 'Untitled Draft';
+  };
+  
+  /**
+   * Handle Save Draft button click - opens modal
+   */
+  const handleSaveDraftClick = () => {
+    // Pre-populate draft name from question
+    setDraftName(generateDraftName(contextPrompt));
+    setShowSaveDraftModal(true);
+  };
+  
+  /**
+   * Save draft to backend (manual save via modal).
+   * No LLM calls, no credits consumed.
+   * If a draft already exists (from autosave), updates it with the new name.
+   */
+  const handleSaveDraft = async () => {
+    setIsSavingDraft(true);
+    
+    try {
+      // Capture current transcript from AudioRecorder ref (if recording)
+      // or use rawTranscript state (if not recording)
+      const currentTranscript = recordingState === 'recording' || recordingState === 'paused'
+        ? getAccumulatedTranscript() || rawTranscript
+        : rawTranscript;
+      
+      const draftData = {
+        name: draftName.trim() || generateDraftName(contextPrompt),
+        type,
+        question: contextPrompt || null,
+        desired_style: goalInput || null,
+        word_limit: wordLimit && wordLimit !== 'auto' ? parseInt(wordLimit, 10) : null,
+        company_name: companyName || null,
+        company_context: companyContext || null,
+        transcript_text: currentTranscript || '',
+        is_user_edited: isTranscriptUserEdited,
+      };
+      
+      let savedDraft;
+      
+      if (currentDraftId) {
+        // Update existing draft (from autosave)
+        console.log('[Speak] Updating existing draft:', currentDraftId);
+        savedDraft = await draftsAPI.update(currentDraftId, draftData);
+        savedDraft = { ...savedDraft, name: draftData.name }; // Ensure name is in response
+      } else {
+        // Create new draft
+        console.log('[Speak] Creating new draft:', draftData);
+        savedDraft = await draftsAPI.create(draftData);
+        setCurrentDraftId(savedDraft.id);
+      }
+      
+      console.log('[Speak] Draft saved:', savedDraft.id);
+      
+      // Clear session resume storage since we've explicitly saved
+      clearPersistedSession();
+      
+      // Show success toast
+      toast({
+        title: 'Draft saved',
+        description: `"${draftData.name}" saved successfully.`,
+        duration: 3000,
+      });
+      
+      // Close modal and reset state
+      setShowSaveDraftModal(false);
+      setDraftName('');
+      
+    } catch (error) {
+      console.error('[Speak] Error saving draft:', error);
+      toast({
+        title: 'Failed to save draft',
+        description: error.message || 'Please try again.',
+        variant: 'destructive',
+        duration: 5000,
+      });
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+  
   const handleFinish = async () => {
+    // EDGE CASE 1: Set finalization guard BEFORE any state changes
+    // This prevents autosave from running during/after finalization
+    isFinalizingRef.current = true;
+    
     // mark processing
     setRecordingState('processing');
     setIsTranscribing(true);
@@ -795,6 +1086,10 @@ export default function Speak() {
 
   const handleSaveSession = async (sessionName) => {
   if (isSaving) return; // prevent double-save
+  
+  // EDGE CASE 1: Set finalization guard to prevent autosave during save
+  isFinalizingRef.current = true;
+  
   setIsSaving(true);
   // close naming modal immediately if open
   try { setShowNamingModal(false); } catch (e) {}
@@ -928,6 +1223,19 @@ export default function Speak() {
       setActiveSessionId(null);
       setIsTranscriptUserEdited(false);
       
+      // Clear draft state - session is now complete, draft is no longer needed
+      // If there was an autosaved draft, delete it from backend
+      if (currentDraftId) {
+        try {
+          console.log('[Speak] Deleting draft after successful save:', currentDraftId);
+          await draftsAPI.delete(currentDraftId);
+        } catch (e) {
+          console.warn('[Speak] Failed to delete draft after save:', e);
+        }
+        setCurrentDraftId(null);
+      }
+      setLastAutosaveContent('');
+      
       // CRITICAL: Clear transcript AFTER session is saved
       // This allows the next recording to start fresh
       try { clearTranscript(); } catch (e) { console.warn('clearTranscript failed:', e); }
@@ -1048,7 +1356,7 @@ export default function Speak() {
       </motion.div>
       
       {/* Contextual Prompt Input */}
-      {(type === 'application' || type === 'interview') && recordingState === 'idle' && (
+      {(type === 'application' || type === 'interview') && (recordingState === 'idle' || recordingState === 'starting') && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1164,7 +1472,7 @@ export default function Speak() {
       )}
 
       {/* Advanced Goal Definition */}
-      {recordingState === 'idle' && (
+      {(recordingState === 'idle' || recordingState === 'starting') && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1268,18 +1576,18 @@ export default function Speak() {
       <div className={`flex-1 flex flex-col items-center justify-center max-w-2xl mx-auto w-full transition-all duration-500 ${
         recordingState === 'recording' ? 'brightness-75' : ''
       }`}>
-        {recordingState === 'idle' && (
+        {(recordingState === 'idle' || recordingState === 'starting') && (
           <motion.p
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-zinc-600 dark:text-zinc-400 text-lg mb-8"
           >
-            Record Answer
+            {recordingState === 'starting' ? 'Initializing...' : 'Record Answer'}
           </motion.p>
         )}
         
-        {/* Voice Visualizer - Only show during idle or recording states */}
-        {(recordingState === 'idle' || recordingState === 'recording') && (
+        {/* Voice Visualizer - Only show during idle, starting, or recording states */}
+        {(recordingState === 'idle' || recordingState === 'starting' || recordingState === 'recording') && (
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: recordingState === 'recording' ? 1.15 : 1 }}
@@ -1341,21 +1649,30 @@ export default function Speak() {
           transition={{ delay: 0.2 }}
           className="flex items-center gap-4"
         >
-          {recordingState === 'idle' && (
-            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+          {(recordingState === 'idle' || recordingState === 'starting') && (
+            <motion.div whileHover={recordingState === 'idle' ? { scale: 1.05 } : {}} whileTap={recordingState === 'idle' ? { scale: 0.95 } : {}}>
               <Button
                 size="lg"
                 onClick={handleStart}
-                disabled={isTranscribing || isGenerating}
-                className="h-16 px-10 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white rounded-2xl text-lg shadow-lg shadow-violet-500/20 disabled:opacity-50"
+                disabled={recordingState === 'starting' || isTranscribing || isGenerating || !canStartRecording}
+                className="h-16 px-10 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white rounded-2xl text-lg shadow-lg shadow-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <motion.div
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-                >
-                  <Mic className="w-5 h-5 mr-3" />
-                </motion.div>
-                Start
+                {recordingState === 'starting' ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-3 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1] }}
+                      transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                    >
+                      <Mic className="w-5 h-5 mr-3" />
+                    </motion.div>
+                    Start
+                  </>
+                )}
               </Button>
             </motion.div>
           )}
@@ -1369,6 +1686,15 @@ export default function Speak() {
                 title={audioIsPaused ? 'Resume recording' : 'Pause recording'}
               >
                 {audioIsPaused ? <Play className="w-5 h-5" /> : <Pause className="w-5 h-5" />}
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={handleSaveDraftClick}
+                className="h-14 w-14 rounded-2xl border-white/10 text-zinc-300 hover:text-violet-400 hover:border-violet-500/30"
+                title="Save as draft"
+              >
+                <Save className="w-5 h-5" />
               </Button>
               <Button
                 size="lg"
@@ -1467,6 +1793,88 @@ export default function Speak() {
           `${typeLabels[type]} – ${new Date().toLocaleDateString()}`,
         ]}
       />
+      
+      {/* Save Draft Modal */}
+      <AnimatePresence>
+        {showSaveDraftModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+            onClick={() => !isSavingDraft && setShowSaveDraftModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/10 shadow-xl p-6 w-full max-w-md mx-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                  Save as Draft
+                </h2>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowSaveDraftModal(false)}
+                  disabled={isSavingDraft}
+                  className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+              </div>
+              
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+                Save your progress to continue later. No credits will be used.
+              </p>
+              
+              <div className="mb-6">
+                <Label htmlFor="draft-name" className="text-sm text-zinc-700 dark:text-zinc-300 mb-2 block">
+                  Draft name (optional)
+                </Label>
+                <Input
+                  id="draft-name"
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  placeholder={generateDraftName(contextPrompt)}
+                  className="bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-white/10"
+                  disabled={isSavingDraft}
+                />
+              </div>
+              
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowSaveDraftModal(false)}
+                  disabled={isSavingDraft}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSaveDraft}
+                  disabled={isSavingDraft}
+                  className="flex-1 bg-violet-600 hover:bg-violet-700 text-white"
+                >
+                  {isSavingDraft ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      Save Draft
+                    </>
+                  )}
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

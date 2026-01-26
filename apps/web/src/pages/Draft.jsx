@@ -6,6 +6,16 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
 import { 
   ArrowLeft, 
   Copy, 
@@ -24,7 +34,7 @@ import {
   MousePointerClick,
   Type
 } from 'lucide-react';
-import { sessions } from '@/components/services/api';
+import { sessions, drafts as draftsApi } from '@/components/services/api';
 import { toast } from '@/components/ui/use-toast';
 
 /**
@@ -222,6 +232,7 @@ export default function Draft() {
   const location = useLocation();
   const urlParams = new URLSearchParams(window.location.search);
   const recordingId = urlParams.get('id');
+  const draftId = urlParams.get('draft_id'); // For drafts (partial saves)
   
   const [copied, setCopied] = useState(false);
   const [selectedTone, setSelectedTone] = useState('confident');
@@ -235,6 +246,13 @@ export default function Draft() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [currentRecording, setCurrentRecording] = useState(null);
+  
+  // Draft-specific state (for partial saves)
+  const [isDraftMode, setIsDraftMode] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   
   /**
    * HIGHLIGHT-DRIVEN REFINEMENT STATE
@@ -262,18 +280,19 @@ export default function Draft() {
   
   useEffect(() => {
     loadDraftData();
-  }, [location.state, recordingId]);
+  }, [location.state, recordingId, draftId]);
   
   /**
    * Load draft data from navigation state or URL parameter.
    * 
    * LOADING STRATEGY (prevents 404 errors):
    * 1. Check navigation state FIRST (passed from Library or Speak)
+   *    - If isDraft=true, load as draft (partial save)
    *    - If source='local', use data directly (NO API call)
    *    - If source='backend', optionally refresh from API
    * 2. Only call API if:
    *    - No navigation state available AND
-   *    - recordingId is present in URL
+   *    - recordingId OR draftId is present in URL
    * 
    * This prevents 404 errors when clicking local-only items in Library.
    */
@@ -286,37 +305,94 @@ export default function Draft() {
       let question = ''; // CRITICAL: Question is required for all LLM calls
       let referenceText = ''; // Optional: reference content for context
       let recording = null;
+      let desiredStyle = '';
+      let wordLimit = null;
+      let companyName = '';
+      let companyContext = '';
+      let isUserEdited = false;
       
       // PRIORITY 1: Load from navigation state (passed from Library or Speak)
       // This is the preferred method as it avoids unnecessary API calls
       if (location.state?.sessionData) {
-        const { sessionData, source } = location.state;
-        console.log('[Draft] Loading from navigation state, source:', source || 'unknown');
+        const { sessionData, source, isDraft: navIsDraft } = location.state;
+        console.log('[Draft] Loading from navigation state, source:', source || 'unknown', 'isDraft:', navIsDraft);
         console.log('[Draft] Session data:', { 
           id: sessionData.id, 
-          hasTranscript: !!sessionData.transcript,
-          transcriptLength: sessionData.transcript?.length || 0 
+          hasTranscript: !!(sessionData.transcript || sessionData.transcript_text),
+          transcriptLength: (sessionData.transcript || sessionData.transcript_text)?.length || 0 
         });
         
-        // Use navigation state data directly
-        recording = sessionData;
-        setCurrentRecording(sessionData);
-        transcript = sessionData.transcript || '';
-        refinedText = sessionData.refinedDraft || sessionData.refined_draft || '';
-        clarityScore = sessionData.clarityScore || sessionData.clarity_score || 
-                       sessionData.confidenceScore || sessionData.confidence_score || 80;
-        question = sessionData.question || '';
-        referenceText = sessionData.reference_text || sessionData.referenceText || '';
-        
-        // For backend-sourced items, we could optionally refresh from API
-        // But for now, navigation state is sufficient - no need to re-fetch
-        console.log('[Draft] Loaded from navigation state successfully');
+        // Check if this is a draft (partial save)
+        if (navIsDraft || sessionData.isDraft) {
+          setIsDraftMode(true);
+          setDraftName(sessionData.name || sessionData.title || 'Untitled Draft');
+          
+          // Load draft-specific fields
+          recording = sessionData;
+          setCurrentRecording(sessionData);
+          transcript = sessionData.transcript_text || sessionData.transcript || '';
+          question = sessionData.question || '';
+          desiredStyle = sessionData.desired_style || '';
+          wordLimit = sessionData.word_limit;
+          companyName = sessionData.company_name || '';
+          companyContext = sessionData.company_context || '';
+          isUserEdited = sessionData.is_user_edited || false;
+          
+          console.log('[Draft] Loaded draft from navigation state successfully');
+        } else {
+          // Regular session
+          recording = sessionData;
+          setCurrentRecording(sessionData);
+          transcript = sessionData.transcript || '';
+          refinedText = sessionData.refinedDraft || sessionData.refined_draft || '';
+          clarityScore = sessionData.clarityScore || sessionData.clarity_score || 
+                         sessionData.confidenceScore || sessionData.confidence_score || 80;
+          question = sessionData.question || '';
+          referenceText = sessionData.reference_text || sessionData.referenceText || '';
+          
+          console.log('[Draft] Loaded session from navigation state successfully');
+        }
       }
       
-      // PRIORITY 2: Fall back to API fetch ONLY if no navigation state
-      // AND we have a recordingId in the URL
-      if (!transcript && !refinedText && recordingId) {
-        console.log('[Draft] No navigation state, attempting API fetch for ID:', recordingId);
+      // PRIORITY 2: Load draft by draft_id if present
+      if (!transcript && !refinedText && draftId) {
+        console.log('[Draft] Loading draft by ID:', draftId);
+        
+        try {
+          const draftData = await draftsApi.get(draftId);
+          
+          if (!draftData) {
+            console.warn('[Draft] Draft not found for ID:', draftId);
+            setLoadError('This draft could not be found. It may have been deleted.');
+            setIsLoading(false);
+            return;
+          }
+          
+          setIsDraftMode(true);
+          setDraftName(draftData.name || 'Untitled Draft');
+          setCurrentRecording(draftData);
+          
+          transcript = draftData.transcript_text || '';
+          question = draftData.question || '';
+          desiredStyle = draftData.desired_style || '';
+          wordLimit = draftData.word_limit;
+          companyName = draftData.company_name || '';
+          companyContext = draftData.company_context || '';
+          isUserEdited = draftData.is_user_edited || false;
+          
+          console.log('[Draft] Loaded draft from API, transcript length:', transcript.length);
+        } catch (draftError) {
+          console.error('[Draft] Error fetching draft by ID:', draftId, draftError);
+          setLoadError('Failed to load draft. Please check your connection and try again.');
+          setIsLoading(false);
+          return;
+        }
+      }
+      
+      // PRIORITY 3: Fall back to session API fetch ONLY if no navigation state
+      // AND we have a recordingId in the URL (not a draft)
+      if (!transcript && !refinedText && recordingId && !draftId) {
+        console.log('[Draft] No navigation state, attempting session API fetch for ID:', recordingId);
         
         try {
           recording = await sessions.getSessionById(recordingId);
@@ -367,6 +443,12 @@ export default function Draft() {
         question,
         // Optional: Reference content (used as supporting context, not source-of-truth)
         referenceText,
+        // Draft-specific fields
+        desiredStyle,
+        wordLimit,
+        companyName,
+        companyContext,
+        isUserEdited,
         // Computed from real data, not hardcoded
         strongestMoment,
         themes,
@@ -387,6 +469,87 @@ export default function Draft() {
     } finally {
       setIsLoading(false);
     }
+  };
+  
+  /**
+   * Save draft changes to backend.
+   */
+  const handleSaveDraftChanges = async () => {
+    if (!currentRecording?.id || !isDraftMode) return;
+    
+    setIsSavingDraft(true);
+    try {
+      await draftsApi.update(currentRecording.id, {
+        name: draftName,
+        transcript_text: draft?.original || '',
+        is_user_edited: draft?.isUserEdited || false,
+      });
+      
+      toast({
+        title: 'Draft saved',
+        description: 'Your changes have been saved.',
+        duration: 3000,
+      });
+    } catch (error) {
+      console.error('[Draft] Error saving draft:', error);
+      toast({
+        title: 'Failed to save draft',
+        description: error.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+  
+  /**
+   * Discard (delete) draft.
+   */
+  const handleDiscardDraft = async () => {
+    if (!currentRecording?.id || !isDraftMode) return;
+    
+    try {
+      await draftsApi.delete(currentRecording.id);
+      
+      toast({
+        title: 'Draft discarded',
+        description: 'The draft has been deleted.',
+        duration: 3000,
+      });
+      
+      // Navigate back to Library
+      navigate(createPageUrl('Library'));
+    } catch (error) {
+      console.error('[Draft] Error discarding draft:', error);
+      toast({
+        title: 'Failed to discard draft',
+        description: error.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    }
+    
+    setShowDiscardConfirm(false);
+  };
+  
+  /**
+   * Continue recording from draft - navigate to Speak with draft data.
+   */
+  const handleContinueRecording = () => {
+    if (!currentRecording) return;
+    
+    navigate(createPageUrl('Speak') + `?type=${currentRecording.type || 'free'}`, {
+      state: {
+        resumeFromDraft: true,
+        draftId: currentRecording.id,
+        question: draft?.question || '',
+        desiredStyle: draft?.desiredStyle || '',
+        wordLimit: draft?.wordLimit,
+        companyName: draft?.companyName || '',
+        companyContext: draft?.companyContext || '',
+        transcript: draft?.original || '',
+        isUserEdited: draft?.isUserEdited || false,
+      }
+    });
   };
   
   const handleCopy = () => {
@@ -698,35 +861,98 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => navigate(createPageUrl('Speak'))}
+            onClick={() => navigate(createPageUrl(isDraftMode ? 'Library' : 'Speak'))}
             className="text-zinc-400 hover:text-white"
           >
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div>
-            <h1 className="text-2xl lg:text-3xl font-bold text-zinc-900 dark:text-zinc-100">
-              Your Draft
-            </h1>
-            <p className="text-zinc-600 dark:text-zinc-500">Review and refine your response</p>
+            {isDraftMode ? (
+              <>
+                {isEditingName ? (
+                  <Input
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onBlur={() => setIsEditingName(false)}
+                    onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)}
+                    autoFocus
+                    className="text-2xl lg:text-3xl font-bold bg-transparent border-b border-violet-500 focus:outline-none"
+                  />
+                ) : (
+                  <h1 
+                    className="text-2xl lg:text-3xl font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer hover:text-violet-500 transition-colors"
+                    onClick={() => setIsEditingName(true)}
+                    title="Click to rename"
+                  >
+                    {draftName}
+                    <Badge className="ml-3 bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs">
+                      Draft
+                    </Badge>
+                  </h1>
+                )}
+                <p className="text-zinc-600 dark:text-zinc-500">Continue editing or discard this draft</p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-2xl lg:text-3xl font-bold text-zinc-900 dark:text-zinc-100">
+                  Your Draft
+                </h1>
+                <p className="text-zinc-600 dark:text-zinc-500">Review and refine your response</p>
+              </>
+            )}
           </div>
         </div>
         
         <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            onClick={handleCopy}
-            className="border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5"
-          >
-            {copied ? <Check className="w-4 h-4 mr-2 text-green-400" /> : <Copy className="w-4 h-4 mr-2" />}
-            {copied ? 'Copied!' : 'Copy'}
-          </Button>
-          <Button
-            onClick={handleSave}
-            className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
-          >
-            <Save className="w-4 h-4 mr-2" />
-            Save to Library
-          </Button>
+          {isDraftMode ? (
+            <>
+              <Button
+                variant="outline"
+                onClick={handleContinueRecording}
+                className="border-teal-500/30 text-teal-400 hover:bg-teal-500/10"
+              >
+                <Mic className="w-4 h-4 mr-2" />
+                Continue Recording
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowDiscardConfirm(true)}
+                className="border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
+              >
+                Discard Draft
+              </Button>
+              <Button
+                onClick={handleSaveDraftChanges}
+                disabled={isSavingDraft}
+                className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+              >
+                {isSavingDraft ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4 mr-2" />
+                )}
+                Save Changes
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={handleCopy}
+                className="border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5"
+              >
+                {copied ? <Check className="w-4 h-4 mr-2 text-green-400" /> : <Copy className="w-4 h-4 mr-2" />}
+                {copied ? 'Copied!' : 'Copy'}
+              </Button>
+              <Button
+                onClick={handleSave}
+                className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Save to Library
+              </Button>
+            </>
+          )}
         </div>
       </motion.div>
       
@@ -1198,6 +1424,24 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
           </motion.div>
         </div>
       </div>
+      
+      {/* Discard Draft Confirmation Dialog */}
+      <AlertDialog open={showDiscardConfirm} onOpenChange={setShowDiscardConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to discard this draft? This action cannot be undone and all your progress will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowDiscardConfirm(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDiscardDraft} className="bg-rose-600 hover:bg-rose-700">
+              Discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -8,29 +8,13 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P1 - High (Feature Gaps)
 
-**GAP-002: Session Resume/Continue Recording**
-- Location: `apps/web/src/pages/Speak.jsx` (entire file)
-- Status: No mechanism to resume a paused session across page reloads
-- Impact: If user accidentally navigates away, recording is lost
-- Fix: Store interim audio chunks and transcript in IndexedDB or sessionStorage
-- Note: Users should also be able to edit live transcribed text in case of wrong transcription
-
-**Bug**
-- User sessions doesn't load when clicked from library, it gives this error: "Error loading draft: Error: Session not found at Object.getSessionById (api.jsx:183:13) at async loadDraftData"**
-
-**GAP-003: Offline Transcription Fallback**
-- Location: `apps/web/src/components/recording/AudioRecorder.jsx`
-- Status: WebSocket failure aborts recording entirely
-- Impact: Users in poor network conditions cannot record at all
-- Fix: Allow recording without live transcription, queue audio for later upload
-
-**GAP-004: Rate Limit Persistence**
+**GAP-002: Rate Limit Persistence**
 - Location: `apps/api/rate_limit.py` (entire file)
 - Status: In-memory rate limiter resets on server restart; Redis integration is optional and may not be configured
 - Impact: Rate limits ineffective across deployments or restarts
 - Fix: Make Redis required for production, or implement persistent fallback
 
-**GAP-005: Admin Dashboard**
+**GAP-003: Admin Dashboard**
 - Location: References in `apps/api/models.py` (`admin_emails` table) but no admin UI exists
 - Status: Admin role check exists but no admin interface
 - Impact: Cannot manage users, view analytics, or moderate content without direct DB access
@@ -38,23 +22,23 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P2 - Medium (Nice-to-Have)
 
-**GAP-006: Email Notifications for Credit Depletion**
+**GAP-004: Email Notifications for Credit Depletion**
 - Location: `apps/api/notifications.py` (empty/stub file)
 - Status: No email integration exists
 - Impact: Users have no warning when credits are low
 - Fix: Integrate email service (SendGrid, SES), trigger on credit thresholds
 
-**GAP-007: Batch Export of Sessions**
+**GAP-005: Batch Export of Sessions**
 - Location: `apps/api/main.py` `/export-data` endpoint (lines 1350-1386)
 - Status: GDPR export exists but no UI-driven batch export of selected sessions
 - Impact: Users must export one session at a time
 - Fix: Add multi-select in Library, endpoint for batch export as ZIP
 
-**GAP-008: Search/Filter in Library**
+**GAP-006: Search/Filter in Library**
 - Location: `apps/web/src/pages/Library.jsx`
-- Status: Sessions are listed but not searchable or filterable
+- Status: Sessions are listed but not searchable or filterable (basic filter by type exists)
 - Impact: Users with many sessions cannot find specific recordings
-- Fix: Add client-side filtering by date, topic, or keywords from transcript
+- Fix: Add client-side search by title/transcript keywords, date range filtering
 
 ---
 
@@ -107,6 +91,51 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
   - Voice profile integration preserved
   - Token usage logging for observability
   - Frontend wiring with required field indicators and validation
+
+**Session Resume / Continue Recording (GAP-002)** - ✅ COMPLETED
+- Implemented: 2026-01-26
+- Location: `apps/web/src/pages/Speak.jsx`
+- Features:
+  - Persists in-progress session to `sessionStorage` (question, style, transcript, etc.)
+  - Resume detection on page load with non-blocking banner
+  - User can resume or discard the unfinished session
+  - Editable live transcript (user edits preserved, new transcription appends)
+  - Cleanup on successful submission or explicit discard
+- Note: This is for ACCIDENTAL recovery only. Does NOT persist audio blobs.
+- Distinction: Separate from Partial Save / Draft Naming (which is intentional, backend-stored).
+
+**Offline Transcription Fallback (GAP-003)** - ✅ COMPLETED
+- Implemented: 2026-01-26
+- Location: `apps/web/src/components/recording/AudioRecorder.jsx`, `apps/web/src/pages/Speak.jsx`
+- Features:
+  - If WebSocket connection fails, recording continues locally (offline mode)
+  - Amber indicator: "Recording offline — transcription will be added when you save"
+  - Audio is still captured in memory
+  - Transcription is processed on save (batch upload)
+  - WebSocket reconnection attempted on resume from pause
+- Note: Audio is NOT persisted to storage in offline mode (in-memory only).
+
+**Partial Save / Draft Naming** - ✅ COMPLETED
+- Implemented: 2026-01-27
+- Location: 
+  - Backend: `apps/api/main.py` (draft endpoints), `apps/api/models.py` (draft schemas)
+  - Frontend: `apps/web/src/pages/Speak.jsx`, `apps/web/src/pages/Draft.jsx`, `apps/web/src/pages/Library.jsx`
+  - Database: `supabase/migrations/20260127_create_drafts.sql`
+- Features:
+  - Users can INTENTIONALLY save unfinished work as drafts
+  - Optional draft naming (auto-generated from question if not provided)
+  - Drafts appear in Library with "Draft" badge
+  - Draft page allows: rename, edit transcript, continue recording, save changes, discard
+  - No credits consumed for draft saves
+  - No LLM calls triggered on draft save
+  - Separate from session resume (which is for accidental recovery)
+- API Endpoints:
+  - `POST /drafts` - create draft
+  - `GET /drafts` - list user drafts
+  - `GET /drafts/:id` - get specific draft
+  - `PUT /drafts/:id` - update draft
+  - `DELETE /drafts/:id` - delete draft
+- **Migration required:** Run `supabase/migrations/20260127_create_drafts.sql`
 
 ---
 

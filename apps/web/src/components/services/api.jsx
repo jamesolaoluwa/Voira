@@ -597,6 +597,101 @@ export const billing = {
 // CREDITS
 // ============================================
 
+// ============================================
+// DRAFTS (Partial Save / Draft Naming)
+// ============================================
+
+export const drafts = {
+  /**
+   * Create a new draft.
+   * No LLM calls, no credits consumed.
+   */
+  async create(draftData) {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.post('/drafts', draftData);
+    } catch (error) {
+      console.error('[drafts.create] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * List all drafts for the current user.
+   */
+  async list() {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.get('/drafts');
+    } catch (error) {
+      console.error('[drafts.list] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get a specific draft by ID.
+   */
+  async get(draftId) {
+    if (!draftId) {
+      console.error('[drafts.get] Invalid draft ID');
+      return null;
+    }
+    
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.get(`/drafts/${draftId}`);
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+        console.warn('[drafts.get] Draft not found:', draftId);
+        return null;
+      }
+      console.error('[drafts.get] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Update an existing draft.
+   */
+  async update(draftId, draftData) {
+    if (!draftId) {
+      throw new Error('Draft ID is required');
+    }
+    
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.put(`/drafts/${draftId}`, draftData);
+    } catch (error) {
+      console.error('[drafts.update] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Delete a draft.
+   */
+  async delete(draftId) {
+    if (!draftId) {
+      throw new Error('Draft ID is required');
+    }
+    
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.delete(`/drafts/${draftId}`);
+    } catch (error) {
+      console.error('[drafts.delete] Error:', error);
+      throw error;
+    }
+  },
+};
+
+
+// ============================================
+// CREDITS
+// ============================================
+
 export const credits = {
   async decrementCredit(reason = 'recording_started') {
     const user = await auth.getMe();

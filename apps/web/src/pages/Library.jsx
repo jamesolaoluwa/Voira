@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { sessions as sessionsApi } from '@/components/services/api';
+import { sessions as sessionsApi, drafts as draftsApi } from '@/components/services/api';
 import { 
   Search, 
   Filter, 
@@ -51,12 +51,14 @@ const typeLabels = {
   practice: 'Practice',
 };
 
-const filterOptions = ['All', 'Application', 'Interview', 'Free Speak'];
+const filterOptions = ['All', 'Application', 'Interview', 'Free Speak', 'Drafts'];
 
 export default function Library() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
   const [isLoading, setIsLoading] = useState(true);
+  const [drafts, setDrafts] = useState([]);
+  const [isLoadingDrafts, setIsLoadingDrafts] = useState(true);
   const queryClient = useQueryClient();
   
   // Use unified session store as authoritative source
@@ -153,6 +155,48 @@ export default function Library() {
     fetchSessions();
   }, [setSessions]);
   
+  // Fetch drafts on mount
+  useEffect(() => {
+    const fetchDrafts = async () => {
+      try {
+        setIsLoadingDrafts(true);
+        const fetchedDrafts = await draftsApi.list();
+        
+        // Normalize draft data for display
+        const normalizedDrafts = (fetchedDrafts || []).map(draft => ({
+          id: draft.id,
+          name: draft.name,
+          title: draft.name, // Alias for consistent display
+          type: draft.type || 'free',
+          question: draft.question || '',
+          desired_style: draft.desired_style || '',
+          word_limit: draft.word_limit,
+          company_name: draft.company_name || '',
+          company_context: draft.company_context || '',
+          transcript: draft.transcript_text || '',
+          transcript_text: draft.transcript_text || '',
+          is_user_edited: draft.is_user_edited || false,
+          createdAt: draft.created_at,
+          created_at: draft.created_at,
+          updatedAt: draft.updated_at,
+          updated_at: draft.updated_at,
+          // Mark as draft for UI differentiation
+          isDraft: true,
+          source: 'backend',
+        }));
+        
+        setDrafts(normalizedDrafts);
+      } catch (error) {
+        console.error('Error fetching drafts:', error);
+        // Don't show error toast - drafts are optional
+      } finally {
+        setIsLoadingDrafts(false);
+      }
+    };
+    
+    fetchDrafts();
+  }, []);
+  
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -164,13 +208,45 @@ export default function Library() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
   
-  const filteredRecordings = safeRecordings.filter(rec => {
-    const title = (rec && rec.title) ? String(rec.title) : '';
+  // Combine sessions and drafts for unified display
+  const allItems = React.useMemo(() => {
+    // Sessions (completed recordings)
+    const sessionItems = safeRecordings.map(rec => ({
+      ...rec,
+      isDraft: false,
+    }));
+    
+    // Drafts (unfinished work)
+    const draftItems = drafts.map(draft => ({
+      ...draft,
+      isDraft: true,
+    }));
+    
+    // Combine and sort by most recent first
+    return [...sessionItems, ...draftItems].sort((a, b) => {
+      const dateA = new Date(a.updatedAt || a.createdAt || a.updated_at || a.created_at);
+      const dateB = new Date(b.updatedAt || b.createdAt || b.updated_at || b.created_at);
+      return dateB - dateA;
+    });
+  }, [safeRecordings, drafts]);
+  
+  const filteredRecordings = allItems.filter(rec => {
+    const title = (rec && (rec.title || rec.name)) ? String(rec.title || rec.name) : '';
     const tags = Array.isArray(rec?.tags) ? rec.tags : [];
     const matchesSearch = title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          tags.some(tag => String(tag).toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesFilter = activeFilter === 'All' || 
-                         (rec && typeLabels[rec.type] && typeLabels[rec.type].toLowerCase() === activeFilter.toLowerCase());
+    
+    // Handle filter logic including "Drafts" filter
+    let matchesFilter = false;
+    if (activeFilter === 'All') {
+      matchesFilter = true;
+    } else if (activeFilter === 'Drafts') {
+      matchesFilter = rec.isDraft === true;
+    } else {
+      matchesFilter = !rec.isDraft && rec.type && typeLabels[rec.type] && 
+                      typeLabels[rec.type].toLowerCase() === activeFilter.toLowerCase();
+    }
+    
     return matchesSearch && matchesFilter;
   });
   
@@ -208,7 +284,53 @@ export default function Library() {
   };
   
   // undo-capable delete: remove from store immediately and show undo toast
-  const handleDelete = (id) => {
+  const handleDelete = (id, isDraft = false) => {
+    if (isDraft) {
+      // Handle draft deletion
+      const draft = drafts.find(d => d.id === id);
+      if (!draft) return;
+      
+      // Remove from local state immediately
+      setDrafts(prev => prev.filter(d => d.id !== id));
+      
+      let undone = false;
+      
+      toast({
+        title: 'Draft deleted',
+        description: 'You can undo this action',
+        duration: 4000,
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            undone = true;
+            setDrafts(prev => [draft, ...prev]);
+          }
+        }
+      });
+      
+      // After undo window, actually delete from backend
+      setTimeout(async () => {
+        if (!undone) {
+          try {
+            await draftsApi.delete(id);
+            console.log('[Library] Draft deleted from backend:', id);
+          } catch (error) {
+            console.error('[Library] Error deleting draft from backend:', error);
+            // Restore on error
+            setDrafts(prev => [draft, ...prev]);
+            toast({
+              title: 'Failed to delete draft',
+              description: error.message || 'Please try again',
+              variant: 'destructive',
+            });
+          }
+        }
+      }, 4500);
+      
+      return;
+    }
+    
+    // Handle session deletion (existing logic)
     const session = sessions.find(s => s.id === id);
     if (!session) return;
     // remove from local store immediately
@@ -322,7 +444,7 @@ export default function Library() {
       
       {/* Recordings List */}
       <div className="space-y-4">
-        {isLoading ? (
+        {(isLoading || isLoadingDrafts) ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
           </div>
@@ -330,22 +452,35 @@ export default function Library() {
           <AnimatePresence>
             {filteredRecordings.map((recording, index) => {
               const TypeIcon = typeIcons[recording.type] || Mic;
+              const isDraft = recording.isDraft;
+              
+              // Determine link destination based on whether it's a draft or session
+              const linkTo = isDraft 
+                ? createPageUrl('Draft') + `?draft_id=${recording.id}`
+                : createPageUrl('Draft') + `?id=${recording.id}`;
+              
               return (
                 <motion.div
-                  key={recording.id}
+                  key={`${isDraft ? 'draft' : 'session'}-${recording.id}`}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, x: -20 }}
                   transition={{ delay: index * 0.05 }}
-                  className="group bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6 hover:border-violet-400 dark:hover:border-violet-500/20 transition-all"
+                  className={`group bg-white dark:bg-[#1a1a24] rounded-2xl border shadow-sm dark:shadow-none p-6 transition-all ${
+                    isDraft 
+                      ? 'border-amber-300/50 dark:border-amber-500/20 hover:border-amber-400 dark:hover:border-amber-500/40' 
+                      : 'border-zinc-200 dark:border-white/5 hover:border-violet-400 dark:hover:border-violet-500/20'
+                  }`}
                 >
                   <div className="flex items-start gap-4">
                     {/* Icon */}
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+                            isDraft ? 'bg-amber-500/20' :
                             recording.type === 'application' ? 'bg-violet-500/20' :
                             recording.type === 'interview' ? 'bg-teal-500/20' : 'bg-amber-500/20'
                           }`}>
                             <TypeIcon className={`w-5 h-5 ${
+                              isDraft ? 'text-amber-400' :
                               recording.type === 'application' ? 'text-violet-400' :
                               recording.type === 'interview' ? 'text-teal-400' : 'text-amber-400'
                             }`} />
@@ -354,21 +489,27 @@ export default function Library() {
                     {/* Content */}
                     <div className="flex-1 min-w-0">
                       <Link 
-                        to={createPageUrl('Draft') + `?id=${recording.id}`}
+                        to={linkTo}
                         state={{ 
-                          // Pass full session data to avoid unnecessary API calls
-                          // For backend-sourced items, Draft can still refresh from API
-                          // For local-only items, this prevents 404 errors
+                          // Pass full data to avoid unnecessary API calls
                           sessionData: recording,
-                          source: recording.source || 'local'
+                          source: recording.source || 'local',
+                          isDraft: isDraft,
                         }}
                       >
                         <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 hover:text-violet-600 dark:hover:text-violet-400 transition-colors truncate">
-                          {recording.title || recording.question || `${typeLabels[recording.type] || 'Recording'} – ${new Date(recording.createdAt || recording.created_date || Date.now()).toLocaleDateString()}`}
+                          {recording.title || recording.name || recording.question || `${typeLabels[recording.type] || 'Recording'} – ${new Date(recording.createdAt || recording.created_date || Date.now()).toLocaleDateString()}`}
                         </h3>
                       </Link>
                       
                       <div className="flex flex-wrap items-center gap-3 mt-2">
+                        {/* Draft badge - shown first if it's a draft */}
+                        {isDraft && (
+                          <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            Draft
+                          </Badge>
+                        )}
+                        
                         <Badge className={`${
                           recording.type === 'application' ? 'bg-violet-500/20 text-violet-300' :
                           recording.type === 'interview' ? 'bg-teal-500/20 text-teal-300' : 'bg-amber-500/20 text-amber-300'
@@ -384,7 +525,7 @@ export default function Library() {
                       </div>
                       
                       <div className="flex items-center gap-4 mt-3 text-sm text-zinc-600 dark:text-zinc-500">
-                        { (recording.durationSec || recording.duration_seconds) && (
+                        {!isDraft && (recording.durationSec || recording.duration_seconds) && (
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                             {formatDuration(recording.durationSec || recording.duration_seconds)}
@@ -392,9 +533,9 @@ export default function Library() {
                         )}
                         <span className="flex items-center gap-1">
                           <FileText className="w-3 h-3" />
-                          {formatDate(recording.createdAt || recording.created_date)}
+                          {formatDate(recording.updatedAt || recording.updated_at || recording.createdAt || recording.created_date)}
                         </span>
-                        {recording.confidenceScore || recording.clarity_score ? (
+                        {!isDraft && (recording.confidenceScore || recording.clarity_score) ? (
                           <span>
                             Confidence: <span className="text-teal-400">{recording.confidenceScore || recording.clarity_score}%</span>
                           </span>
@@ -407,7 +548,7 @@ export default function Library() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => setDeleteTarget(recording.id)}
+                        onClick={() => setDeleteTarget({ id: recording.id, isDraft })}
                         disabled={deleteMutation.isPending}
                         className="text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10"
                       >
@@ -418,10 +559,11 @@ export default function Library() {
                         )}
                       </Button>
                       <Link 
-                        to={createPageUrl('Draft') + `?id=${recording.id}`}
+                        to={linkTo}
                         state={{ 
                           sessionData: recording,
-                          source: recording.source || 'local'
+                          source: recording.source || 'local',
+                          isDraft: isDraft,
                         }}
                       >
                         <Button
@@ -458,19 +600,30 @@ export default function Library() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete session</AlertDialogTitle>
-            <AlertDialogDescription>Are you sure you want to delete this session? This action cannot be undone.</AlertDialogDescription>
+            <AlertDialogTitle>
+              Delete {deleteTarget?.isDraft ? 'draft' : 'session'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this {deleteTarget?.isDraft ? 'draft' : 'session'}? This action cannot be undone.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => {
-              if (!deleteTarget) return;
-              // optimistic remove from frontend store + local fallback so UI updates immediately
-              try { useSessionStore.getState().removeSession(deleteTarget); } catch (e) {}
-              try { removeLocalRecording(deleteTarget); } catch (e) {}
-              try { queryClient.setQueryData(['recordings'], (old = []) => (old || []).filter(r => r?.id !== deleteTarget)); } catch (e) {}
-              // then call remote delete
-              deleteMutation.mutate(deleteTarget);
+              if (!deleteTarget?.id) return;
+              
+              if (deleteTarget.isDraft) {
+                // Handle draft deletion
+                handleDelete(deleteTarget.id, true);
+              } else {
+                // Handle session deletion (existing logic)
+                // optimistic remove from frontend store + local fallback so UI updates immediately
+                try { useSessionStore.getState().removeSession(deleteTarget.id); } catch (e) {}
+                try { removeLocalRecording(deleteTarget.id); } catch (e) {}
+                try { queryClient.setQueryData(['recordings'], (old = []) => (old || []).filter(r => r?.id !== deleteTarget.id)); } catch (e) {}
+                // then call remote delete
+                deleteMutation.mutate(deleteTarget.id);
+              }
               setDeleteTarget(null);
             }} className="bg-rose-600">Delete</AlertDialogAction>
           </AlertDialogFooter>

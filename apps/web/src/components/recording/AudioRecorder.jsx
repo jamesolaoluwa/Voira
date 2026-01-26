@@ -987,6 +987,69 @@ export default function useAudioRecorder(options = {}) {
     setLiveTranscript('');
   };
 
+  /**
+   * Force cleanup of all audio resources.
+   * Call this when you need to ensure mic is off (e.g., on navigation away).
+   * Idempotent - safe to call multiple times.
+   * 
+   * EDGE CASE 3: This function MUST be called on ALL transitions to idle/error states
+   * to guarantee no lingering mic access after:
+   * - Recording errors
+   * - Permission denial
+   * - Session completion
+   * - Component unmount
+   * 
+   * Resources cleaned:
+   * - MediaRecorder (stopped)
+   * - Audio tracks (stopped - releases mic)
+   * - WebSocket (closed - prevents Deepgram 1011 errors)
+   */
+  const forceCleanup = () => {
+    console.log('[AudioRecorder] Force cleanup requested');
+    
+    // Stop WebSocket FIRST to prevent Deepgram 1011 timeout errors
+    // WebSocket expects audio data; closing it before stopping tracks is cleaner
+    stopLiveTranscription();
+    
+    // Stop MediaRecorder if active
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+        console.log('[AudioRecorder] MediaRecorder stopped');
+      } catch (err) {
+        console.warn('[AudioRecorder] Error stopping MediaRecorder during cleanup:', err);
+      }
+    }
+    
+    // Stop all audio tracks - CRITICAL for mic cleanup
+    // This is what actually releases the microphone (browser mic indicator turns off)
+    if (streamRef.current) {
+      try {
+        streamRef.current.getTracks().forEach(track => {
+          if (track.readyState !== 'ended') {
+            console.log(`[AudioRecorder] Force stopping track: ${track.kind}, state: ${track.readyState}`);
+            track.stop();
+          }
+        });
+      } catch (err) {
+        console.warn('[AudioRecorder] Error stopping tracks during cleanup:', err);
+      }
+      streamRef.current = null;
+    }
+    
+    // Reset all state
+    mediaRecorderRef.current = null;
+    recorderStateRef.current = 'idle';
+    wsStatusRef.current = 'idle';
+    wsReadyRef.current = false;
+    setIsRecording(false);
+    setIsPaused(false);
+    setIsOfflineMode(false);
+    offlineModeRef.current = false;
+    
+    console.log('[AudioRecorder] Force cleanup complete - mic should be OFF');
+  };
+
   return {
     isRecording,
     isPaused,
@@ -1004,5 +1067,6 @@ export default function useAudioRecorder(options = {}) {
     sendAudioChunk, // Expose method for sending audio chunks
     getAccumulatedTranscript, // CRITICAL: Use this to capture transcript synchronously
     clearTranscript, // Call after session saved or discarded
+    forceCleanup, // Force cleanup of all audio resources
   };
 }

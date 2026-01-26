@@ -19,7 +19,8 @@ from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
     TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
     FileUploadResponse, AudioUploadResponse,
-    InterviewRefinementRequest, InterviewRefinementResponse, FeedbackItem
+    InterviewRefinementRequest, InterviewRefinementResponse, FeedbackItem,
+    DraftCreate, DraftUpdate, DraftResponse
 )
 from storage import storage_service, StorageService
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
@@ -497,6 +498,238 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
     logger.info(f"Deleted {deleted_count} sessions for user {user['id']}")
     
     return {"deleted_count": deleted_count, "message": f"Deleted {deleted_count} session(s)"}
+
+
+# =============================================================================
+# DRAFT ENDPOINTS (Partial Save / Draft Naming)
+# =============================================================================
+
+def _generate_draft_name(question: str | None, max_words: int = 8) -> str:
+    """
+    Generate a default draft name from the first ~8 words of the question.
+    Falls back to "Untitled Draft" if no question provided.
+    """
+    if not question or not question.strip():
+        return "Untitled Draft"
+    
+    words = question.strip().split()[:max_words]
+    name = " ".join(words)
+    
+    # Add ellipsis if truncated
+    if len(question.strip().split()) > max_words:
+        name += "..."
+    
+    return name or "Untitled Draft"
+
+
+@app.post("/drafts", response_model=DraftResponse)
+async def create_draft(
+    draft_data: DraftCreate,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Create a new draft (partial save).
+    
+    Drafts are intentionally saved unfinished work:
+    - No LLM calls triggered
+    - No credits consumed
+    - No audio persistence
+    - Separate from completed sessions
+    
+    If name is not provided, auto-generated from first ~8 words of question.
+    """
+    rate_limit_middleware(f"create_draft:{user['id']}")
+    
+    # Generate name if not provided
+    name = draft_data.name
+    if not name or not name.strip():
+        name = _generate_draft_name(draft_data.question)
+    
+    # Insert draft into database
+    draft_record = {
+        "user_id": user["id"],
+        "name": name,
+        "type": draft_data.type,
+        "question": draft_data.question,
+        "desired_style": draft_data.desired_style,
+        "word_limit": draft_data.word_limit,
+        "company_name": draft_data.company_name,
+        "company_context": draft_data.company_context,
+        "transcript_text": draft_data.transcript_text or "",
+        "is_user_edited": draft_data.is_user_edited,
+    }
+    
+    response = supabase.table("drafts").insert(draft_record).execute()
+    
+    if not response.data:
+        logger.error(f"Failed to create draft for user {user['id']}")
+        raise HTTPException(status_code=500, detail="Failed to create draft")
+    
+    created = response.data[0]
+    logger.info(f"Created draft {created['id']} for user {user['id']}: {name}")
+    
+    return DraftResponse(
+        id=created["id"],
+        user_id=created["user_id"],
+        name=created["name"],
+        type=created["type"],
+        question=created.get("question"),
+        desired_style=created.get("desired_style"),
+        word_limit=created.get("word_limit"),
+        company_name=created.get("company_name"),
+        company_context=created.get("company_context"),
+        transcript_text=created.get("transcript_text", ""),
+        is_user_edited=created.get("is_user_edited", False),
+        created_at=datetime.fromisoformat(created["created_at"].replace("Z", "+00:00")),
+        updated_at=datetime.fromisoformat(created["updated_at"].replace("Z", "+00:00")),
+    )
+
+
+@app.get("/drafts", response_model=List[DraftResponse])
+async def list_drafts(user: dict = Depends(get_current_user)):
+    """
+    List all drafts for the current user.
+    Returns drafts sorted by updated_at (most recent first).
+    """
+    rate_limit_middleware(f"list_drafts:{user['id']}")
+    
+    response = supabase.table("drafts").select("*").eq("user_id", user["id"]).order("updated_at", desc=True).execute()
+    
+    drafts = []
+    for draft in response.data or []:
+        drafts.append(DraftResponse(
+            id=draft["id"],
+            user_id=draft["user_id"],
+            name=draft["name"],
+            type=draft["type"],
+            question=draft.get("question"),
+            desired_style=draft.get("desired_style"),
+            word_limit=draft.get("word_limit"),
+            company_name=draft.get("company_name"),
+            company_context=draft.get("company_context"),
+            transcript_text=draft.get("transcript_text", ""),
+            is_user_edited=draft.get("is_user_edited", False),
+            created_at=datetime.fromisoformat(draft["created_at"].replace("Z", "+00:00")),
+            updated_at=datetime.fromisoformat(draft["updated_at"].replace("Z", "+00:00")),
+        ))
+    
+    return drafts
+
+
+@app.get("/drafts/{draft_id}", response_model=DraftResponse)
+async def get_draft(
+    draft_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Get a specific draft by ID.
+    RLS ensures users can only access their own drafts.
+    """
+    rate_limit_middleware(f"get_draft:{user['id']}")
+    
+    response = supabase.table("drafts").select("*").eq("id", draft_id).eq("user_id", user["id"]).execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    
+    draft = response.data[0]
+    
+    return DraftResponse(
+        id=draft["id"],
+        user_id=draft["user_id"],
+        name=draft["name"],
+        type=draft["type"],
+        question=draft.get("question"),
+        desired_style=draft.get("desired_style"),
+        word_limit=draft.get("word_limit"),
+        company_name=draft.get("company_name"),
+        company_context=draft.get("company_context"),
+        transcript_text=draft.get("transcript_text", ""),
+        is_user_edited=draft.get("is_user_edited", False),
+        created_at=datetime.fromisoformat(draft["created_at"].replace("Z", "+00:00")),
+        updated_at=datetime.fromisoformat(draft["updated_at"].replace("Z", "+00:00")),
+    )
+
+
+@app.put("/drafts/{draft_id}", response_model=DraftResponse)
+async def update_draft(
+    draft_id: str,
+    draft_data: DraftUpdate,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Update an existing draft.
+    Only provided fields are updated; others remain unchanged.
+    """
+    rate_limit_middleware(f"update_draft:{user['id']}")
+    
+    # Build update dict with only provided fields
+    update_dict = {}
+    if draft_data.name is not None:
+        update_dict["name"] = draft_data.name
+    if draft_data.question is not None:
+        update_dict["question"] = draft_data.question
+    if draft_data.desired_style is not None:
+        update_dict["desired_style"] = draft_data.desired_style
+    if draft_data.word_limit is not None:
+        update_dict["word_limit"] = draft_data.word_limit
+    if draft_data.company_name is not None:
+        update_dict["company_name"] = draft_data.company_name
+    if draft_data.company_context is not None:
+        update_dict["company_context"] = draft_data.company_context
+    if draft_data.transcript_text is not None:
+        update_dict["transcript_text"] = draft_data.transcript_text
+    if draft_data.is_user_edited is not None:
+        update_dict["is_user_edited"] = draft_data.is_user_edited
+    
+    if not update_dict:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    # Update draft (RLS ensures user can only update their own)
+    response = supabase.table("drafts").update(update_dict).eq("id", draft_id).eq("user_id", user["id"]).execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    
+    draft = response.data[0]
+    logger.info(f"Updated draft {draft_id} for user {user['id']}")
+    
+    return DraftResponse(
+        id=draft["id"],
+        user_id=draft["user_id"],
+        name=draft["name"],
+        type=draft["type"],
+        question=draft.get("question"),
+        desired_style=draft.get("desired_style"),
+        word_limit=draft.get("word_limit"),
+        company_name=draft.get("company_name"),
+        company_context=draft.get("company_context"),
+        transcript_text=draft.get("transcript_text", ""),
+        is_user_edited=draft.get("is_user_edited", False),
+        created_at=datetime.fromisoformat(draft["created_at"].replace("Z", "+00:00")),
+        updated_at=datetime.fromisoformat(draft["updated_at"].replace("Z", "+00:00")),
+    )
+
+
+@app.delete("/drafts/{draft_id}")
+async def delete_draft(
+    draft_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Delete a draft.
+    RLS ensures users can only delete their own drafts.
+    """
+    rate_limit_middleware(f"delete_draft:{user['id']}")
+    
+    response = supabase.table("drafts").delete().eq("id", draft_id).eq("user_id", user["id"]).execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    
+    logger.info(f"Deleted draft {draft_id} for user {user['id']}")
+    
+    return {"message": "Draft deleted successfully"}
 
 
 @app.post("/transcribe", response_model=TranscribeResponse)

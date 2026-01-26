@@ -399,3 +399,62 @@ class InterviewRefinementResponse(BaseModel):
         description="Token usage for this request (prompt_tokens, completion_tokens, total_tokens)"
     )
 
+
+# ============================================
+# Draft Models (Partial Save / Draft Naming)
+# ============================================
+
+class DraftCreate(BaseModel):
+    """
+    Request model for creating or updating a draft.
+    
+    Drafts are intentionally saved unfinished work.
+    No LLM calls, no credits consumed, no audio persistence.
+    """
+    name: Optional[str] = Field(
+        None,
+        max_length=200,
+        description="Draft name. If not provided, auto-generated from first ~8 words of question."
+    )
+    type: str = Field(
+        default="free",
+        pattern="^(free|application|interview)$",
+        description="Session type"
+    )
+    question: Optional[str] = Field(None, max_length=1000)
+    desired_style: Optional[str] = Field(None, max_length=500)
+    word_limit: Optional[int] = Field(None, ge=20, le=1000)
+    company_name: Optional[str] = Field(None, max_length=100)
+    company_context: Optional[str] = Field(None, max_length=5000)
+    transcript_text: Optional[str] = Field(None, max_length=50000)
+    is_user_edited: bool = Field(default=False)
+
+
+class DraftUpdate(BaseModel):
+    """Request model for updating an existing draft."""
+    name: Optional[str] = Field(None, max_length=200)
+    question: Optional[str] = Field(None, max_length=1000)
+    desired_style: Optional[str] = Field(None, max_length=500)
+    word_limit: Optional[int] = Field(None, ge=20, le=1000)
+    company_name: Optional[str] = Field(None, max_length=100)
+    company_context: Optional[str] = Field(None, max_length=5000)
+    transcript_text: Optional[str] = Field(None, max_length=50000)
+    is_user_edited: Optional[bool] = None
+
+
+class DraftResponse(BaseModel):
+    """Response model for a draft."""
+    id: str
+    user_id: str
+    name: str
+    type: str
+    question: Optional[str]
+    desired_style: Optional[str]
+    word_limit: Optional[int]
+    company_name: Optional[str]
+    company_context: Optional[str]
+    transcript_text: str
+    is_user_edited: bool
+    created_at: datetime
+    updated_at: datetime
+
