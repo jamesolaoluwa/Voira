@@ -1,16 +1,79 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Cloud, Upload, File, Check, X } from 'lucide-react';
+import { Cloud, Upload, File, Check, X, AlertCircle } from 'lucide-react';
+import { toast } from '@/components/ui/use-toast';
+
+// Safe file types for reference uploads
+const SAFE_FILE_TYPES = {
+  // PDF files
+  'application/pdf': ['.pdf'],
+  // Word documents
+  'application/msword': ['.doc'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+  // Images
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/gif': ['.gif'],
+  'image/webp': ['.webp'],
+  'image/bmp': ['.bmp'],
+  'image/tiff': ['.tiff', '.tif'],
+};
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export default function FileUpload({ 
   onFileSelect, 
-  accept = '*',
+  accept = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif',
   label = 'Upload or paste a reference you like (optional)',
   helperText = 'Voira will learn the tone and structure — not copy the content.'
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const validateFile = (file) => {
+    // Reset error
+    setError(null);
+
+    // Check file size
+    if (file.size > MAX_FILE_SIZE) {
+      const errorMsg = `File too large. Maximum size is ${MAX_FILE_SIZE / (1024 * 1024)}MB`;
+      setError(errorMsg);
+      toast({ 
+        title: 'File too large', 
+        description: errorMsg,
+        variant: 'destructive'
+      });
+      return false;
+    }
+
+    // Check file type
+    const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+    const fileType = file.type.toLowerCase();
+    
+    // Check if file type is in our safe list
+    const isSafeType = Object.keys(SAFE_FILE_TYPES).some(type => {
+      return type === fileType && SAFE_FILE_TYPES[type].includes(fileExtension);
+    });
+
+    // Also check by extension if MIME type is not available or doesn't match
+    const safeExtensions = Object.values(SAFE_FILE_TYPES).flat();
+    const isValidExtension = safeExtensions.includes(fileExtension);
+
+    if (!isSafeType && !isValidExtension) {
+      const errorMsg = 'Unsupported file type. Please upload PDF, Word document (.doc, .docx), or image (JPG, PNG, GIF, WebP, BMP, TIFF)';
+      setError(errorMsg);
+      toast({ 
+        title: 'Unsupported file type', 
+        description: errorMsg,
+        variant: 'destructive'
+      });
+      return false;
+    }
+
+    return true;
+  };
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -25,16 +88,23 @@ export default function FileUpload({
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
+    if (file && validateFile(file)) {
+      handleFile(file);
+    }
   };
 
   const handleFileInput = (e) => {
     const file = e.target.files[0];
-    if (file) handleFile(file);
+    if (file && validateFile(file)) {
+      handleFile(file);
+    }
+    // Reset input so same file can be selected again
+    e.target.value = '';
   };
 
   const handleFile = (file) => {
     setIsUploading(true);
+    setError(null);
     setTimeout(() => {
       setUploadedFile(file);
       setIsUploading(false);
@@ -118,9 +188,24 @@ export default function FileUpload({
               {helperText && (
                 <p className="text-xs text-zinc-500 dark:text-zinc-600">{helperText}</p>
               )}
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-2">
+                Supported: PDF, Word (.doc, .docx), Images (JPG, PNG, GIF, WebP, BMP, TIFF) • Max 10MB
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
+        
+        {/* Error message */}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-3 flex items-center gap-2 text-rose-500 text-sm"
+          >
+            <AlertCircle className="w-4 h-4" />
+            <span>{error}</span>
+          </motion.div>
+        )}
       </div>
     </div>
   );

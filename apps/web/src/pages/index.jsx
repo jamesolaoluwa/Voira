@@ -37,7 +37,17 @@ import Terms from "./Terms";
 import Contact from "./Contact";
 import ResetPassword from './ResetPassword';
 
+// Legacy Admin page (self-management) - keeping for backwards compatibility
 import Admin from "./Admin";
+// New Admin Dashboard pages
+import { 
+  AdminLayout, 
+  AdminDashboard, 
+  AdminUsers, 
+  AdminSessions, 
+  AdminDrafts, 
+  AdminAuditLog 
+} from "./admin/index";
 import AdminGuard from '@/components/AdminGuard';
 
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
@@ -133,7 +143,17 @@ function PagesContent() {
                 <Route path="/refinedraft" element={<AuthGate><RefineDraft /></AuthGate>} />
                 <Route path="/draft" element={<AuthGate><Draft /></AuthGate>} />
                 <Route path="/pricing" element={<AuthGate><Pricing /></AuthGate>} />
-                <Route path="/admin" element={<AdminGuard><Admin /></AdminGuard>} />
+                {/* Legacy admin self-management page */}
+                <Route path="/admin-self" element={<AdminGuard><Admin /></AdminGuard>} />
+            </Route>
+            
+            {/* Admin Dashboard - separate layout, admin-only */}
+            <Route path="/admin" element={<AdminGuard><AdminLayout /></AdminGuard>}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="users" element={<AdminUsers />} />
+                <Route path="sessions" element={<AdminSessions />} />
+                <Route path="drafts" element={<AdminDrafts />} />
+                <Route path="audit" element={<AdminAuditLog />} />
             </Route>
         </Routes>
     );

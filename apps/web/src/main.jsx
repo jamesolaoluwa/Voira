@@ -3,6 +3,10 @@ import ReactDOM from 'react-dom/client'
 import App from '@/App.jsx'
 import '@/index.css'
 import { supabase } from '@/components/lib/supabase'
+import { initSentry, setUser as setSentryUser } from '@/lib/sentry.jsx'
+
+// Initialize Sentry for error tracking (must be done before app renders)
+initSentry();
 
 async function bootstrap() {
     // If the app was redirected back from an OAuth provider, Supabase
@@ -21,6 +25,15 @@ async function bootstrap() {
             console.warn('Error parsing auth session from URL', e);
         }
     }
+
+    // Set up Sentry user context when auth state changes
+    supabase.auth.onAuthStateChange((event, session) => {
+        if (session?.user) {
+            setSentryUser(session.user.id, session.user.email);
+        } else {
+            setSentryUser(null);
+        }
+    });
 
     ReactDOM.createRoot(document.getElementById('root')).render(
         <App />

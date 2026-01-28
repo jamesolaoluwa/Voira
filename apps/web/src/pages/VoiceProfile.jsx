@@ -29,14 +29,18 @@ const sentenceLengthOptions = [
 
 export default function VoiceProfile() {
   const sessions = useSessionStore(state => state.sessions || []);
-  const stats = React.useMemo(() => {
-    const total = sessions.length;
-    if (total === 0) return { avgConfidence: 0, avgWPM: 0, avgFillers: 0 };
-    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
-    const avgFillers = Math.round(sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
-    const avgWPM = Math.round(sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
-    return { avgConfidence, avgWPM, avgFillers };
+  // Filter out seed/demo data for stats
+  const realSessions = React.useMemo(() => {
+    return sessions.filter(s => s.id && !s.id.startsWith('seed-'));
   }, [sessions]);
+  const stats = React.useMemo(() => {
+    const total = realSessions.length;
+    if (total === 0) return { avgConfidence: 0, avgWPM: 0, avgFillers: 0 };
+    const avgConfidence = Math.round(realSessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const avgFillers = Math.round(realSessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
+    const avgWPM = Math.round(realSessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
+    return { avgConfidence, avgWPM, avgFillers };
+  }, [realSessions]);
   const [selectedTone, setSelectedTone] = useState('professional');
   const [confidence, setConfidence] = useState([65]);
   const [emotionalDepth, setEmotionalDepth] = useState([50]);

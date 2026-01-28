@@ -47,14 +47,18 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const sessions = useSessionStore(state => state.sessions || []);
-  const stats = React.useMemo(() => {
-    const total = sessions.length;
-    if (total === 0) return { totalSessions: 0, avgConfidence: 0, avgFillers: 0, avgWPM: 0 };
-    const avgConfidence = Math.round(sessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
-    const avgFillers = Math.round(sessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
-    const avgWPM = Math.round(sessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
-    return { totalSessions: total, avgConfidence, avgFillers, avgWPM };
+  // Filter out seed/demo data for stats
+  const realSessions = React.useMemo(() => {
+    return sessions.filter(s => s.id && !s.id.startsWith('seed-'));
   }, [sessions]);
+  const stats = React.useMemo(() => {
+    const total = realSessions.length;
+    if (total === 0) return { totalSessions: 0, avgConfidence: 0, avgFillers: 0, avgWPM: 0 };
+    const avgConfidence = Math.round(realSessions.reduce((s, x) => s + (x.confidenceScore || 0), 0) / total);
+    const avgFillers = Math.round(realSessions.reduce((s, x) => s + (x.fillerCount || 0), 0) / total);
+    const avgWPM = Math.round(realSessions.reduce((s, x) => s + (x.wordsPerMinute || 0), 0) / total);
+    return { totalSessions: total, avgConfidence, avgFillers, avgWPM };
+  }, [realSessions]);
   // Only run auth check when auth loading state changes or when authUser becomes available.
   // Avoid depending on `session` here to prevent repeated effects caused by session updates elsewhere.
   useEffect(() => {

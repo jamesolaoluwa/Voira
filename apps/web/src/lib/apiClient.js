@@ -20,10 +20,17 @@ async function getAuthToken() {
 async function apiRequest(endpoint, options = {}) {
   const token = await getAuthToken();
   
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+  // For FormData, let browser set Content-Type with boundary
+  // For JSON, set Content-Type explicitly
+  const isFormData = options.body instanceof FormData;
+  const headers = {};
+  
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
+  
+  // Merge any provided headers (FormData uploads can override)
+  Object.assign(headers, options.headers);
   
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -37,7 +44,9 @@ async function apiRequest(endpoint, options = {}) {
   
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(errorData.detail || `API error: ${response.status}`);
+    const error = new Error(errorData.detail || `API error: ${response.status}`);
+    error.status = response.status; // Attach status code for error handling
+    throw error;
   }
   
   return response.json();
@@ -45,10 +54,19 @@ async function apiRequest(endpoint, options = {}) {
 
 export const apiClient = {
   get: (endpoint) => apiRequest(endpoint, { method: 'GET' }),
-  post: (endpoint, data) => apiRequest(endpoint, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
+  post: (endpoint, data) => {
+    // Support both JSON and FormData
+    if (data instanceof FormData) {
+      return apiRequest(endpoint, {
+        method: 'POST',
+        body: data,
+      });
+    }
+    return apiRequest(endpoint, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
   put: (endpoint, data) => apiRequest(endpoint, {
     method: 'PUT',
     body: JSON.stringify(data),

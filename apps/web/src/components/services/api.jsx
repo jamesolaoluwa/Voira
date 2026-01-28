@@ -106,12 +106,28 @@ export async function processOAuthRedirect() {
 // ============================================
 
 export const sessions = {
+  // Alias for getSessionById (Bug #13 fix - Draft.jsx was calling sessions.get())
+  async get(id) {
+    return this.getSessionById(id);
+  },
+  
   async createSessionDraft(payload) {
     const {
       title, type, question, goal, reference_text,
       audio_url, audio_mime, audio_size_bytes, duration_seconds,
       transcript, refined_draft, metrics, highlights = [],
+      // Also accept flat properties for backward compatibility
+      clarity_score: flatClarityScore,
+      confidence_score: flatConfidenceScore,
+      filler_count: flatFillerCount,
+      words_per_minute: flatWordsPerMinute,
     } = payload;
+
+    // Support both nested metrics and flat properties
+    const clarityScore = metrics?.clarity_score ?? flatClarityScore ?? 0;
+    const confidenceScore = metrics?.confidence_score ?? flatConfidenceScore ?? 0;
+    const fillerCount = metrics?.filler_count ?? flatFillerCount ?? 0;
+    const wordsPerMinute = metrics?.words_per_minute ?? flatWordsPerMinute ?? 0;
 
     // Try backend first (enforces credits server-side)
     try {
@@ -128,10 +144,10 @@ export const sessions = {
         duration_seconds,
         transcript,
         refined_draft,
-        clarity_score: metrics?.clarity_score || 0,
-        confidence_score: metrics?.confidence_score || 0,
-        filler_count: metrics?.filler_count || 0,
-        words_per_minute: metrics?.words_per_minute || 0,
+        clarity_score: clarityScore,
+        confidence_score: confidenceScore,
+        filler_count: fillerCount,
+        words_per_minute: wordsPerMinute,
         highlights: highlights || [],
       });
     } catch (error) {
@@ -151,55 +167,126 @@ export const sessions = {
         duration_seconds: duration_seconds || 0,
         transcript: transcript || '',
         refined_draft: refined_draft || '',
-        clarity_score: metrics?.clarity_score || 0,
-        confidence_score: metrics?.confidence_score || 0,
-        filler_count: metrics?.filler_count || 0,
-        words_per_minute: metrics?.words_per_minute || 0,
+        clarity_score: clarityScore,
+        confidence_score: confidenceScore,
+        filler_count: fillerCount,
+        words_per_minute: wordsPerMinute,
         highlights: JSON.stringify(highlights),
       });
       return session;
     }
   },
 
+  /**
+   * Get a session by ID
+   * 
+   * LOADING STRATEGY:
+   * 1. Try backend API first
+   * 2. If backend returns 404 → return null immediately (NO fallback)
+   * 3. If backend is unavailable → try direct Supabase query
+   * 
+   * This prevents duplicate 404 errors and unnecessary network calls.
+   */
   async getSessionById(id) {
-    const recordings = await base44.entities.Recording.filter({ id });
-    if (!recordings || recordings.length === 0) {
-      throw new Error('Session not found');
+    // Validate ID before querying
+    if (!id || typeof id !== 'string' || id.trim().length === 0) {
+      console.error('[sessions.getSessionById] Invalid session ID:', id);
+      return null;
     }
-    const recording = recordings[0];
     
-    if (recording.highlights && typeof recording.highlights === 'string') {
+    // Track if we got an explicit 404 from backend
+    let backendReturned404 = false;
+    
+    try {
+      // Try backend API first (preferred)
       try {
-        recording.highlights = JSON.parse(recording.highlights);
-      } catch (e) {
-        recording.highlights = [];
+        const { apiClient } = await import('@/lib/apiClient');
+        const session = await apiClient.get(`/sessions/${id}`);
+        if (session) {
+          console.log('[sessions.getSessionById] Loaded from backend API:', id);
+          return session;
+        }
+      } catch (apiError) {
+        const errorMsg = apiError.message || String(apiError);
+        
+        // Check if this is an explicit 404 from the backend
+        if (errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('Not Found')) {
+          console.warn('[sessions.getSessionById] Backend returned 404, NOT retrying:', id);
+          backendReturned404 = true;
+          // DO NOT fall through to direct query - return null immediately
+          return null;
+        }
+        
+        // For other errors (network, CORS, etc.), fall through to direct query
+        console.warn('[sessions.getSessionById] Backend unavailable, trying direct query:', apiError.message);
+      }
+      
+      // ONLY do fallback query if backend was unavailable (not if it returned 404)
+      if (backendReturned404) {
+        return null;
+      }
+      
+      // Fallback: Direct Supabase query via Base44
+      const recordings = await base44.entities.Recording.filter({ id });
+      
+      if (!recordings || recordings.length === 0) {
+        console.warn('[sessions.getSessionById] Session not found in direct query:', id);
+        return null;
+      }
+      
+      const recording = recordings[0];
+      
+      // Parse highlights JSON safely
+      if (recording.highlights && typeof recording.highlights === 'string') {
+        try {
+          recording.highlights = JSON.parse(recording.highlights);
+        } catch (e) {
+          console.warn('[sessions.getSessionById] Failed to parse highlights JSON:', e);
+          recording.highlights = [];
+        }
+      }
+
+      console.log('[sessions.getSessionById] Loaded from direct query:', id);
+      return {
+        id: recording.id,
+        user_id: recording.created_by,
+        title: recording.title,
+        type: recording.type,
+        question: recording.question,
+        goal: recording.goal || null,
+        reference_text: recording.reference_text || null,
+        audio_url: recording.audio_url || null,
+        audio_mime: recording.audio_mime || null,
+        audio_size_bytes: recording.audio_size_bytes || 0,
+        duration_seconds: recording.duration_seconds || 0,
+        transcript: recording.transcript || '',
+        refined_draft: recording.refined_draft || '',
+        metrics: {
+          filler_count: recording.filler_count || 0,
+          words_per_minute: recording.words_per_minute || 0,
+          confidence_score: recording.confidence_score || 0,
+          clarity_score: recording.clarity_score || 0,
+        },
+        highlights: recording.highlights || [],
+        created_at: recording.created_date,
+        updated_at: recording.updated_date,
+        source: 'backend', // Mark as backend-sourced
+      };
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      
+      if (errorMsg.includes('permission') || errorMsg.includes('403') || errorMsg.includes('unauthorized')) {
+        console.error('[sessions.getSessionById] Permission denied for session:', id);
+        throw new Error('You do not have permission to view this recording.');
+      } else if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+        // Should not reach here due to early return above, but handle just in case
+        console.warn('[sessions.getSessionById] Session not found:', id);
+        return null;
+      } else {
+        console.error('[sessions.getSessionById] Database error loading session:', id, error);
+        throw new Error(`Failed to load session: ${errorMsg}`);
       }
     }
-
-    return {
-      id: recording.id,
-      user_id: recording.created_by,
-      title: recording.title,
-      type: recording.type,
-      question: recording.question,
-      goal: recording.goal || null,
-      reference_text: recording.reference_text || null,
-      audio_url: recording.audio_url || null,
-      audio_mime: recording.audio_mime || null,
-      audio_size_bytes: recording.audio_size_bytes || 0,
-      duration_seconds: recording.duration_seconds || 0,
-      transcript: recording.transcript || '',
-      refined_draft: recording.refined_draft || '',
-      metrics: {
-        filler_count: recording.filler_count || 0,
-        words_per_minute: recording.words_per_minute || 0,
-        confidence_score: recording.confidence_score || 0,
-        clarity_score: recording.clarity_score || 0,
-      },
-      highlights: recording.highlights || [],
-      created_at: recording.created_date,
-      updated_at: recording.updated_date,
-    };
   },
 
   async listSessions(filters = {}) {
@@ -212,8 +299,13 @@ export const sessions = {
         user_id: session.user_id,
         title: session.title,
         type: session.type,
+        question: session.question || '',
+        transcript: session.transcript || '',
         duration_seconds: session.duration_seconds || 0,
+        confidence_score: session.confidence_score || 0,
         clarity_score: session.clarity_score || 0,
+        filler_count: session.filler_count || 0,
+        words_per_minute: session.words_per_minute || 0,
         tags: session.tags || [],
         created_at: session.created_at,
       }));
@@ -226,8 +318,13 @@ export const sessions = {
         user_id: recording.created_by,
         title: recording.title,
         type: recording.type,
+        question: recording.question || '',
+        transcript: recording.transcript || '',
         duration_seconds: recording.duration_seconds || 0,
+        confidence_score: recording.confidence_score || 0,
         clarity_score: recording.clarity_score || 0,
+        filler_count: recording.filler_count || 0,
+        words_per_minute: recording.words_per_minute || 0,
         tags: recording.tags || [],
         created_at: recording.created_date,
       }));
@@ -236,6 +333,23 @@ export const sessions = {
 
   async deleteSession(id) {
     await base44.entities.Recording.delete(id);
+  },
+
+  async deleteAllSessions() {
+    // Try backend first
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.delete('/sessions');
+    } catch (error) {
+      // Fallback to direct Supabase (delete all for current user)
+      console.warn('Backend DELETE /sessions failed, falling back to direct Supabase:', error);
+      const recordings = await base44.entities.Recording.list('-created_date');
+      // Delete all recordings one by one (Supabase doesn't have bulk delete via client)
+      for (const recording of recordings) {
+        await base44.entities.Recording.delete(recording.id);
+      }
+      return { deleted_count: recordings.length, message: `Deleted ${recordings.length} session(s)` };
+    }
   },
 
   async updateSession(id, patch) {
@@ -277,34 +391,71 @@ export const audio = {
     return true;
   },
 
-  async startTranscriptionStream(audioBlob, onChunkUpdate) {
-    const simulateChunks = async () => {
-      const chunks = [
-        'Hello, I would like to',
-        'Hello, I would like to talk about my',
-        'Hello, I would like to talk about my experience in',
-        'Hello, I would like to talk about my experience in leading community projects...',
-      ];
-
-      for (let i = 0; i < chunks.length; i++) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        onChunkUpdate(chunks[i]);
+  /**
+   * Transcribe audio file using backend /transcribe endpoint
+   * @param {File|Blob} audioFile - Audio file to transcribe
+   * @param {string} language - Language code (default: 'en')
+   * @returns {Promise<{transcript: string, confidence?: number, duration?: number, word_count?: number}>}
+   */
+  async transcribeAudio(audioFile, language = 'en') {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      
+      // Create FormData for multipart/form-data upload
+      const formData = new FormData();
+      formData.append('file', audioFile);
+      formData.append('language', language);
+      
+      // Send to backend /transcribe endpoint
+      const result = await apiClient.post('/transcribe', formData);
+      
+      return {
+        transcript: result.transcript,
+        confidence: result.confidence,
+        duration: result.duration,
+        word_count: result.word_count,
+      };
+    } catch (error) {
+      // Handle specific HTTP status codes with user-friendly messages
+      if (error.status === 402) {
+        throw new Error('You are out of credits. Please upgrade.');
+      } else if (error.status === 400) {
+        throw new Error('Invalid or unsupported audio file.');
+      } else if (error.status === 503) {
+        throw new Error('Transcription service temporarily unavailable.');
       }
-    };
+      // Re-throw other errors as-is
+      throw error;
+    }
+  },
 
-    simulateChunks();
+  /**
+   * Start streaming transcription (deprecated - use WebSocket in AudioRecorder)
+   * @deprecated Use live WebSocket transcription via AudioRecorder instead
+   * This method is kept for backward compatibility but should not be used in production.
+   */
+  async startTranscriptionStream(audioBlob, onChunkUpdate) {
+    // NOTE: This method is deprecated. Live transcription now uses WebSocket
+    // via AudioRecorder.jsx directly connected to /ws/listen endpoint.
+    // This stub exists only for backward compatibility.
+    console.warn('[audio.startTranscriptionStream] Deprecated - use WebSocket transcription');
     return this.transcribeFinal(audioBlob);
   },
 
+  /**
+   * Finalize transcription by uploading audio file.
+   * NOTE: Actual transcription is now done via live WebSocket streaming.
+   * This method uploads the audio file and returns file metadata.
+   */
   async transcribeFinal(audioBlob) {
     const audioFile = new File([audioBlob], 'recording.webm', { type: audioBlob.type });
     
     const { file_url } = await base44.integrations.Core.UploadFile({ file: audioFile });
     
-    const mockTranscript = "I believe my experience in leading community initiatives has shaped who I am today. When I started volunteering at the local food bank three years ago, I didn't realize how much it would transform my perspective on service and leadership.";
-    
+    // NOTE: Transcript is captured from live WebSocket transcription, not generated here.
+    // Return empty transcript - caller must provide transcript from live transcription.
     return {
-      transcript: mockTranscript,
+      transcript: '', // Transcript comes from live WebSocket, not mock data
       audio_url: file_url,
       audio_mime: audioBlob.type,
       audio_size_bytes: audioBlob.size,
@@ -441,6 +592,101 @@ export const billing = {
     }
   },
 };
+
+// ============================================
+// CREDITS
+// ============================================
+
+// ============================================
+// DRAFTS (Partial Save / Draft Naming)
+// ============================================
+
+export const drafts = {
+  /**
+   * Create a new draft.
+   * No LLM calls, no credits consumed.
+   */
+  async create(draftData) {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.post('/drafts', draftData);
+    } catch (error) {
+      console.error('[drafts.create] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * List all drafts for the current user.
+   */
+  async list() {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.get('/drafts');
+    } catch (error) {
+      console.error('[drafts.list] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get a specific draft by ID.
+   */
+  async get(draftId) {
+    if (!draftId) {
+      console.error('[drafts.get] Invalid draft ID');
+      return null;
+    }
+    
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.get(`/drafts/${draftId}`);
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+        console.warn('[drafts.get] Draft not found:', draftId);
+        return null;
+      }
+      console.error('[drafts.get] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Update an existing draft.
+   */
+  async update(draftId, draftData) {
+    if (!draftId) {
+      throw new Error('Draft ID is required');
+    }
+    
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.put(`/drafts/${draftId}`, draftData);
+    } catch (error) {
+      console.error('[drafts.update] Error:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Delete a draft.
+   */
+  async delete(draftId) {
+    if (!draftId) {
+      throw new Error('Draft ID is required');
+    }
+    
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.delete(`/drafts/${draftId}`);
+    } catch (error) {
+      console.error('[drafts.delete] Error:', error);
+      throw error;
+    }
+  },
+};
+
 
 // ============================================
 // CREDITS
