@@ -1,7 +1,7 @@
 """Tests for /admin/is-admin endpoint."""
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, AsyncMock
 import sys
 import os
 
@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'apps', 'api'))
 from main import app
 from auth import get_current_user, check_is_admin
 
-client = TestClient(app)
+# Use the context manager form to trigger startup events
+client = TestClient(app, raise_server_exceptions=False)
 
 
 def test_admin_check_requires_auth():
@@ -400,3 +401,254 @@ class TestAdminRouteProtection:
         app.dependency_overrides.clear()
         response = client.get(route)
         assert response.status_code == 403, f"Route {route} should require auth"
+
+
+# =============================================================================
+# Empty Database Safety Tests (GAP-003 Hardening)
+# =============================================================================
+
+class TestEmptyDatabaseSafety:
+    """Tests that admin endpoints handle empty tables gracefully"""
+    
+    def test_users_empty_returns_200(self):
+        """Empty user_profiles table should return 200 with empty list"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        
+        # Import the dependency function to override
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        # Patch rate_limit_check where it's used (main module)
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock empty result for user_profiles table query
+                mock_execute = Mock()
+                mock_execute.data = []
+                mock_execute.count = 0
+                mock_supabase.table.return_value.select.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                
+                response = client.get("/admin/users")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["users"] == []
+                assert data["total_count"] == 0
+                assert data["total_pages"] == 1
+        
+        app.dependency_overrides.clear()
+    
+    def test_sessions_empty_returns_200(self):
+        """Empty recordings table should return 200 with empty list"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock empty result
+                mock_execute = Mock()
+                mock_execute.data = []
+                mock_execute.count = 0
+                mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                mock_supabase.table.return_value.select.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                
+                response = client.get("/admin/sessions")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["sessions"] == []
+                assert data["total_count"] == 0
+        
+        app.dependency_overrides.clear()
+    
+    def test_drafts_empty_returns_200(self):
+        """Empty drafts table should return 200 with empty list"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock empty result
+                mock_execute = Mock()
+                mock_execute.data = []
+                mock_execute.count = 0
+                mock_supabase.table.return_value.select.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                
+                response = client.get("/admin/drafts")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["drafts"] == []
+                assert data["total_count"] == 0
+        
+        app.dependency_overrides.clear()
+    
+    def test_analytics_empty_returns_zeroed_metrics(self):
+        """Empty database should return analytics with all zeros"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock empty results for all queries
+                mock_execute = Mock()
+                mock_execute.data = []
+                mock_execute.count = 0
+                mock_supabase.table.return_value.select.return_value.execute.return_value = mock_execute
+                mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_execute
+                mock_supabase.table.return_value.select.return_value.gte.return_value.execute.return_value = mock_execute
+                mock_supabase.table.return_value.select.return_value.gte.return_value.lte.return_value.execute.return_value = mock_execute
+                
+                response = client.get("/admin/analytics")
+                assert response.status_code == 200
+                data = response.json()
+                
+                # All metrics should be 0 or null
+                assert data["total_users"] == 0
+                assert data["active_users_24h"] == 0
+                assert data["active_users_7d"] == 0
+                assert data["disabled_users"] == 0
+                assert data["total_sessions"] == 0
+                assert data["total_drafts"] == 0
+                assert data["sessions_today"] == 0
+                assert data["sessions_7d"] == 0
+        
+        app.dependency_overrides.clear()
+    
+    def test_audit_log_empty_returns_200(self):
+        """Empty audit log should return 200 with empty list"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock empty result
+                mock_execute = Mock()
+                mock_execute.data = []
+                mock_execute.count = 0
+                mock_supabase.table.return_value.select.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                
+                response = client.get("/admin/audit-log")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["entries"] == []
+                assert data["total_count"] == 0
+        
+        app.dependency_overrides.clear()
+
+
+class TestNullFieldSafety:
+    """Tests that admin endpoints handle NULL fields gracefully"""
+    
+    def test_user_with_null_optional_fields(self):
+        """User with NULL optional fields should still be returned"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock user with minimal data (NULLs for optional fields)
+                mock_execute = Mock()
+                mock_execute.data = [{
+                    "user_id": "user-123",
+                    "full_name": None,
+                    "role": None,  # Should default to "free_user"
+                    "credits_remaining": None,  # Should default to 0
+                    "credits_reset_at": None,
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "is_disabled": None,  # Should default to False
+                    "disabled_at": None,
+                }]
+                mock_execute.count = 1
+                mock_supabase.table.return_value.select.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                
+                # Mock auth.admin.list_users
+                mock_auth = Mock()
+                mock_auth.users = [Mock(id="user-123", email="test@test.com")]
+                mock_supabase.auth.admin.list_users.return_value = mock_auth
+                
+                response = client.get("/admin/users")
+                assert response.status_code == 200
+                data = response.json()
+                assert len(data["users"]) == 1
+                user = data["users"][0]
+                assert user["id"] == "user-123"
+                assert user["role"] == "free_user"  # Defaulted
+                assert user["credits_remaining"] == 0  # Defaulted
+                assert user["is_disabled"] == False  # Defaulted
+        
+        app.dependency_overrides.clear()
+    
+    def test_session_with_null_optional_fields(self):
+        """Session with NULL optional fields should still be returned"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock session with minimal data
+                mock_execute = Mock()
+                mock_execute.data = [{
+                    "id": "session-123",
+                    "user_id": "user-123",
+                    "title": None,
+                    "type": None,
+                    "duration_seconds": None,
+                    "words_per_minute": None,
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "updated_at": None,
+                }]
+                mock_execute.count = 1
+                mock_supabase.table.return_value.select.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                
+                # Mock auth for user emails
+                mock_auth = Mock()
+                mock_auth.users = [Mock(id="user-123", email="test@test.com")]
+                mock_supabase.auth.admin.list_users.return_value = mock_auth
+                
+                response = client.get("/admin/sessions")
+                assert response.status_code == 200
+        
+        app.dependency_overrides.clear()
+    
+    def test_draft_with_null_updated_at(self):
+        """Draft with NULL updated_at should use created_at or default"""
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        from admin import require_admin
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        app.dependency_overrides[require_admin] = lambda: mock_admin
+        
+        with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
+            with patch('db.supabase') as mock_supabase:
+                # Mock draft with NULL updated_at
+                mock_execute = Mock()
+                mock_execute.data = [{
+                    "id": "draft-123",
+                    "user_id": "user-123",
+                    "name": "Test Draft",
+                    "question": None,
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "updated_at": None,  # This should not cause a crash
+                }]
+                mock_execute.count = 1
+                mock_supabase.table.return_value.select.return_value.order.return_value.range.return_value.execute.return_value = mock_execute
+                
+                # Mock auth for user emails
+                mock_auth = Mock()
+                mock_auth.users = [Mock(id="user-123", email="test@test.com")]
+                mock_supabase.auth.admin.list_users.return_value = mock_auth
+                
+                response = client.get("/admin/drafts")
+                assert response.status_code == 200
+        
+        app.dependency_overrides.clear()

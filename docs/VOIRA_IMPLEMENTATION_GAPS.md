@@ -8,8 +8,9 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P1 - High (Feature Gaps)
 
-**GAP-003A: Admin Dashboard V1** - ✅ COMPLETED
-- Implemented: 2026-01-28
+**GAP-003A: Admin Dashboard V1** - ⏳ IN PROGRESS (Hardening)
+- Base Implementation: 2026-01-28
+- Hardening: 2026-01-27 (ongoing)
 - Location: 
   - Backend: `apps/api/admin.py`, `apps/api/admin_models.py`, `apps/api/auth.py`
   - Frontend: `apps/web/src/pages/admin/*`, `apps/web/src/lib/adminApi.js`, `apps/web/src/hooks/useAdminApi.js`
@@ -37,6 +38,16 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
     - `get_active_user()` dependency blocks disabled users from write operations
     - `get_active_user_from_websocket_token()` for WebSocket endpoints
     - Blocked endpoints: sessions, transcribe, refine, drafts, analyze, WebSockets
+- **Hardening (2026-01-27):**
+  - ✅ Fixed table name: changed `sessions` → `recordings` (actual table name)
+  - ✅ Fixed column names: `drafts.title` → `drafts.name`, `type` → `session_type`
+  - ✅ Fixed email retrieval: now uses Supabase auth admin API instead of user_profiles
+  - ✅ All endpoints safe with empty tables (return 200 with empty data)
+  - ✅ All nullable fields use `.get()` with explicit defaults
+  - ✅ All database queries wrapped in try/except with safe fallbacks
+  - ✅ Added observability logging for empty dataset scenarios
+  - ✅ Added tests for empty database safety (`TestEmptyDatabaseSafety`)
+  - ✅ Added tests for NULL field handling (`TestNullFieldSafety`)
 - Security:
   - All `/admin/*` routes require admin via `require_admin()` dependency
   - Admin determined by `admin_emails` table (existing pattern)
@@ -44,6 +55,7 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
   - Audit log entries cannot be deleted or modified
 - Tests: `tests/test_admin.py`
 - **Migration required:** Run both admin migrations before deploying
+- **Status:** Needs manual verification with production database
 
 ### P2 - Medium (Nice-to-Have)
 

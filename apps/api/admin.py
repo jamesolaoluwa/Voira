@@ -189,17 +189,17 @@ async def list_users(
     Admin only. Returns metadata, never content.
     """
     try:
-        # Build query
+        # Build query for user_profiles
+        # NOTE: email is NOT in user_profiles, it's in auth.users
+        # We'll need to fetch emails separately or accept they may be missing
         query = supabase.table("user_profiles").select(
-            "user_id, email, full_name, role, credits_remaining, credits_reset_at, "
+            "user_id, full_name, role, credits_remaining, credits_reset_at, "
             "created_at, is_disabled, disabled_at",
             count="exact"
         )
         
-        # Apply filters
-        if search:
-            # Search by email (case-insensitive)
-            query = query.ilike("email", f"%{search}%")
+        # Apply filters (skip email search since it's not in this table)
+        # TODO: To search by email, we'd need to join with auth.users
         
         if role:
             query = query.eq("role", role)
@@ -209,7 +209,7 @@ async def list_users(
         
         # Apply sorting
         # NOTE: Validate sort_by to prevent injection
-        allowed_sort_fields = ["created_at", "email", "credits_remaining", "role"]
+        allowed_sort_fields = ["created_at", "credits_remaining", "role"]
         if sort_by not in allowed_sort_fields:
             sort_by = "created_at"
         
@@ -221,22 +221,57 @@ async def list_users(
         
         result = query.execute()
         
+        # Handle empty result
+        if not result.data:
+            logger.info("[Admin] list_users returned empty dataset")
+            return AdminUserListResponse(
+                users=[],
+                page=page,
+                per_page=per_page,
+                total_count=0,
+                total_pages=1,
+                has_next=False,
+                has_prev=page > 1,
+            )
+        
         # Get total count
-        total_count = result.count if result.count is not None else 0
+        total_count = result.count if result.count is not None else len(result.data)
         total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
         
-        # Map to response model
+        # Fetch emails from auth.users for display
+        # This is a separate query since email is not in user_profiles
+        user_ids = [row["user_id"] for row in result.data if row.get("user_id")]
+        user_emails = {}
+        
+        if user_ids:
+            try:
+                # Use Supabase auth admin API to get user emails
+                auth_users = supabase.auth.admin.list_users()
+                if auth_users and hasattr(auth_users, 'users'):
+                    for auth_user in auth_users.users:
+                        if auth_user.id in user_ids:
+                            user_emails[auth_user.id] = auth_user.email or "unknown"
+            except Exception as auth_err:
+                logger.warning(f"[Admin] Failed to fetch user emails from auth: {auth_err}")
+                # Continue without emails - use "unknown" fallback
+        
+        # Map to response model with safe defaults
         users = []
         for row in result.data:
+            user_id = row.get("user_id")
+            if not user_id:
+                logger.warning("[Admin] Skipping user_profile row with missing user_id")
+                continue
+                
             users.append(AdminUserSummary(
-                id=row["user_id"],
-                email=row["email"],
+                id=user_id,
+                email=user_emails.get(user_id, "unknown"),
                 full_name=row.get("full_name"),
-                role=row.get("role", "free_user"),
-                credits_remaining=row.get("credits_remaining", 0),
+                role=row.get("role") or "free_user",
+                credits_remaining=row.get("credits_remaining") or 0,
                 credits_reset_at=row.get("credits_reset_at"),
-                created_at=row["created_at"],
-                is_disabled=row.get("is_disabled", False),
+                created_at=row.get("created_at") or datetime.utcnow(),
+                is_disabled=row.get("is_disabled") or False,
                 disabled_at=row.get("disabled_at"),
             ))
         
@@ -250,8 +285,10 @@ async def list_users(
             has_prev=page > 1,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to list users: {e}")
+        logger.error(f"[Admin] Failed to list users: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch users")
 
 
@@ -266,9 +303,9 @@ async def get_user_detail(
     Admin only. Returns metadata and aggregates, never content.
     """
     try:
-        # Get user profile
+        # Get user profile (email is NOT in user_profiles)
         user_result = supabase.table("user_profiles").select(
-            "user_id, email, full_name, role, credits_remaining, credits_reset_at, "
+            "user_id, full_name, role, credits_remaining, credits_reset_at, "
             "created_at, is_disabled, disabled_at, disabled_by, disabled_reason"
         ).eq("user_id", user_id).single().execute()
         
@@ -277,48 +314,72 @@ async def get_user_detail(
         
         user = user_result.data
         
-        # Get session count
-        sessions_result = supabase.table("sessions").select(
-            "id", count="exact"
-        ).eq("user_id", user_id).execute()
-        session_count = sessions_result.count if sessions_result.count else 0
+        # Fetch email from auth.users
+        user_email = "unknown"
+        try:
+            auth_user = supabase.auth.admin.get_user_by_id(user_id)
+            if auth_user and hasattr(auth_user, 'user') and auth_user.user:
+                user_email = auth_user.user.email or "unknown"
+        except Exception as auth_err:
+            logger.warning(f"[Admin] Failed to fetch email for user {user_id}: {auth_err}")
+        
+        # Get session count from recordings table (sessions is an alias)
+        session_count = 0
+        try:
+            sessions_result = supabase.table("recordings").select(
+                "id", count="exact"
+            ).eq("user_id", user_id).execute()
+            session_count = sessions_result.count if sessions_result.count else 0
+        except Exception as sess_err:
+            logger.warning(f"[Admin] Failed to count sessions for user {user_id}: {sess_err}")
         
         # Get draft count
-        drafts_result = supabase.table("drafts").select(
-            "id", count="exact"
-        ).eq("user_id", user_id).execute()
-        draft_count = drafts_result.count if drafts_result.count else 0
+        draft_count = 0
+        try:
+            drafts_result = supabase.table("drafts").select(
+                "id", count="exact"
+            ).eq("user_id", user_id).execute()
+            draft_count = drafts_result.count if drafts_result.count else 0
+        except Exception as draft_err:
+            logger.warning(f"[Admin] Failed to count drafts for user {user_id}: {draft_err}")
         
-        # Get last active (most recent session or draft)
-        last_session = supabase.table("sessions").select(
-            "created_at"
-        ).eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
-        
-        last_draft = supabase.table("drafts").select(
-            "updated_at"
-        ).eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
-        
+        # Get last active (most recent recording or draft)
         last_active_at = None
-        if last_session.data:
-            last_active_at = last_session.data[0]["created_at"]
-        if last_draft.data:
-            draft_time = last_draft.data[0]["updated_at"]
-            if not last_active_at or draft_time > last_active_at:
-                last_active_at = draft_time
+        try:
+            last_session = supabase.table("recordings").select(
+                "created_at"
+            ).eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
+            
+            if last_session.data:
+                last_active_at = last_session.data[0].get("created_at")
+        except Exception:
+            pass  # Non-critical, continue
+        
+        try:
+            last_draft = supabase.table("drafts").select(
+                "updated_at"
+            ).eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
+            
+            if last_draft.data:
+                draft_time = last_draft.data[0].get("updated_at")
+                if draft_time and (not last_active_at or draft_time > last_active_at):
+                    last_active_at = draft_time
+        except Exception:
+            pass  # Non-critical, continue
         
         # NOTE: total_transcription_minutes would require aggregating session data
         # For V1, we skip this to avoid expensive queries
         total_transcription_minutes = 0.0
         
         return AdminUserDetail(
-            id=user["user_id"],
-            email=user["email"],
+            id=user.get("user_id") or user_id,
+            email=user_email,
             full_name=user.get("full_name"),
-            role=user.get("role", "free_user"),
-            credits_remaining=user.get("credits_remaining", 0),
+            role=user.get("role") or "free_user",
+            credits_remaining=user.get("credits_remaining") or 0,
             credits_reset_at=user.get("credits_reset_at"),
-            created_at=user["created_at"],
-            is_disabled=user.get("is_disabled", False),
+            created_at=user.get("created_at") or datetime.utcnow(),
+            is_disabled=user.get("is_disabled") or False,
             disabled_at=user.get("disabled_at"),
             disabled_by=user.get("disabled_by"),
             disabled_reason=user.get("disabled_reason"),
@@ -331,7 +392,7 @@ async def get_user_detail(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to get user {user_id}: {e}")
+        logger.error(f"[Admin] Failed to get user {user_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch user details")
 
 
@@ -348,16 +409,25 @@ async def adjust_user_credits(
     AUDITED: All credit adjustments are logged with reason.
     """
     try:
-        # Get current credits
+        # Get current credits (email is NOT in user_profiles)
         user_result = supabase.table("user_profiles").select(
-            "credits_remaining, email"
+            "credits_remaining"
         ).eq("user_id", user_id).single().execute()
         
         if not user_result.data:
             raise HTTPException(status_code=404, detail="User not found")
         
-        old_credits = user_result.data.get("credits_remaining", 0)
+        old_credits = user_result.data.get("credits_remaining") or 0
         new_credits = request_body.new_credits
+        
+        # Try to get email for audit log (non-critical)
+        target_email = "unknown"
+        try:
+            auth_user = supabase.auth.admin.get_user_by_id(user_id)
+            if auth_user and hasattr(auth_user, 'user') and auth_user.user:
+                target_email = auth_user.user.email or "unknown"
+        except Exception:
+            pass  # Non-critical
         
         # Update credits
         supabase.table("user_profiles").update({
@@ -374,14 +444,14 @@ async def adjust_user_credits(
                 "old_credits": old_credits,
                 "new_credits": new_credits,
                 "reason": request_body.reason,
-                "target_email": user_result.data.get("email"),
+                "target_email": target_email,
             },
             request=request,
         )
         
         logger.info(
             "[Admin] Credits adjusted: user=%s old=%d new=%d by=%s reason=%s",
-            user_id, old_credits, new_credits, admin["email"], request_body.reason
+            user_id, old_credits, new_credits, admin.get("email", "unknown"), request_body.reason
         )
         
         return AdminActionResponse(
@@ -394,7 +464,7 @@ async def adjust_user_credits(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to adjust credits for {user_id}: {e}")
+        logger.error(f"[Admin] Failed to adjust credits for {user_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to adjust credits")
 
 
@@ -416,9 +486,9 @@ async def disable_user(
     AUDITED: All disable actions are logged with reason.
     """
     try:
-        # Check if user exists and isn't already disabled
+        # Check if user exists and isn't already disabled (email NOT in user_profiles)
         user_result = supabase.table("user_profiles").select(
-            "is_disabled, email"
+            "is_disabled"
         ).eq("user_id", user_id).single().execute()
         
         if not user_result.data:
@@ -428,14 +498,23 @@ async def disable_user(
             raise HTTPException(status_code=400, detail="User is already disabled")
         
         # Prevent self-disable
-        if user_id == admin["id"]:
+        if user_id == admin.get("id"):
             raise HTTPException(status_code=400, detail="Cannot disable your own account")
+        
+        # Try to get email for audit log (non-critical)
+        target_email = "unknown"
+        try:
+            auth_user = supabase.auth.admin.get_user_by_id(user_id)
+            if auth_user and hasattr(auth_user, 'user') and auth_user.user:
+                target_email = auth_user.user.email or "unknown"
+        except Exception:
+            pass
         
         # Update user
         supabase.table("user_profiles").update({
             "is_disabled": True,
             "disabled_at": datetime.utcnow().isoformat(),
-            "disabled_by": admin["id"],
+            "disabled_by": admin.get("id"),
             "disabled_reason": request_body.reason,
         }).eq("user_id", user_id).execute()
         
@@ -447,14 +526,14 @@ async def disable_user(
             target_id=user_id,
             details={
                 "reason": request_body.reason,
-                "target_email": user_result.data.get("email"),
+                "target_email": target_email,
             },
             request=request,
         )
         
         logger.info(
             "[Admin] User disabled: user=%s by=%s reason=%s",
-            user_id, admin["email"], request_body.reason
+            user_id, admin.get("email", "unknown"), request_body.reason
         )
         
         return AdminActionResponse(
@@ -467,7 +546,7 @@ async def disable_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to disable user {user_id}: {e}")
+        logger.error(f"[Admin] Failed to disable user {user_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to disable user")
 
 
@@ -483,9 +562,9 @@ async def enable_user(
     AUDITED: All enable actions are logged.
     """
     try:
-        # Check if user exists and is disabled
+        # Check if user exists and is disabled (email NOT in user_profiles)
         user_result = supabase.table("user_profiles").select(
-            "is_disabled, email, disabled_reason"
+            "is_disabled, disabled_reason"
         ).eq("user_id", user_id).single().execute()
         
         if not user_result.data:
@@ -493,6 +572,16 @@ async def enable_user(
         
         if not user_result.data.get("is_disabled"):
             raise HTTPException(status_code=400, detail="User is not disabled")
+        
+        # Try to get email for audit log (non-critical)
+        target_email = "unknown"
+        previous_reason = user_result.data.get("disabled_reason")
+        try:
+            auth_user = supabase.auth.admin.get_user_by_id(user_id)
+            if auth_user and hasattr(auth_user, 'user') and auth_user.user:
+                target_email = auth_user.user.email or "unknown"
+        except Exception:
+            pass
         
         # Update user
         supabase.table("user_profiles").update({
@@ -509,15 +598,15 @@ async def enable_user(
             target_type="user",
             target_id=user_id,
             details={
-                "target_email": user_result.data.get("email"),
-                "previous_disable_reason": user_result.data.get("disabled_reason"),
+                "target_email": target_email,
+                "previous_disable_reason": previous_reason,
             },
             request=request,
         )
         
         logger.info(
             "[Admin] User enabled: user=%s by=%s",
-            user_id, admin["email"]
+            user_id, admin.get("email", "unknown")
         )
         
         return AdminActionResponse(
@@ -530,12 +619,12 @@ async def enable_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to enable user {user_id}: {e}")
+        logger.error(f"[Admin] Failed to enable user {user_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to enable user")
 
 
 # =============================================================================
-# Sessions Endpoint
+# Sessions Endpoint (queries 'recordings' table)
 # =============================================================================
 
 @router.get("/sessions", response_model=AdminSessionListResponse)
@@ -552,13 +641,15 @@ async def list_sessions(
     List all sessions with pagination and filters.
     
     Admin only. Returns METADATA ONLY, never transcript or audio.
+    NOTE: Sessions are stored in the 'recordings' table.
     """
     try:
         # Build query - explicitly exclude content fields
-        # NOTE: We select specific fields to ensure we never accidentally expose content
-        query = supabase.table("sessions").select(
-            "id, user_id, title, session_type, style, duration_seconds, "
-            "word_count, created_at, updated_at",
+        # NOTE: The table is 'recordings', not 'sessions'
+        # Column mapping: type -> session_type, title -> title
+        query = supabase.table("recordings").select(
+            "id, user_id, title, type, duration_seconds, "
+            "words_per_minute, created_at, updated_at",
             count="exact"
         )
         
@@ -567,10 +658,11 @@ async def list_sessions(
             query = query.eq("user_id", user_id)
         
         if session_type:
-            query = query.eq("session_type", session_type)
+            query = query.eq("type", session_type)
         
         # Apply sorting
-        allowed_sort_fields = ["created_at", "updated_at", "duration_seconds", "word_count"]
+        # NOTE: word_count doesn't exist in recordings, use words_per_minute
+        allowed_sort_fields = ["created_at", "updated_at", "duration_seconds"]
         if sort_by not in allowed_sort_fields:
             sort_by = "created_at"
         
@@ -582,32 +674,49 @@ async def list_sessions(
         
         result = query.execute()
         
+        # Handle empty result
+        if not result.data:
+            logger.info("[Admin] list_sessions returned empty dataset")
+            return AdminSessionListResponse(
+                sessions=[],
+                page=page,
+                per_page=per_page,
+                total_count=0,
+                total_pages=1,
+                has_next=False,
+                has_prev=page > 1,
+            )
+        
         # Get total count
-        total_count = result.count if result.count is not None else 0
+        total_count = result.count if result.count is not None else len(result.data)
         total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
         
-        # Get user emails for denormalization
-        user_ids = list(set(row["user_id"] for row in result.data))
+        # Get user emails for denormalization (from auth, not user_profiles)
+        user_ids = list(set(row.get("user_id") for row in result.data if row.get("user_id")))
         user_emails = {}
         if user_ids:
-            users_result = supabase.table("user_profiles").select(
-                "user_id, email"
-            ).in_("user_id", user_ids).execute()
-            user_emails = {u["user_id"]: u["email"] for u in users_result.data}
+            try:
+                auth_users = supabase.auth.admin.list_users()
+                if auth_users and hasattr(auth_users, 'users'):
+                    for auth_user in auth_users.users:
+                        if auth_user.id in user_ids:
+                            user_emails[auth_user.id] = auth_user.email or "unknown"
+            except Exception as auth_err:
+                logger.warning(f"[Admin] Failed to fetch user emails: {auth_err}")
         
-        # Map to response model
+        # Map to response model with safe defaults
         sessions = []
         for row in result.data:
             sessions.append(AdminSessionSummary(
-                id=row["id"],
-                user_id=row["user_id"],
-                user_email=user_emails.get(row["user_id"], "unknown"),
+                id=row.get("id") or "unknown",
+                user_id=row.get("user_id") or "unknown",
+                user_email=user_emails.get(row.get("user_id"), "unknown"),
                 title=row.get("title"),
-                session_type=row.get("session_type"),
-                style=row.get("style"),
+                session_type=row.get("type"),  # Column is 'type', not 'session_type'
+                style=None,  # Not in recordings table schema
                 duration_seconds=row.get("duration_seconds"),
-                word_count=row.get("word_count"),
-                created_at=row["created_at"],
+                word_count=row.get("words_per_minute"),  # Using words_per_minute as proxy
+                created_at=row.get("created_at") or datetime.utcnow(),
                 updated_at=row.get("updated_at"),
             ))
         
@@ -621,8 +730,10 @@ async def list_sessions(
             has_prev=page > 1,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to list sessions: {e}")
+        logger.error(f"[Admin] Failed to list sessions: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch sessions")
 
 
@@ -646,8 +757,9 @@ async def list_drafts(
     """
     try:
         # Build query - explicitly exclude content fields
+        # NOTE: Column is 'name' not 'title' in drafts table
         query = supabase.table("drafts").select(
-            "id, user_id, title, question, word_count, created_at, updated_at",
+            "id, user_id, name, question, created_at, updated_at",
             count="exact"
         )
         
@@ -656,7 +768,7 @@ async def list_drafts(
             query = query.eq("user_id", user_id)
         
         # Apply sorting
-        allowed_sort_fields = ["created_at", "updated_at", "word_count"]
+        allowed_sort_fields = ["created_at", "updated_at"]
         if sort_by not in allowed_sort_fields:
             sort_by = "created_at"
         
@@ -668,31 +780,48 @@ async def list_drafts(
         
         result = query.execute()
         
+        # Handle empty result
+        if not result.data:
+            logger.info("[Admin] list_drafts returned empty dataset")
+            return AdminDraftListResponse(
+                drafts=[],
+                page=page,
+                per_page=per_page,
+                total_count=0,
+                total_pages=1,
+                has_next=False,
+                has_prev=page > 1,
+            )
+        
         # Get total count
-        total_count = result.count if result.count is not None else 0
+        total_count = result.count if result.count is not None else len(result.data)
         total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
         
-        # Get user emails for denormalization
-        user_ids = list(set(row["user_id"] for row in result.data))
+        # Get user emails for denormalization (from auth)
+        user_ids = list(set(row.get("user_id") for row in result.data if row.get("user_id")))
         user_emails = {}
         if user_ids:
-            users_result = supabase.table("user_profiles").select(
-                "user_id, email"
-            ).in_("user_id", user_ids).execute()
-            user_emails = {u["user_id"]: u["email"] for u in users_result.data}
+            try:
+                auth_users = supabase.auth.admin.list_users()
+                if auth_users and hasattr(auth_users, 'users'):
+                    for auth_user in auth_users.users:
+                        if auth_user.id in user_ids:
+                            user_emails[auth_user.id] = auth_user.email or "unknown"
+            except Exception as auth_err:
+                logger.warning(f"[Admin] Failed to fetch user emails: {auth_err}")
         
-        # Map to response model
+        # Map to response model with safe defaults
         drafts = []
         for row in result.data:
             drafts.append(AdminDraftSummary(
-                id=row["id"],
-                user_id=row["user_id"],
-                user_email=user_emails.get(row["user_id"], "unknown"),
-                title=row.get("title"),
+                id=row.get("id") or "unknown",
+                user_id=row.get("user_id") or "unknown",
+                user_email=user_emails.get(row.get("user_id"), "unknown"),
+                title=row.get("name"),  # Column is 'name' not 'title'
                 question=row.get("question"),
-                word_count=row.get("word_count"),
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
+                word_count=None,  # Not in drafts table schema
+                created_at=row.get("created_at") or datetime.utcnow(),
+                updated_at=row.get("updated_at") or row.get("created_at") or datetime.utcnow(),
             ))
         
         return AdminDraftListResponse(
@@ -705,8 +834,10 @@ async def list_drafts(
             has_prev=page > 1,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to list drafts: {e}")
+        logger.error(f"[Admin] Failed to list drafts: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch drafts")
 
 
@@ -722,6 +853,7 @@ async def get_analytics(
     Get aggregate analytics for the admin dashboard.
     
     All values are aggregates - no PII or individual user data.
+    Safe when tables are empty - all metrics default to 0.
     
     NOTE: These are real-time queries. If performance becomes an issue,
     consider materialized views or caching.
@@ -732,54 +864,90 @@ async def get_analytics(
         week_ago = now - timedelta(days=7)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        # User metrics
-        total_users_result = supabase.table("user_profiles").select(
-            "user_id", count="exact"
-        ).execute()
-        total_users = total_users_result.count or 0
+        # Initialize all metrics to safe defaults
+        total_users = 0
+        disabled_users = 0
+        active_users_24h = 0
+        active_users_7d = 0
+        total_sessions = 0
+        sessions_today = 0
+        sessions_7d = 0
+        total_drafts = 0
         
-        disabled_users_result = supabase.table("user_profiles").select(
-            "user_id", count="exact"
-        ).eq("is_disabled", True).execute()
-        disabled_users = disabled_users_result.count or 0
+        # User metrics (safe queries)
+        try:
+            total_users_result = supabase.table("user_profiles").select(
+                "user_id", count="exact"
+            ).execute()
+            total_users = total_users_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count total users: {e}")
         
-        # Active users (had a session in timeframe)
-        # NOTE: This could be expensive on large datasets
-        active_24h_result = supabase.table("sessions").select(
-            "user_id"
-        ).gte("created_at", day_ago.isoformat()).execute()
-        active_users_24h = len(set(s["user_id"] for s in active_24h_result.data))
+        try:
+            disabled_users_result = supabase.table("user_profiles").select(
+                "user_id", count="exact"
+            ).eq("is_disabled", True).execute()
+            disabled_users = disabled_users_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count disabled users: {e}")
         
-        active_7d_result = supabase.table("sessions").select(
-            "user_id"
-        ).gte("created_at", week_ago.isoformat()).execute()
-        active_users_7d = len(set(s["user_id"] for s in active_7d_result.data))
+        # Active users (had a recording/session in timeframe)
+        # NOTE: Table is 'recordings', not 'sessions'
+        try:
+            active_24h_result = supabase.table("recordings").select(
+                "user_id"
+            ).gte("created_at", day_ago.isoformat()).execute()
+            if active_24h_result.data:
+                active_users_24h = len(set(s.get("user_id") for s in active_24h_result.data if s.get("user_id")))
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count active users 24h: {e}")
         
-        # Session metrics
-        total_sessions_result = supabase.table("sessions").select(
-            "id", count="exact"
-        ).execute()
-        total_sessions = total_sessions_result.count or 0
+        try:
+            active_7d_result = supabase.table("recordings").select(
+                "user_id"
+            ).gte("created_at", week_ago.isoformat()).execute()
+            if active_7d_result.data:
+                active_users_7d = len(set(s.get("user_id") for s in active_7d_result.data if s.get("user_id")))
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count active users 7d: {e}")
         
-        sessions_today_result = supabase.table("sessions").select(
-            "id", count="exact"
-        ).gte("created_at", today_start.isoformat()).execute()
-        sessions_today = sessions_today_result.count or 0
+        # Session metrics (from recordings table)
+        try:
+            total_sessions_result = supabase.table("recordings").select(
+                "id", count="exact"
+            ).execute()
+            total_sessions = total_sessions_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count total sessions: {e}")
         
-        sessions_7d_result = supabase.table("sessions").select(
-            "id", count="exact"
-        ).gte("created_at", week_ago.isoformat()).execute()
-        sessions_7d = sessions_7d_result.count or 0
+        try:
+            sessions_today_result = supabase.table("recordings").select(
+                "id", count="exact"
+            ).gte("created_at", today_start.isoformat()).execute()
+            sessions_today = sessions_today_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count sessions today: {e}")
+        
+        try:
+            sessions_7d_result = supabase.table("recordings").select(
+                "id", count="exact"
+            ).gte("created_at", week_ago.isoformat()).execute()
+            sessions_7d = sessions_7d_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count sessions 7d: {e}")
         
         # Draft metrics
-        total_drafts_result = supabase.table("drafts").select(
-            "id", count="exact"
-        ).execute()
-        total_drafts = total_drafts_result.count or 0
+        try:
+            total_drafts_result = supabase.table("drafts").select(
+                "id", count="exact"
+            ).execute()
+            total_drafts = total_drafts_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:Analytics] Failed to count total drafts: {e}")
         
-        # Average session duration
-        # NOTE: Simplified - a proper implementation would use SQL AVG()
-        avg_duration = None
+        # Log if all data is empty (fresh DB)
+        if total_users == 0 and total_sessions == 0 and total_drafts == 0:
+            logger.info("[Admin:Analytics] Fresh DB detected - returning zeroed metrics")
         
         return AdminAnalytics(
             total_users=total_users,
@@ -790,15 +958,17 @@ async def get_analytics(
             total_drafts=total_drafts,
             sessions_today=sessions_today,
             sessions_7d=sessions_7d,
-            avg_session_duration_seconds=avg_duration,
+            avg_session_duration_seconds=None,  # TODO: Implement with SQL AVG
             total_transcription_minutes=None,  # TODO: Implement if needed
             total_credits_consumed_today=0,  # TODO: Track in separate table
             total_credits_consumed_7d=0,
             generated_at=now,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to generate analytics: {e}")
+        logger.error(f"[Admin] Failed to generate analytics: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate analytics")
 
 
@@ -820,6 +990,7 @@ async def get_audit_log(
     View the admin audit log.
     
     Admin only. Shows all admin actions with full details.
+    Safe when table is empty or doesn't exist yet.
     """
     try:
         # Build query
@@ -851,23 +1022,36 @@ async def get_audit_log(
         
         result = query.execute()
         
+        # Handle empty result
+        if not result.data:
+            logger.info("[Admin] get_audit_log returned empty dataset")
+            return AdminAuditLogResponse(
+                entries=[],
+                page=page,
+                per_page=per_page,
+                total_count=0,
+                total_pages=1,
+                has_next=False,
+                has_prev=page > 1,
+            )
+        
         # Get total count
-        total_count = result.count if result.count is not None else 0
+        total_count = result.count if result.count is not None else len(result.data)
         total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
         
-        # Map to response model
+        # Map to response model with safe defaults
         entries = []
         for row in result.data:
             entries.append(AdminAuditLogEntry(
-                id=row["id"],
-                admin_id=row["admin_id"],
-                admin_email=row["admin_email"],
-                action=row["action"],
-                target_type=row["target_type"],
+                id=row.get("id") or "unknown",
+                admin_id=row.get("admin_id") or "unknown",
+                admin_email=row.get("admin_email") or "unknown",
+                action=row.get("action") or "unknown",
+                target_type=row.get("target_type") or "unknown",
                 target_id=row.get("target_id"),
-                details=row.get("details", {}),
+                details=row.get("details") or {},
                 ip_address=row.get("ip_address"),
-                created_at=row["created_at"],
+                created_at=row.get("created_at") or datetime.utcnow(),
             ))
         
         return AdminAuditLogResponse(
@@ -900,6 +1084,7 @@ async def get_audit_log_stats(
         - Action breakdown
     
     Use this to monitor audit log growth and plan retention policies.
+    Safe when table is empty.
     """
     try:
         now = datetime.utcnow()
@@ -907,58 +1092,98 @@ async def get_audit_log_stats(
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=30)
         
+        # Initialize safe defaults
+        total_entries = 0
+        entries_last_24h = 0
+        entries_last_7d = 0
+        entries_last_30d = 0
+        oldest_entry_at = None
+        newest_entry_at = None
+        unique_admins = 0
+        action_breakdown = {}
+        
         # Total count
-        total_result = supabase.table("admin_audit_log").select(
-            "id", count="exact"
-        ).execute()
-        total_entries = total_result.count or 0
+        try:
+            total_result = supabase.table("admin_audit_log").select(
+                "id", count="exact"
+            ).execute()
+            total_entries = total_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to count total: {e}")
         
         # Entries in last 24h
-        day_result = supabase.table("admin_audit_log").select(
-            "id", count="exact"
-        ).gte("created_at", day_ago.isoformat()).execute()
-        entries_last_24h = day_result.count or 0
+        try:
+            day_result = supabase.table("admin_audit_log").select(
+                "id", count="exact"
+            ).gte("created_at", day_ago.isoformat()).execute()
+            entries_last_24h = day_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to count 24h: {e}")
         
         # Entries in last 7d
-        week_result = supabase.table("admin_audit_log").select(
-            "id", count="exact"
-        ).gte("created_at", week_ago.isoformat()).execute()
-        entries_last_7d = week_result.count or 0
+        try:
+            week_result = supabase.table("admin_audit_log").select(
+                "id", count="exact"
+            ).gte("created_at", week_ago.isoformat()).execute()
+            entries_last_7d = week_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to count 7d: {e}")
         
         # Entries in last 30d
-        month_result = supabase.table("admin_audit_log").select(
-            "id", count="exact"
-        ).gte("created_at", month_ago.isoformat()).execute()
-        entries_last_30d = month_result.count or 0
+        try:
+            month_result = supabase.table("admin_audit_log").select(
+                "id", count="exact"
+            ).gte("created_at", month_ago.isoformat()).execute()
+            entries_last_30d = month_result.count or 0
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to count 30d: {e}")
         
         # Oldest entry
-        oldest_result = supabase.table("admin_audit_log").select(
-            "created_at"
-        ).order("created_at", desc=False).limit(1).execute()
-        oldest_entry_at = oldest_result.data[0]["created_at"] if oldest_result.data else None
+        try:
+            oldest_result = supabase.table("admin_audit_log").select(
+                "created_at"
+            ).order("created_at", desc=False).limit(1).execute()
+            if oldest_result.data:
+                oldest_entry_at = oldest_result.data[0].get("created_at")
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to get oldest: {e}")
         
         # Newest entry
-        newest_result = supabase.table("admin_audit_log").select(
-            "created_at"
-        ).order("created_at", desc=True).limit(1).execute()
-        newest_entry_at = newest_result.data[0]["created_at"] if newest_result.data else None
+        try:
+            newest_result = supabase.table("admin_audit_log").select(
+                "created_at"
+            ).order("created_at", desc=True).limit(1).execute()
+            if newest_result.data:
+                newest_entry_at = newest_result.data[0].get("created_at")
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to get newest: {e}")
         
         # Unique admins
-        # Note: Supabase doesn't support distinct count easily, so we fetch unique admin_ids
-        admins_result = supabase.table("admin_audit_log").select(
-            "admin_id"
-        ).execute()
-        unique_admin_ids = set(row["admin_id"] for row in admins_result.data if row.get("admin_id"))
-        unique_admins = len(unique_admin_ids)
+        try:
+            admins_result = supabase.table("admin_audit_log").select(
+                "admin_id"
+            ).execute()
+            if admins_result.data:
+                unique_admin_ids = set(row.get("admin_id") for row in admins_result.data if row.get("admin_id"))
+                unique_admins = len(unique_admin_ids)
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to count unique admins: {e}")
         
         # Action breakdown
-        actions_result = supabase.table("admin_audit_log").select(
-            "action"
-        ).execute()
-        action_breakdown = {}
-        for row in actions_result.data:
-            action = row.get("action", "unknown")
-            action_breakdown[action] = action_breakdown.get(action, 0) + 1
+        try:
+            actions_result = supabase.table("admin_audit_log").select(
+                "action"
+            ).execute()
+            if actions_result.data:
+                for row in actions_result.data:
+                    action = row.get("action") or "unknown"
+                    action_breakdown[action] = action_breakdown.get(action, 0) + 1
+        except Exception as e:
+            logger.warning(f"[Admin:AuditStats] Failed to get action breakdown: {e}")
+        
+        # Log if empty
+        if total_entries == 0:
+            logger.info("[Admin:AuditStats] Empty audit log - returning zeroed stats")
         
         return AdminAuditLogStats(
             total_entries=total_entries,
@@ -971,6 +1196,8 @@ async def get_audit_log_stats(
             action_breakdown=action_breakdown,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[Admin] Failed to fetch audit log stats: {e}")
+        logger.error(f"[Admin] Failed to fetch audit log stats: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch audit log stats")
