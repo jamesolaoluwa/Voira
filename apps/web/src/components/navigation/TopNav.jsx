@@ -23,7 +23,7 @@ const navLinks = [
   { label: 'Library', page: 'Library' },
 ];
 
-export default function TopNav({ currentPageName, isAuthenticated = true }) {
+export default function TopNav({ currentPageName, isAuthenticated = true, isAdmin = false }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -90,6 +90,14 @@ export default function TopNav({ currentPageName, isAuthenticated = true }) {
                         Settings
                       </DropdownMenuItem>
                     </Link>
+                    {isAdmin && (
+                      <Link to={createPageUrl('Admin')}>
+                        <DropdownMenuItem className="cursor-pointer text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 focus:text-violet-700 dark:focus:text-violet-300 focus:bg-violet-50 dark:focus:bg-violet-500/10">
+                          <Shield className="w-4 h-4 mr-2" />
+                          Admin Dashboard
+                        </DropdownMenuItem>
+                      </Link>
+                    )}
                     <DropdownMenuSeparator className="bg-zinc-200 dark:bg-white/5" />
                     <DropdownMenuItem
                       onClick={async () => {

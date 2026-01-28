@@ -1,4 +1,30 @@
-"""Authentication utilities for JWT validation."""
+"""
+Authentication utilities for JWT validation.
+
+READ vs WRITE ACCESS PATTERN
+============================
+This module provides two levels of user authentication:
+
+1. get_current_user() - READ OPERATIONS
+   - Validates JWT only
+   - Disabled users CAN still access
+   - Use for: viewing profiles, reading transcripts, listing history
+   - A disabled user should still see their own data for transparency
+
+2. get_active_user() - WRITE OPERATIONS  
+   - Validates JWT AND checks is_disabled flag
+   - Disabled users are BLOCKED with 403
+   - Use for: creating sessions, recording, consuming credits, any mutations
+   - Prevents disabled users from consuming resources
+
+WebSocket variants:
+- get_user_from_websocket_token() - read-level for WebSocket
+- get_active_user_from_websocket_token() - write-level for WebSocket
+
+When adding new endpoints, choose the appropriate dependency based on whether
+the operation is read-only (use get_current_user) or mutates state/consumes
+resources (use get_active_user).
+"""
 import logging
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -148,4 +174,83 @@ async def get_user_from_websocket_token(token: str):
     except Exception as e:
         logger.error(f"[WebSocket Auth] Unexpected error during token validation: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+
+
+async def check_user_disabled(user_id: str) -> bool:
+    """
+    Check if a user account is disabled.
+    
+    Args:
+        user_id: The user's ID
+        
+    Returns:
+        True if user is disabled, False otherwise
+    """
+    try:
+        result = supabase.table("user_profiles").select(
+            "is_disabled"
+        ).eq("user_id", user_id).single().execute()
+        
+        return result.data.get("is_disabled", False) if result.data else False
+    except Exception as e:
+        logger.warning(f"[Auth] Failed to check disabled status for user {user_id}: {e}")
+        return False
+
+
+async def get_active_user(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """
+    Get current user and verify they are not disabled.
+    
+    Use this dependency for endpoints that disabled users should NOT access:
+    - Creating sessions
+    - Recording audio
+    - Consuming credits
+    - Any write operations
+    
+    Raises:
+        HTTPException 401: If not authenticated
+        HTTPException 403: If user account is disabled
+    """
+    user = await get_current_user(credentials)
+    
+    is_disabled = await check_user_disabled(user["id"])
+    if is_disabled:
+        logger.warning(f"[Auth] Disabled user attempted action: user_id={user['id']}")
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been disabled. Please contact support."
+        )
+    
+    return user
+
+
+async def get_active_user_from_websocket_token(token: str):
+    """
+    Validate WebSocket token AND verify user is not disabled.
+    
+    Use this for WebSocket endpoints that disabled users should NOT access.
+    Returns user dict if valid and active, raises HTTPException otherwise.
+    
+    Args:
+        token: JWT token from WebSocket query param
+        
+    Returns:
+        User dictionary with id, email, role, etc.
+        
+    Raises:
+        HTTPException 401: If token is invalid
+        HTTPException 403: If user account is disabled
+    """
+    user = await get_user_from_websocket_token(token)
+    
+    is_disabled = await check_user_disabled(user["id"])
+    if is_disabled:
+        logger.warning(f"[WebSocket Auth] Disabled user attempted WebSocket connection: user_id={user['id']}")
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been disabled. Please contact support."
+        )
+    
+    return user
+
 

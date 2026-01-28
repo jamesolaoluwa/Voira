@@ -8,11 +8,42 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P1 - High (Feature Gaps)
 
-**GAP-003: Admin Dashboard**
-- Location: References in `apps/api/models.py` (`admin_emails` table) but no admin UI exists
-- Status: Admin role check exists but no admin interface
-- Impact: Cannot manage users, view analytics, or moderate content without direct DB access
-- Fix: Build admin routes and UI, or document this as intentionally deferred
+**GAP-003A: Admin Dashboard V1** - ✅ COMPLETED
+- Implemented: 2026-01-28
+- Location: 
+  - Backend: `apps/api/admin.py`, `apps/api/admin_models.py`, `apps/api/auth.py`
+  - Frontend: `apps/web/src/pages/admin/*`, `apps/web/src/lib/adminApi.js`, `apps/web/src/hooks/useAdminApi.js`
+  - Database: `supabase/migrations/20260127_create_admin_audit_log.sql`, `supabase/migrations/20260127_add_user_disabled_fields.sql`
+- Features:
+  - **User Management:**
+    - List all users with pagination and filters (email, disabled status)
+    - View user details (credits, sessions count, drafts count)
+    - Adjust user credits with required reason (audited)
+    - Disable/enable user accounts with reason (audited)
+  - **Session/Draft Overview:**
+    - View session metadata (NO transcript/audio content)
+    - View draft metadata (NO content)
+    - Filter by user, type
+  - **Analytics Dashboard:**
+    - Total users, active users (30d)
+    - Total sessions, credits used
+    - Sessions by type breakdown
+    - User role breakdown (free/premium/disabled)
+  - **Audit Log:**
+    - Immutable record of all admin actions
+    - Admin ID, email (denormalized), action, target, details, IP, timestamp
+    - Filterable by action type
+  - **Disabled User Blocking:**
+    - `get_active_user()` dependency blocks disabled users from write operations
+    - `get_active_user_from_websocket_token()` for WebSocket endpoints
+    - Blocked endpoints: sessions, transcribe, refine, drafts, analyze, WebSockets
+- Security:
+  - All `/admin/*` routes require admin via `require_admin()` dependency
+  - Admin determined by `admin_emails` table (existing pattern)
+  - DTOs use explicit allow-lists (never expose transcript/audio)
+  - Audit log entries cannot be deleted or modified
+- Tests: `tests/test_admin.py`
+- **Migration required:** Run both admin migrations before deploying
 
 ### P2 - Medium (Nice-to-Have)
 
