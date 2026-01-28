@@ -39,28 +39,44 @@ async def check_supabase() -> Dict[str, Any]:
 
 
 async def check_redis() -> Dict[str, Any]:
-    """Check Redis connectivity (if configured)."""
-    if not settings.redis_url:
-        return {
-            "status": "not_configured",
-            "message": "Redis URL not set - using in-memory rate limiting",
-        }
-    
+    """Check Redis and rate limiter status."""
     try:
-        import redis.asyncio as redis
+        from rate_limit import get_rate_limiter_status
         
-        start = datetime.now()
-        client = redis.from_url(settings.redis_url)
-        await client.ping()
-        latency_ms = (datetime.now() - start).total_seconds() * 1000
-        await client.close()
+        status = await get_rate_limiter_status()
         
-        return {
-            "status": "healthy",
-            "latency_ms": round(latency_ms, 2),
-        }
+        # Map rate limiter status to health check format
+        if status["backend"] == "redis" and status["healthy"]:
+            return {
+                "status": "healthy",
+                "backend": "redis",
+                "latency_ms": status.get("latency_ms"),
+            }
+        elif status["backend"] == "memory":
+            return {
+                "status": "degraded" if settings.is_production else "healthy",
+                "backend": "memory",
+                "message": status.get("reason", "Using in-memory rate limiting"),
+                "warning": "Not suitable for production" if settings.is_production else None,
+            }
+        elif status["backend"] == "none":
+            return {
+                "status": "not_configured",
+                "message": status.get("reason", "Rate limiting disabled"),
+            }
+        elif status["backend"] == "uninitialized":
+            return {
+                "status": "unhealthy",
+                "error": "Rate limiter not initialized",
+            }
+        else:
+            return {
+                "status": "unhealthy",
+                "backend": status.get("backend"),
+                "error": status.get("error", "Unknown error"),
+            }
     except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
+        logger.error(f"Rate limiter health check failed: {e}")
         return {
             "status": "unhealthy",
             "error": str(e),
@@ -162,9 +178,10 @@ def is_ready(checks: Dict[str, Any]) -> bool:
     
     Critical dependencies (must be healthy):
     - Supabase (database)
+    - Redis (in production only - required for rate limiting)
     
     Non-critical (can be degraded):
-    - Redis (falls back to in-memory)
+    - Redis (in development - falls back to in-memory)
     - Deepgram (transcription unavailable)
     - OpenAI (refinement unavailable)
     - Sentry (error tracking disabled)
@@ -173,6 +190,14 @@ def is_ready(checks: Dict[str, Any]) -> bool:
     supabase_status = checks.get("supabase", {}).get("status")
     if supabase_status not in ("healthy",):
         return False
+    
+    # In production, Redis is critical for rate limiting
+    if settings.is_production:
+        redis_status = checks.get("redis", {}).get("status")
+        redis_backend = checks.get("redis", {}).get("backend")
+        # Must have Redis backend and be healthy in production
+        if redis_backend != "redis" or redis_status != "healthy":
+            return False
     
     return True
 

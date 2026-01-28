@@ -24,7 +24,13 @@ from models import (
 )
 from storage import storage_service, StorageService
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
-from rate_limit import rate_limit_middleware, rate_limit_check, close_redis
+from rate_limit import (
+    rate_limit_middleware, 
+    rate_limit_check, 
+    close_redis,
+    initialize_rate_limiter,
+    get_rate_limiter_status,
+)
 from db import supabase
 from config import settings
 from transcription import (
@@ -170,8 +176,7 @@ async def startup_validation():
     if settings.is_production:
         if not settings.sentry_dsn:
             warnings.append("SENTRY_DSN not set - error tracking disabled in production")
-        if not settings.redis_url:
-            warnings.append("REDIS_URL not set - using in-memory rate limiting (not recommended for production)")
+        # Note: Redis validation is now handled by initialize_rate_limiter()
     
     # Log warnings
     for warning in warnings:
@@ -186,6 +191,9 @@ async def startup_validation():
     # Validate Supabase URL format
     if settings.supabase_url and not settings.supabase_url.startswith(("http://", "https://")):
         logger.warning("SUPABASE_URL should start with http:// or https://")
+    
+    # Initialize rate limiter (fails fast in production if Redis unavailable)
+    await initialize_rate_limiter()
     
     logger.info("Startup validation complete")
 
@@ -504,7 +512,7 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
 # DRAFT ENDPOINTS (Partial Save / Draft Naming)
 # =============================================================================
 
-def _generate_draft_name(question: str | None, max_words: int = 8) -> str:
+def _generate_draft_name(question: Optional[str], max_words: int = 8) -> str:
     """
     Generate a default draft name from the first ~8 words of the question.
     Falls back to "Untitled Draft" if no question provided.
