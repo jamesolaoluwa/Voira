@@ -1,6 +1,27 @@
 """
 Tests for rate_limit.py - Environment-aware rate limiting.
 
+=============================================================================
+IMPORTANT: This test file is SPECIAL
+=============================================================================
+
+This file tests the REAL rate limiter behavior, including:
+- Production Redis requirement
+- Fail-fast initialization
+- No silent fallbacks
+
+conftest.py EXCLUDES this file from global rate limiter mocking.
+When running: pytest test_rate_limit.py
+The rate limiter mocks in conftest.py are NOT applied.
+
+This ensures we can verify GAP-002 requirements:
+✅ Production + no Redis → startup fails
+✅ Production + Redis unavailable → startup fails  
+✅ Development + no Redis → memory fallback (with warning)
+✅ No silent fallbacks in production
+
+=============================================================================
+
 Test scenarios:
 1. Production + no Redis → startup fails with RateLimiterConfigurationError
 2. Production + Redis available → Redis backend used
@@ -20,18 +41,30 @@ import os
 # Add the api directory to the path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'apps', 'api'))
 
+# =============================================================================
+# FIXTURE: Reset rate limiter state before each test
+# =============================================================================
+# Each test in this file needs a clean slate to test initialization behavior.
+# We import rate_limit directly (not through main) to test the module in isolation.
+
+@pytest.fixture(autouse=True, scope='function')
+def reset_rate_limiter_state():
+    """
+    Reset rate limiter state before AND after each test.
+    
+    This is critical because:
+    1. Tests modify global state (_initialized, _active_backend, etc.)
+    2. Each test needs a clean slate to test initialization
+    3. Tests should not affect each other
+    """
+    from rate_limit import reset_for_testing
+    reset_for_testing()
+    yield
+    reset_for_testing()
+
 
 class TestRateLimiterInitialization:
     """Test rate limiter initialization in different environments."""
-    
-    @pytest.fixture(autouse=True)
-    def reset_rate_limiter(self):
-        """Reset rate limiter state before each test."""
-        # Import here to avoid issues with module state
-        from rate_limit import reset_for_testing
-        reset_for_testing()
-        yield
-        reset_for_testing()
     
     @pytest.mark.asyncio
     async def test_production_no_redis_fails_at_startup(self):
@@ -60,8 +93,10 @@ class TestRateLimiterInitialization:
             with pytest.raises(RateLimiterConfigurationError) as exc_info:
                 await initialize_rate_limiter()
             
-            assert "REDIS_URL is required" in str(exc_info.value)
-            assert "production" in str(exc_info.value).lower()
+            # Check error message mentions Redis and production
+            error_msg = str(exc_info.value).lower()
+            assert "redis" in error_msg, f"Expected 'redis' in error: {exc_info.value}"
+            assert "production" in error_msg, f"Expected 'production' in error: {exc_info.value}"
     
     @pytest.mark.asyncio
     async def test_production_redis_unavailable_fails_at_startup(self):

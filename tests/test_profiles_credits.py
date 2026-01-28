@@ -1,4 +1,15 @@
-"""Tests for user profile creation and credit assignment."""
+"""Tests for user profile creation and credit assignment.
+
+=============================================================================
+Mock Target Reference
+=============================================================================
+IMPORTANT: Endpoints in main.py use different auth dependencies:
+- /auth/me uses get_current_user
+- /sessions and /analyze use get_active_user (checks disabled status)
+
+When testing API endpoints, override the correct dependency.
+=============================================================================
+"""
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, Mock, AsyncMock
@@ -9,7 +20,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'apps', 'api'))
 from main import app
-from auth import get_current_user
+from auth import get_current_user, get_active_user
 from credits import (
     check_and_reset_credits,
     check_credits_available,
@@ -199,6 +210,7 @@ class TestCreditAssignment:
         """Test that decrementing credits reduces the user's balance."""
         user_id = "test-user-id"
         
+        # Mock check_and_reset_credits (called before atomic deduct)
         with patch('credits.check_and_reset_credits') as mock_reset:
             mock_reset.return_value = {
                 "user_id": user_id,
@@ -206,27 +218,33 @@ class TestCreditAssignment:
             }
             
             with patch('credits.supabase') as mock_supabase:
-                # Mock update response
-                updated_profile = {
-                    "user_id": user_id,
+                # BUG-005: credits.py now uses atomic RPC call, not table().update()
+                # Mock the atomic_decrement_credits RPC response
+                mock_rpc_response = Mock()
+                mock_rpc_response.data = {
+                    "success": True,
                     "credits_remaining": 9,
+                    "previous_credits": 10,
                 }
-                mock_update_response = Mock()
-                mock_update_response.data = [updated_profile]
-                mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = mock_update_response
-                
-                # Mock ledger insert
-                mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock()
+                mock_supabase.rpc.return_value.execute.return_value = mock_rpc_response
                 
                 result = await decrement_credits(user_id, amount=1, reason="test", is_admin=False)
-                assert result["credits_remaining"] == 9
                 
-                # Verify update was called
-                mock_supabase.table.assert_called()
+                # Verify atomic RPC was called with correct params
+                mock_supabase.rpc.assert_called_with(
+                    "atomic_decrement_credits",
+                    {"p_user_id": user_id, "p_amount": 1, "p_reason": "test"}
+                )
+                assert result["success"] is True
+                assert result["credits_remaining"] == 9
     
     @pytest.mark.asyncio
     async def test_credits_decrement_logs_to_ledger(self):
-        """Test that credit decrements are logged to the credits ledger."""
+        """Test that credit decrements are logged to the credits ledger.
+        
+        BUG-005: Ledger logging now happens INSIDE the atomic_decrement_credits
+        Postgres function, not via separate insert call. This ensures atomicity.
+        """
         user_id = "test-user-id"
         
         with patch('credits.check_and_reset_credits') as mock_reset:
@@ -236,21 +254,22 @@ class TestCreditAssignment:
             }
             
             with patch('credits.supabase') as mock_supabase:
-                updated_profile = {
-                    "user_id": user_id,
+                # Atomic function handles both deduction and ledger insert
+                mock_rpc_response = Mock()
+                mock_rpc_response.data = {
+                    "success": True,
                     "credits_remaining": 9,
+                    "ledger_logged": True,  # Atomic function logs to ledger internally
                 }
-                mock_update_response = Mock()
-                mock_update_response.data = [updated_profile]
-                mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = mock_update_response
+                mock_supabase.rpc.return_value.execute.return_value = mock_rpc_response
                 
                 await decrement_credits(user_id, amount=1, reason="test_decrement", is_admin=False)
                 
-                # Verify ledger insert was called
-                # Check that insert was called with correct data structure
-                insert_calls = [call for call in mock_supabase.table.return_value.insert.call_args_list 
-                               if call]
-                assert len(insert_calls) > 0
+                # Verify atomic RPC was called (it handles ledger internally)
+                mock_supabase.rpc.assert_called_with(
+                    "atomic_decrement_credits",
+                    {"p_user_id": user_id, "p_amount": 1, "p_reason": "test_decrement"}
+                )
     
     @pytest.mark.asyncio
     async def test_credits_decrement_bypasses_for_admin(self):
@@ -258,12 +277,17 @@ class TestCreditAssignment:
         user_id = "admin-user-id"
         
         result = await decrement_credits(user_id, amount=1, reason="test", is_admin=True)
-        # Should return empty dict for admins (bypasses decrement)
-        assert result == {}
+        # BUG-005: Admin bypass now returns a structured response
+        assert result["success"] is True
+        assert result["admin_bypass"] is True
+        assert result["credits_remaining"] is None  # No deduction for admins
 
 
 class TestCreditEnforcementViaAPI:
-    """Tests for credit enforcement through API endpoints."""
+    """Tests for credit enforcement through API endpoints.
+    
+    NOTE: /sessions and /analyze use get_active_user (not get_current_user).
+    """
     
     def test_session_creation_requires_credits(self):
         """Test that session creation fails without sufficient credits."""
@@ -280,7 +304,8 @@ class TestCreditEnforcementViaAPI:
             "credits_remaining": 0,
         }
         
-        app.dependency_overrides[get_current_user] = lambda: mock_user_no_credits
+        # /sessions uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_user_no_credits
         
         with patch('main.check_is_admin', return_value=False):
             with patch('main.check_credits_available', return_value=(False, {})):
@@ -304,7 +329,8 @@ class TestCreditEnforcementViaAPI:
             "credits_remaining": 10,
             "credits_reset_at": None,
         }
-        app.dependency_overrides[get_current_user] = lambda: mock_user
+        # /sessions uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_user
         
         with patch('main.check_is_admin', return_value=False):
             with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 10})):
@@ -342,7 +368,8 @@ class TestCreditEnforcementViaAPI:
             "credits_remaining": 999,
             "credits_reset_at": None,
         }
-        app.dependency_overrides[get_current_user] = lambda: mock_admin_user
+        # /sessions uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_admin_user
         
         with patch('main.check_is_admin', return_value=True):
             with patch('main.supabase') as mock_supabase:
@@ -371,7 +398,10 @@ class TestCreditEnforcementViaAPI:
 
 
 class TestAnalyzeEndpointCreditConsumption:
-    """Tests for /analyze endpoint credit consumption (GAP-001)."""
+    """Tests for /analyze endpoint credit consumption (GAP-001).
+    
+    NOTE: /analyze uses get_active_user (not get_current_user).
+    """
     
     def test_analyze_requires_credits(self):
         """Test that /analyze endpoint fails without sufficient credits."""
@@ -384,7 +414,8 @@ class TestAnalyzeEndpointCreditConsumption:
             "credits_reset_at": None,
         }
         
-        app.dependency_overrides[get_current_user] = lambda: mock_user
+        # /analyze uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_user
         
         with patch('main.check_is_admin', return_value=False):
             with patch('main.check_credits_available', return_value=(False, {"credits_remaining": 0})):
@@ -408,7 +439,8 @@ class TestAnalyzeEndpointCreditConsumption:
             "credits_reset_at": None,
         }
         
-        app.dependency_overrides[get_current_user] = lambda: mock_user
+        # /analyze uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_user
         
         with patch('main.check_is_admin', return_value=False):
             with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 5})):
@@ -450,7 +482,8 @@ class TestAnalyzeEndpointCreditConsumption:
             "credits_reset_at": None,
         }
         
-        app.dependency_overrides[get_current_user] = lambda: mock_user
+        # /analyze uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_user
         
         with patch('main.check_is_admin', return_value=False):
             with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 5})):
@@ -481,7 +514,8 @@ class TestAnalyzeEndpointCreditConsumption:
             "credits_reset_at": None,
         }
         
-        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        # /analyze uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_admin
         
         with patch('main.check_is_admin', return_value=True):
             # Admin bypasses credit check, so check_credits_available returns True
@@ -520,7 +554,8 @@ class TestAnalyzeEndpointCreditConsumption:
             "credits_reset_at": None,
         }
         
-        app.dependency_overrides[get_current_user] = lambda: mock_user
+        # /analyze uses get_active_user
+        app.dependency_overrides[get_active_user] = lambda: mock_user
         
         with patch('main.check_is_admin', return_value=False):
             with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 10})):

@@ -6,10 +6,28 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'apps', 'api'))
+
+# Import app and auth after conftest has set up the environment
 from main import app
 from auth import get_current_user, check_is_admin
 
-# Use the context manager form to trigger startup events
+
+# =============================================================================
+# Module-level Mock Rate Limiter
+# =============================================================================
+async def _mock_rate_limit_check(identifier, path):
+    """Mock rate limit check that always allows requests."""
+    return True, {
+        "X-RateLimit-Limit": "60",
+        "X-RateLimit-Remaining": "59",
+        "X-RateLimit-Reset": "60",
+    }
+
+# Create module-level client with rate limiting mocked
+# The patch needs to be active when requests are made
+_rate_limit_patcher = patch('main.rate_limit_check', _mock_rate_limit_check)
+_rate_limit_patcher.start()
+
 client = TestClient(app, raise_server_exceptions=False)
 
 
@@ -21,6 +39,8 @@ def test_admin_check_requires_auth():
 
 def test_admin_check_returns_boolean():
     """Test that /admin/is-admin returns { isAdmin: boolean } only."""
+    from auth import security
+    
     mock_user = {
         "id": "test-user-id",
         "email": "test@example.com",
@@ -29,26 +49,32 @@ def test_admin_check_returns_boolean():
         "credits_remaining": 10,
     }
     
-    # Mock get_current_user
+    # Mock credentials to bypass HTTPBearer check
+    mock_credentials = Mock()
+    mock_credentials.credentials = "fake-token"
+    
+    # Mock both get_current_user AND security (HTTPBearer)
     app.dependency_overrides[get_current_user] = lambda: mock_user
+    app.dependency_overrides[security] = lambda: mock_credentials
     
-    # Mock check_is_admin to return False
-    with patch('auth.check_is_admin', return_value=False):
-        response = client.get("/admin/is-admin")
-        assert response.status_code == 200
-        data = response.json()
-        assert "isAdmin" in data
-        assert data["isAdmin"] is False
-        # Ensure no other sensitive data is returned
-        assert "email" not in data
-        assert "id" not in data
-    
-    # Mock check_is_admin to return True
-    with patch('auth.check_is_admin', return_value=True):
-        response = client.get("/admin/is-admin")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["isAdmin"] is True
+    # Patch rate_limit_middleware (used inside the endpoint) and check_is_admin
+    with patch('main.rate_limit_middleware'):  # No-op for rate limiting
+        with patch('main.check_is_admin', new_callable=AsyncMock, return_value=False):
+            response = client.get("/admin/is-admin")
+            assert response.status_code == 200
+            data = response.json()
+            assert "isAdmin" in data
+            assert data["isAdmin"] is False
+            # Ensure no other sensitive data is returned
+            assert "email" not in data
+            assert "id" not in data
+        
+        # Mock check_is_admin to return True
+        with patch('main.check_is_admin', new_callable=AsyncMock, return_value=True):
+            response = client.get("/admin/is-admin")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["isAdmin"] is True
     
     app.dependency_overrides.clear()
 
@@ -421,7 +447,8 @@ class TestEmptyDatabaseSafety:
         
         # Patch rate_limit_check where it's used (main module)
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock empty result for user_profiles table query
                 mock_execute = Mock()
                 mock_execute.data = []
@@ -445,7 +472,8 @@ class TestEmptyDatabaseSafety:
         app.dependency_overrides[require_admin] = lambda: mock_admin
         
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock empty result
                 mock_execute = Mock()
                 mock_execute.data = []
@@ -469,7 +497,8 @@ class TestEmptyDatabaseSafety:
         app.dependency_overrides[require_admin] = lambda: mock_admin
         
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock empty result
                 mock_execute = Mock()
                 mock_execute.data = []
@@ -492,7 +521,8 @@ class TestEmptyDatabaseSafety:
         app.dependency_overrides[require_admin] = lambda: mock_admin
         
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock empty results for all queries
                 mock_execute = Mock()
                 mock_execute.data = []
@@ -526,7 +556,8 @@ class TestEmptyDatabaseSafety:
         app.dependency_overrides[require_admin] = lambda: mock_admin
         
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock empty result
                 mock_execute = Mock()
                 mock_execute.data = []
@@ -554,7 +585,8 @@ class TestNullFieldSafety:
         app.dependency_overrides[require_admin] = lambda: mock_admin
         
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock user with minimal data (NULLs for optional fields)
                 mock_execute = Mock()
                 mock_execute.data = [{
@@ -595,7 +627,8 @@ class TestNullFieldSafety:
         app.dependency_overrides[require_admin] = lambda: mock_admin
         
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock session with minimal data
                 mock_execute = Mock()
                 mock_execute.data = [{
@@ -629,7 +662,8 @@ class TestNullFieldSafety:
         app.dependency_overrides[require_admin] = lambda: mock_admin
         
         with patch('main.rate_limit_check', new_callable=AsyncMock, return_value=(True, {})):
-            with patch('db.supabase') as mock_supabase:
+            # Patch supabase where it's imported IN THE ADMIN MODULE
+            with patch('admin.supabase') as mock_supabase:
                 # Mock draft with NULL updated_at
                 mock_execute = Mock()
                 mock_execute.data = [{
