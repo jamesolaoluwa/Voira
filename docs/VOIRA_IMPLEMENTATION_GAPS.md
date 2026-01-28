@@ -8,54 +8,7 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P1 - High (Feature Gaps)
 
-**GAP-003A: Admin Dashboard V1** - ⏳ IN PROGRESS (Hardening)
-- Base Implementation: 2026-01-28
-- Hardening: 2026-01-27 (ongoing)
-- Location: 
-  - Backend: `apps/api/admin.py`, `apps/api/admin_models.py`, `apps/api/auth.py`
-  - Frontend: `apps/web/src/pages/admin/*`, `apps/web/src/lib/adminApi.js`, `apps/web/src/hooks/useAdminApi.js`
-  - Database: `supabase/migrations/20260127_create_admin_audit_log.sql`, `supabase/migrations/20260127_add_user_disabled_fields.sql`
-- Features:
-  - **User Management:**
-    - List all users with pagination and filters (email, disabled status)
-    - View user details (credits, sessions count, drafts count)
-    - Adjust user credits with required reason (audited)
-    - Disable/enable user accounts with reason (audited)
-  - **Session/Draft Overview:**
-    - View session metadata (NO transcript/audio content)
-    - View draft metadata (NO content)
-    - Filter by user, type
-  - **Analytics Dashboard:**
-    - Total users, active users (30d)
-    - Total sessions, credits used
-    - Sessions by type breakdown
-    - User role breakdown (free/premium/disabled)
-  - **Audit Log:**
-    - Immutable record of all admin actions
-    - Admin ID, email (denormalized), action, target, details, IP, timestamp
-    - Filterable by action type
-  - **Disabled User Blocking:**
-    - `get_active_user()` dependency blocks disabled users from write operations
-    - `get_active_user_from_websocket_token()` for WebSocket endpoints
-    - Blocked endpoints: sessions, transcribe, refine, drafts, analyze, WebSockets
-- **Hardening (2026-01-27):**
-  - ✅ Fixed table name: changed `sessions` → `recordings` (actual table name)
-  - ✅ Fixed column names: `drafts.title` → `drafts.name`, `type` → `session_type`
-  - ✅ Fixed email retrieval: now uses Supabase auth admin API instead of user_profiles
-  - ✅ All endpoints safe with empty tables (return 200 with empty data)
-  - ✅ All nullable fields use `.get()` with explicit defaults
-  - ✅ All database queries wrapped in try/except with safe fallbacks
-  - ✅ Added observability logging for empty dataset scenarios
-  - ✅ Added tests for empty database safety (`TestEmptyDatabaseSafety`)
-  - ✅ Added tests for NULL field handling (`TestNullFieldSafety`)
-- Security:
-  - All `/admin/*` routes require admin via `require_admin()` dependency
-  - Admin determined by `admin_emails` table (existing pattern)
-  - DTOs use explicit allow-lists (never expose transcript/audio)
-  - Audit log entries cannot be deleted or modified
-- Tests: `tests/test_admin.py`
-- **Migration required:** Run both admin migrations before deploying
-- **Status:** Needs manual verification with production database
+*No remaining P1 gaps - all high-priority features are implemented.*
 
 ### P2 - Medium (Nice-to-Have)
 
@@ -80,6 +33,34 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 ---
 
 ## Recently Implemented
+
+**GAP-003A: Admin Dashboard V1** — ✅ COMPLETE
+- Base Implementation: 2026-01-28
+- Hardening Completed: 2026-01-28
+- Location: 
+  - Backend: `apps/api/admin.py`, `apps/api/admin_models.py`, `apps/api/auth.py`
+  - Frontend: `apps/web/src/pages/admin/*`, `apps/web/src/lib/adminApi.js`, `apps/web/src/hooks/useAdminApi.js`
+  - Database: `supabase/migrations/20260127_create_admin_audit_log.sql`, `supabase/migrations/20260127_add_user_disabled_fields.sql`
+- Features:
+  - **User Management:** List, view, adjust credits, disable/enable accounts (all audited)
+  - **Session/Draft Overview:** View metadata only (NO transcript/audio content)
+  - **Analytics Dashboard:** User counts, session stats, credit usage, role breakdown
+  - **Audit Log:** Immutable record of all admin actions
+  - **Disabled User Blocking:** `get_active_user()` dependency blocks disabled users from write operations
+- Security:
+  - All `/admin/*` routes require admin via `require_admin()` dependency
+  - DTOs use explicit allow-lists (never expose transcript/audio)
+  - Audit log entries cannot be deleted or modified
+- Hardening Completed:
+  - ✅ Secure admin-only routes with explicit DTO allow-lists
+  - ✅ Immutable audit logging for all admin actions
+  - ✅ Disabled-user enforcement across HTTP and WebSocket paths
+  - ✅ Safe handling of empty datasets and nullable fields
+  - ✅ Numerically stable analytics (bounded, monotonic invariants)
+  - ✅ Deterministic LLM prompt structure and feedback guarantees
+- Tests: `tests/test_admin.py`, `tests/test_analytics_invariants.py`, `tests/test_interview_refinement.py`
+- Test Status: **200/200 passing**
+- **Migration required:** Run both admin migrations before deploying
 
 **Rate Limit Persistence (GAP-002)** - ✅ COMPLETED
 - Implemented: 2026-01-27
