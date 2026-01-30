@@ -8,17 +8,7 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ### P1 - High (Feature Gaps)
 
-**GAP-002: Rate Limit Persistence**
-- Location: `apps/api/rate_limit.py` (entire file)
-- Status: In-memory rate limiter resets on server restart; Redis integration is optional and may not be configured
-- Impact: Rate limits ineffective across deployments or restarts
-- Fix: Make Redis required for production, or implement persistent fallback
-
-**GAP-003: Admin Dashboard**
-- Location: References in `apps/api/models.py` (`admin_emails` table) but no admin UI exists
-- Status: Admin role check exists but no admin interface
-- Impact: Cannot manage users, view analytics, or moderate content without direct DB access
-- Fix: Build admin routes and UI, or document this as intentionally deferred
+*No remaining P1 gaps - all high-priority features are implemented.*
 
 ### P2 - Medium (Nice-to-Have)
 
@@ -43,6 +33,76 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 ---
 
 ## Recently Implemented
+
+**GAP-003A: Admin Dashboard V1** — ✅ COMPLETE
+- Base Implementation: 2026-01-28
+- Hardening Completed: 2026-01-28
+- Location: 
+  - Backend: `apps/api/admin.py`, `apps/api/admin_models.py`, `apps/api/auth.py`
+  - Frontend: `apps/web/src/pages/admin/*`, `apps/web/src/lib/adminApi.js`, `apps/web/src/hooks/useAdminApi.js`
+  - Database: `supabase/migrations/20260127_create_admin_audit_log.sql`, `supabase/migrations/20260127_add_user_disabled_fields.sql`
+- Features:
+  - **User Management:** List, view, adjust credits, disable/enable accounts (all audited)
+  - **Session/Draft Overview:** View metadata only (NO transcript/audio content)
+  - **Analytics Dashboard:** User counts, session stats, credit usage, role breakdown
+  - **Audit Log:** Immutable record of all admin actions
+  - **Disabled User Blocking:** `get_active_user()` dependency blocks disabled users from write operations
+- Security:
+  - All `/admin/*` routes require admin via `require_admin()` dependency
+  - DTOs use explicit allow-lists (never expose transcript/audio)
+  - Audit log entries cannot be deleted or modified
+- Hardening Completed:
+  - ✅ Secure admin-only routes with explicit DTO allow-lists
+  - ✅ Immutable audit logging for all admin actions
+  - ✅ Disabled-user enforcement across HTTP and WebSocket paths
+  - ✅ Safe handling of empty datasets and nullable fields
+  - ✅ Numerically stable analytics (bounded, monotonic invariants)
+  - ✅ Deterministic LLM prompt structure and feedback guarantees
+- Tests: `tests/test_admin.py`, `tests/test_analytics_invariants.py`, `tests/test_interview_refinement.py`
+- Test Status: **200/200 passing**
+- **Migration required:** Run both admin migrations before deploying
+
+**Rate Limit Persistence (GAP-002)** - ✅ COMPLETED
+- Implemented: 2026-01-27
+- Location: `apps/api/rate_limit.py`, `apps/api/health.py`, `apps/api/main.py`
+- Design Decisions:
+  - **Startup Fail vs Runtime Fail**: Chose STARTUP FAIL for production (catches misconfiguration at deployment)
+  - **Eager vs Lazy Validation**: Chose EAGER validation (immediate feedback)
+- Environment-Aware Behavior:
+  - **Production (ENV=production)**: Redis REQUIRED. App fails at startup if REDIS_URL not configured or Redis unreachable
+  - **Development (ENV=development)**: In-memory fallback allowed with clear warning. Non-persistent but functional for local dev
+  - **Rate limiting disabled**: No-op behavior when `RATE_LIMIT_ENABLED=false`
+- Changes Made:
+  - Complete rewrite of `rate_limit.py` (~480 lines):
+    - `RateLimiterBackend` enum: REDIS, MEMORY, NONE
+    - `RateLimiterConfigurationError` for startup failures in production
+    - `RateLimiterUnavailableError` for runtime failures
+    - `initialize_rate_limiter()` - MUST be called at startup, performs eager validation
+    - `_ensure_initialized()` - Guards all rate limit operations
+    - `get_rate_limiter_status()` - Health check integration
+    - `_mask_redis_url()` - Privacy-safe logging (passwords masked)
+    - `reset_for_testing()` - Test utility for state reset
+  - Updated `main.py`:
+    - Added `initialize_rate_limiter` to imports
+    - Calls `await initialize_rate_limiter()` in startup hook
+    - Removed stale warning about Redis (now handled by rate limiter)
+  - Updated `health.py`:
+    - `check_redis()` now uses `get_rate_limiter_status()` for accurate reporting
+    - `is_ready()` now requires healthy Redis in production
+- Observability:
+  - All logs use structured format with `[RateLimiter:*]` prefix
+  - Startup logs: backend chosen, environment, initialization status
+  - Runtime logs: rate limit checks, exceeded limits (keyed by user_id, not IP)
+  - Error logs: connection failures with masked credentials
+- Tests: `tests/test_rate_limit.py`
+  - Production + no Redis → error at startup
+  - Production + Redis unavailable → error at startup
+  - Production + Redis → Redis backend used
+  - Development + no Redis → in-memory with warning
+  - Development + Redis → Redis backend used
+  - Rate limiting disabled → no-op behavior
+  - Uninitialized rate limiter → clear error
+  - Privacy-safe URL masking
 
 **Word Limit Enforcement on LLM Output (GAP-001)** - ✅ COMPLETED
 - Implemented: 2026-01-26

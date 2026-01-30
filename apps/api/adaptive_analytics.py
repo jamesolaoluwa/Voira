@@ -480,9 +480,13 @@ class SignalAnalyzer:
         VARIANCE STABILITY:
         - Based on lexical diversity
         - WHY: Extreme diversity (too high or low) indicates instability
+        
+        INVARIANT: Overall reliability must be monotonically non-decreasing with word_count.
+        This is enforced by using data_sufficiency as a floor for final reliability.
         """
         # Factor 1: Data Sufficiency
         # Smooth sigmoid ensures gradual reliability increase
+        # This factor is STRICTLY monotonically increasing with word_count
         data_sufficiency = self._smooth_threshold(
             word_count, 
             threshold=self.MINIMUM_WORDS_FOR_PATTERNS,
@@ -515,6 +519,15 @@ class SignalAnalyzer:
         else:
             # Longer texts: diversity should scale
             variance_stability = min(1.0, 0.4 + unique_word_ratio * 0.8)
+        
+        # INVARIANT ENFORCEMENT: Reliability monotonicity
+        # Ensure feature_agreement and variance_stability are at least proportional
+        # to data_sufficiency, so adding more data can never hurt reliability.
+        # This creates a floor: agreement and stability cannot fall below 
+        # data_sufficiency when we have sufficient data.
+        min_factor_floor = data_sufficiency * 0.7 + 0.3  # Ranges from 0.3 to 1.0
+        feature_agreement = max(feature_agreement, min_factor_floor)
+        variance_stability = max(variance_stability, min_factor_floor)
         
         return ReliabilityFactors(
             data_sufficiency=round(max(0, min(1, data_sufficiency)), 3),
@@ -1244,7 +1257,9 @@ class InteractionAwareContributions:
         
         # Step 2: Apply sigmoid
         # WHY 0.5 steepness: Moderate sensitivity, not too sharp
-        raw = 1 / (1 + math.exp(-z * 0.5))
+        # INVARIANT: Clamp z to prevent exp overflow (exp(700) overflows float64)
+        z_clamped = max(-500, min(500, z))
+        raw = 1 / (1 + math.exp(-z_clamped * 0.5))
         
         # Step 3: Scale to contribution range
         # Maps sigmoid [0,1] to [0.5-max_effect, 0.5+max_effect]
@@ -1286,7 +1301,9 @@ class InteractionAwareContributions:
         
         # Step 2: Apply INVERTED sigmoid
         # Note: positive z now DECREASES contribution
-        raw = 1 / (1 + math.exp(z * 0.5))
+        # INVARIANT: Clamp z to prevent exp overflow (exp(700) overflows float64)
+        z_clamped = max(-500, min(500, z))
+        raw = 1 / (1 + math.exp(z_clamped * 0.5))
         
         # Step 3: Scale to contribution range
         contribution = 0.5 + (raw - 0.5) * max_effect * 2

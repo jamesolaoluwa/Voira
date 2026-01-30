@@ -2044,7 +2044,12 @@ CRITICAL FRAMING RULES:
    - "innovation", "customer focus", "collaboration", "technical excellence"
    - NOT specific claims about the company
 
-If you cannot confidently identify any company-specific themes, use generic best practices instead.""")
+If you cannot confidently identify any company-specific themes, use generic best practices instead.
+
+SAFETY RULES:
+- Do NOT claim time-sensitive facts about the company (recent news, current leadership, etc.)
+- Do NOT fabricate company-specific details you cannot verify
+- When in doubt, use industry-general guidance instead of company-specific claims""")
     else:
         # Neither provided - generic best practices
         sections.append("""COMPANY ALIGNMENT (Generic Best Practices):
@@ -2327,24 +2332,9 @@ async def refine_interview_response(
             raw_feedback = parsed.get("feedback", [])
             
             # HARDENING: Validate feedback quality
-            if transcript_too_short_for_feedback:
-                # Suppress LLM feedback for very short transcripts - quality is unreliable
-                result["feedback"] = None
-                result["assumptions_or_limits"] = [
-                    "Transcript was too short for detailed feedback",
-                    "Record a longer response for personalized improvement suggestions"
-                ]
-                feedback_suppressed_reason = "SHORT_TRANSCRIPT"
-            elif not raw_feedback or len(raw_feedback) == 0:
-                # LLM returned empty feedback when we expected it - flag this
-                result["feedback"] = None
-                result["assumptions_or_limits"] = parsed.get("assumptions_or_limits", []) + [
-                    "No specific feedback could be generated for this response"
-                ]
-                feedback_suppressed_reason = "LLM_EMPTY_RESPONSE"
-            else:
-                # Validate each feedback item has actionable content
-                validated_feedback = []
+            # First, try to validate and use LLM feedback
+            validated_feedback = []
+            if raw_feedback and len(raw_feedback) > 0:
                 for fb in raw_feedback:
                     if isinstance(fb, dict):
                         observation = fb.get("observation", "").strip()
@@ -2354,15 +2344,52 @@ async def refine_interview_response(
                             validated_feedback.append(fb)
                         else:
                             logger.debug(f"[InterviewRefinement] Skipping vague feedback: {fb}")
-                
-                result["feedback"] = validated_feedback if validated_feedback else None
-                if not validated_feedback and raw_feedback:
-                    result["assumptions_or_limits"] = parsed.get("assumptions_or_limits", []) + [
-                        "Feedback items were too vague to be actionable"
-                    ]
-                    feedback_suppressed_reason = "VAGUE_FEEDBACK_FILTERED"
-                else:
-                    result["assumptions_or_limits"] = parsed.get("assumptions_or_limits", [])
+            
+            # Now decide what feedback to return
+            if validated_feedback:
+                # LLM returned valid feedback - use it regardless of transcript length
+                result["feedback"] = validated_feedback
+                result["assumptions_or_limits"] = parsed.get("assumptions_or_limits", [])
+            elif transcript_too_short_for_feedback:
+                # No valid LLM feedback AND transcript was short - provide fallback
+                # INVARIANT: If transcript exists, feedback must NEVER be None
+                result["feedback"] = [{
+                    "category": "general",
+                    "observation": "The transcript provided was too short for detailed analysis.",
+                    "suggestion": "Record a longer response (at least 50 characters) for more specific feedback.",
+                    "priority": "medium"
+                }]
+                result["assumptions_or_limits"] = [
+                    "Transcript was too short for detailed feedback",
+                    "Record a longer response for personalized improvement suggestions"
+                ]
+                feedback_suppressed_reason = "SHORT_TRANSCRIPT"
+            elif not raw_feedback or len(raw_feedback) == 0:
+                # LLM returned empty feedback when we expected it - provide fallback
+                # INVARIANT: If transcript exists, feedback must NEVER be None
+                result["feedback"] = [{
+                    "category": "general",
+                    "observation": "No specific feedback could be generated for this response.",
+                    "suggestion": "Try providing more detail in your answer for targeted improvement suggestions.",
+                    "priority": "low"
+                }]
+                result["assumptions_or_limits"] = parsed.get("assumptions_or_limits", []) + [
+                    "No specific feedback could be generated for this response"
+                ]
+                feedback_suppressed_reason = "LLM_EMPTY_RESPONSE"
+            else:
+                # LLM returned feedback but all items were too vague - provide fallback
+                # INVARIANT: If transcript exists, feedback must NEVER be None
+                result["feedback"] = [{
+                    "category": "general",
+                    "observation": "The generated feedback was too general to be actionable.",
+                    "suggestion": "Consider providing more context or detail in your response.",
+                    "priority": "low"
+                }]
+                result["assumptions_or_limits"] = parsed.get("assumptions_or_limits", []) + [
+                    "Feedback items were too vague to be actionable"
+                ]
+                feedback_suppressed_reason = "VAGUE_FEEDBACK_FILTERED"
             
             result["suggested_follow_up"] = parsed.get("suggested_follow_up")
         else:

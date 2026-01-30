@@ -1,4 +1,22 @@
-"""Tests for /sessions endpoints."""
+"""Tests for /sessions endpoints.
+
+=============================================================================
+Mock Target Reference
+=============================================================================
+When main.py imports functions like:
+    from auth import check_is_admin, get_active_user
+    from credits import check_credits_available
+
+We must patch them WHERE THEY ARE USED (in main), not where defined:
+    patch('main.check_is_admin')         NOT patch('auth.check_is_admin')
+    patch('main.check_credits_available') NOT patch('credits.check_credits_available')
+
+IMPORTANT: The /sessions endpoint uses get_active_user (which checks disabled
+status), NOT get_current_user. So we override get_active_user in tests.
+
+See: https://docs.python.org/3/library/unittest.mock.html#where-to-patch
+=============================================================================
+"""
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, Mock
@@ -8,8 +26,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'apps', 'api'))
 from main import app
-from auth import get_current_user, check_is_admin
-from credits import check_credits_available, decrement_credits
+from auth import get_active_user  # Sessions use get_active_user, not get_current_user
 
 client = TestClient(app)
 
@@ -33,12 +50,12 @@ def test_create_session_enforces_credits():
         "credits_remaining": 0,  # No credits
     }
     
-    app.dependency_overrides[get_current_user] = lambda: mock_user
+    # Override get_active_user (sessions endpoint uses this, not get_current_user)
+    app.dependency_overrides[get_active_user] = lambda: mock_user
     
-    # Mock check_is_admin to return False
-    with patch('auth.check_is_admin', return_value=False):
-        # Mock check_credits_available to return False
-        with patch('credits.check_credits_available', return_value=(False, {})):
+    # Patch where used (main module), not where defined (auth/credits modules)
+    with patch('main.check_is_admin', return_value=False):
+        with patch('main.check_credits_available', return_value=(False, {})):
             response = client.post("/sessions", json={
                 "title": "Test Session",
                 "type": "free",
@@ -59,13 +76,14 @@ def test_create_session_enforces_ownership():
         "credits_remaining": 10,
     }
     
-    app.dependency_overrides[get_current_user] = lambda: mock_user
+    # Override get_active_user (sessions endpoint uses this)
+    app.dependency_overrides[get_active_user] = lambda: mock_user
     
-    # Mock dependencies
-    with patch('auth.check_is_admin', return_value=False):
-        with patch('credits.check_credits_available', return_value=(True, {})):
-            with patch('credits.decrement_credits', return_value={}):
-                with patch('db.supabase') as mock_supabase:
+    # Patch where used (main module), not where defined
+    with patch('main.check_is_admin', return_value=False):
+        with patch('main.check_credits_available', return_value=(True, {})):
+            with patch('main.decrement_credits', return_value={}):
+                with patch('main.supabase') as mock_supabase:
                     mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [{
                         "id": "session-id",
                         "user_id": "test-user-id",  # Must match mock_user id
@@ -98,9 +116,13 @@ def test_list_sessions_enforces_ownership():
         "role": "free_user",
     }
     
+    # GET /sessions uses get_current_user (it's a read-only operation)
+    # Import get_current_user for this specific test
+    from auth import get_current_user
     app.dependency_overrides[get_current_user] = lambda: mock_user
     
-    with patch('db.supabase') as mock_supabase:
+    # Patch supabase where it's used (in main)
+    with patch('main.supabase') as mock_supabase:
         mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [
             {
                 "id": "session-1",
@@ -132,10 +154,12 @@ def test_admin_bypasses_credits():
         "role": "admin",
     }
     
-    app.dependency_overrides[get_current_user] = lambda: mock_admin
+    # Override get_active_user (sessions endpoint uses this)
+    app.dependency_overrides[get_active_user] = lambda: mock_admin
     
-    with patch('auth.check_is_admin', return_value=True):
-        with patch('db.supabase') as mock_supabase:
+    # Patch where used (main module)
+    with patch('main.check_is_admin', return_value=True):
+        with patch('main.supabase') as mock_supabase:
             mock_supabase.table.return_value.insert.return_value.execute.return_value.data = [{
                 "id": "session-id",
                 "user_id": "admin-id",
@@ -147,7 +171,7 @@ def test_admin_bypasses_credits():
             }]
             
             # Mock decrement_credits to verify it's NOT called for admins
-            with patch('credits.decrement_credits') as mock_decrement:
+            with patch('main.decrement_credits') as mock_decrement:
                 response = client.post("/sessions", json={
                     "title": "Admin Session",
                     "type": "free",

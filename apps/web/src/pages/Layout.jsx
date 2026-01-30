@@ -8,7 +8,7 @@ import AuthDebug from '@/components/AuthDebug';
 export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
   const isAuthPage = currentPageName === 'Auth';
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isAdmin } = useAuth();
   const isAuthenticated = !!user && !isLoading;
   
   return (
@@ -113,7 +113,7 @@ export default function Layout({ children, currentPageName }) {
         </main>
       ) : (
         <>
-          <TopNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} />
+          <TopNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} isAdmin={isAdmin} />
           <main className="min-h-screen">
             {children || <Outlet />}
             {!import.meta.env.PROD && <AuthDebug />}

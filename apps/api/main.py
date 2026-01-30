@@ -14,7 +14,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List, Optional
-from auth import get_current_user, check_is_admin, security, get_user_from_websocket_token
+from auth import get_current_user, get_active_user, check_is_admin, security, get_user_from_websocket_token, get_active_user_from_websocket_token
 from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
     TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
@@ -24,7 +24,13 @@ from models import (
 )
 from storage import storage_service, StorageService
 from credits import check_credits_available, decrement_credits, check_and_reset_credits
-from rate_limit import rate_limit_middleware, rate_limit_check, close_redis
+from rate_limit import (
+    rate_limit_middleware, 
+    rate_limit_check, 
+    close_redis,
+    initialize_rate_limiter,
+    get_rate_limiter_status,
+)
 from db import supabase
 from config import settings
 from transcription import (
@@ -49,6 +55,9 @@ init_sentry()
 
 # Import health check module
 from health import get_all_health_checks, is_ready, get_overall_status
+
+# Import admin router
+from admin import router as admin_router
 
 app = FastAPI(
     title="Voira API",
@@ -170,8 +179,7 @@ async def startup_validation():
     if settings.is_production:
         if not settings.sentry_dsn:
             warnings.append("SENTRY_DSN not set - error tracking disabled in production")
-        if not settings.redis_url:
-            warnings.append("REDIS_URL not set - using in-memory rate limiting (not recommended for production)")
+        # Note: Redis validation is now handled by initialize_rate_limiter()
     
     # Log warnings
     for warning in warnings:
@@ -186,6 +194,9 @@ async def startup_validation():
     # Validate Supabase URL format
     if settings.supabase_url and not settings.supabase_url.startswith(("http://", "https://")):
         logger.warning("SUPABASE_URL should start with http:// or https://")
+    
+    # Initialize rate limiter (fails fast in production if Redis unavailable)
+    await initialize_rate_limiter()
     
     logger.info("Startup validation complete")
 
@@ -242,6 +253,13 @@ app.add_middleware(RateLimitMiddleware)
 
 # Timeout middleware (innermost - wraps actual request handling)
 app.add_middleware(TimeoutMiddleware)
+
+# =============================================================================
+# Include Admin Router
+# =============================================================================
+# NOTE: Admin routes are isolated under /admin prefix
+# All admin routes use require_admin() dependency for security
+app.include_router(admin_router)
 
 
 # =============================================================================
@@ -348,12 +366,13 @@ async def check_admin(
 @app.post("/sessions", response_model=SessionResponse)
 async def create_session(
     session_data: SessionCreate,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)  # Disabled users blocked
 ):
     """
     Create a new session (recording).
     Enforces credits server-side.
     Admins bypass credit checks.
+    Disabled users receive 403.
     """
     # Rate limit by user ID
     rate_limit_middleware(f"create_session:{user['id']}")
@@ -525,7 +544,7 @@ def _generate_draft_name(question: Optional[str], max_words: int = 8) -> str:
 @app.post("/drafts", response_model=DraftResponse)
 async def create_draft(
     draft_data: DraftCreate,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)
 ):
     """
     Create a new draft (partial save).
@@ -537,6 +556,8 @@ async def create_draft(
     - Separate from completed sessions
     
     If name is not provided, auto-generated from first ~8 words of question.
+    
+    **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
     rate_limit_middleware(f"create_draft:{user['id']}")
     
@@ -655,11 +676,13 @@ async def get_draft(
 async def update_draft(
     draft_id: str,
     draft_data: DraftUpdate,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)
 ):
     """
     Update an existing draft.
     Only provided fields are updated; others remain unchanged.
+    
+    **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
     rate_limit_middleware(f"update_draft:{user['id']}")
     
@@ -736,7 +759,7 @@ async def delete_draft(
 async def transcribe_audio_endpoint(
     file: UploadFile = File(..., description="Audio file to transcribe"),
     language: Optional[str] = Form(default="en", description="Language code (en, es, fr, etc.)"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)  # Disabled users blocked
 ):
     """
     Transcribe audio file using Deepgram.
@@ -746,6 +769,7 @@ async def transcribe_audio_endpoint(
     
     Enforces:
     - Authentication required
+    - Disabled users receive 403
     - Max file size: 15MB
     - 1 credit deducted ONLY after successful transcription
     
@@ -876,16 +900,18 @@ async def websocket_live_transcribe(
     """
     await websocket.accept()
     
-    # Authenticate user
+    # Authenticate user and check if disabled
     if not token:
         await websocket.close(code=1008, reason="Missing authentication token")
         return
     
     try:
-        user = await get_user_from_websocket_token(token)
+        user = await get_active_user_from_websocket_token(token)
         logger.info(f"Live transcription session started for user {user['id']}")
     except HTTPException as e:
-        await websocket.close(code=1008, reason="Authentication failed")
+        # 403 = disabled user, 401 = auth failure
+        reason = "Account disabled" if e.status_code == 403 else "Authentication failed"
+        await websocket.close(code=1008, reason=reason)
         return
     except Exception as e:
         logger.error(f"WebSocket authentication error: {e}")
@@ -1034,14 +1060,16 @@ async def websocket_listen(
     token_preview = f"{token[:10]}..." if len(token) > 10 else token
     logger.info(f"[WebSocket /ws/listen] Received connection with token: {token_preview} (length: {len(token)})")
     
-    # Authenticate user BEFORE accepting connection
+    # Authenticate user and check if disabled BEFORE accepting connection
     try:
-        user = await get_user_from_websocket_token(token)
+        user = await get_active_user_from_websocket_token(token)
         logger.info(f"[WebSocket /ws/listen] Authentication successful for user {user['id']} (email: {user.get('email', 'N/A')})")
     except HTTPException as e:
-        logger.error(f"[WebSocket /ws/listen] Authentication failed: {e.detail}")
+        # 403 = disabled user, 401 = auth failure
+        reason = "Account disabled" if e.status_code == 403 else f"Authentication failed: {e.detail}"
+        logger.error(f"[WebSocket /ws/listen] {reason}")
         await websocket.accept()
-        await websocket.close(code=1008, reason=f"Authentication failed: {e.detail}")
+        await websocket.close(code=1008, reason=reason)
         return
     except Exception as e:
         logger.error(f"[WebSocket /ws/listen] Authentication error: {type(e).__name__}: {str(e)}")
@@ -1158,7 +1186,7 @@ async def websocket_listen(
 @app.post("/refine", response_model=RefineResponse)
 async def refine_draft(
     request: RefineRequest,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)  # Disabled users blocked
 ):
     """
     Refine a raw transcript into a polished response.
@@ -1166,6 +1194,8 @@ async def refine_draft(
     This endpoint uses OpenAI to refine verbatim speech while preserving
     the user's authentic voice and meaning. Uses context-aware prompts
     based on session type and voice profile.
+    
+    Disabled users receive 403.
     """
     # Rate limit by user ID
     rate_limit_middleware(f"refine:{user['id']}")
@@ -1198,7 +1228,7 @@ async def refine_draft(
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_transcript_endpoint(
     request: AnalyzeRequest,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)
 ):
     """
     Analyze a raw transcript and generate a refined version.
@@ -1219,6 +1249,8 @@ async def analyze_transcript_endpoint(
     - Why credits: /analyze triggers expensive LLM calls for refinement
     - Why flat cost (1 credit): Simplifies billing; tiered pricing deferred
     - Future: May revisit for free preview mode or tiered analysis depth
+    
+    **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
     # Rate limit by user ID
     rate_limit_middleware(f"analyze:{user['id']}")
@@ -1318,7 +1350,7 @@ async def analyze_transcript_endpoint(
 @app.post("/refine-interview", response_model=InterviewRefinementResponse)
 async def refine_interview_endpoint(
     request: InterviewRefinementRequest,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)
 ):
     """
     Refine an interview response using the turn-based pipeline.
@@ -1341,6 +1373,8 @@ async def refine_interview_endpoint(
     **Returns:**
     - refined_answer_text: Polished, submission-ready response (ALWAYS)
     - feedback: Targeted feedback on recorded response (ONLY if transcript provided)
+    
+    **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     - alignment_signals_used: Company/role signals applied
     - improvements_applied: List of improvements made
     - context_source: "user_provided" | "company_inferred" | "generic"
