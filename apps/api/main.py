@@ -504,7 +504,7 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
 # DRAFT ENDPOINTS (Partial Save / Draft Naming)
 # =============================================================================
 
-def _generate_draft_name(question: str | None, max_words: int = 8) -> str:
+def _generate_draft_name(question: Optional[str], max_words: int = 8) -> str:
     """
     Generate a default draft name from the first ~8 words of the question.
     Falls back to "Untitled Draft" if no question provided.
