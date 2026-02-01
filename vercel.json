@@ -1,12 +1,9 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build --workspace=apps/web",
-  "outputDirectory": "apps/web/dist",
   "framework": "vite",
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/apps/web/dist/index.html"
+      "destination": "/index.html"
     }
   ]
 }
