@@ -10,8 +10,9 @@ export default function AuthGate({ children }) {
   // While auth state is loading, don't redirect — let the app settle
   if (isLoading) return null;
 
-  // If auth has finished loading and there's no session/user, redirect to Auth
-  if (!user) {
+  // If auth has finished loading and there's no session, redirect to Auth
+  // Note: Check session (not user) because user profile is fetched async after session is established
+  if (!session) {
     return <Navigate to={createPageUrl('Auth')} state={{ from: location }} replace />;
   }
 

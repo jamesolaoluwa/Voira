@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
@@ -13,9 +13,11 @@ import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/components/lib/supabase';
 import { safeParseEmail, safeParsePassword } from '@/lib/validation';
 import { normalizeEmail } from '@/lib/sanitize';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Auth() {
   const navigate = useNavigate();
+  const { session, isLoading: authLoading } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,6 +30,15 @@ export default function Auth() {
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
+
+  // Redirect when session is established (handles both email login and OAuth)
+  useEffect(() => {
+    console.log('[Auth] useEffect - authLoading:', authLoading, 'session:', !!session);
+    if (!authLoading && session) {
+      console.log('[Auth] Session detected, redirecting to /home');
+      navigate('/home', { replace: true });
+    }
+  }, [session, authLoading, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -44,16 +55,21 @@ export default function Auth() {
       if (!pwResult.success) throw new Error('Password must be at least 10 characters');
 
       if (isSignUp) {
+        console.log('[Auth] Calling signUp...');
         await auth.signUp(normalizedEmail, password, name);
+        console.log('[Auth] signUp completed');
       } else {
-        await auth.signIn(normalizedEmail, password);
+        console.log('[Auth] Calling signIn...');
+        const result = await auth.signIn(normalizedEmail, password);
+        console.log('[Auth] signIn completed:', result);
       }
-      navigate(createPageUrl('Home'));
+      // Don't navigate here - let useEffect handle it when session updates
     } catch (err) {
+      console.log('[Auth] Error:', err);
       setError(err.message || 'Authentication failed');
-    } finally {
       setIsLoading(false);
     }
+    // Don't setIsLoading(false) on success - page will redirect
   };
 
   const handleGoogleSignIn = async () => {

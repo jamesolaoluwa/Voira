@@ -9,29 +9,24 @@ import { initSentry, setUser as setSentryUser } from '@/lib/sentry.jsx'
 initSentry();
 
 async function bootstrap() {
-    // If the app was redirected back from an OAuth provider, Supabase
-    // may include session info in the URL. getSessionFromUrl parses that
-    // and returns the session so the client is populated.
-    // However, we must NOT run this when serving the password recovery page
-    // because recovery tokens live in the hash and need isolated handling.
-    const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
-    if (pathname !== '/reset-password' && typeof window !== 'undefined' && window.location.href.includes('access_token')) {
-        try {
-            await supabase.auth.getSessionFromUrl({ storeSession: true });
-            // Clean up the URL by removing the hash fragment (optional)
-            history.replaceState({}, document.title, window.location.pathname + window.location.search);
-        } catch (e) {
-            // ignore; fallback to normal flow
-            console.warn('Error parsing auth session from URL', e);
-        }
-    }
+    // Supabase v2 automatically handles OAuth redirects and session persistence.
+    // When redirected back from Google OAuth, Supabase detects the tokens in the
+    // URL hash and processes them automatically via onAuthStateChange.
+    // No manual URL parsing is needed.
 
     // Set up Sentry user context when auth state changes
-    supabase.auth.onAuthStateChange((event, session) => {
+    // This also handles OAuth redirects - Supabase will fire SIGNED_IN event
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
         if (session?.user) {
             setSentryUser(session.user.id, session.user.email);
         } else {
             setSentryUser(null);
+        }
+        
+        // Clean up URL hash after OAuth redirect (optional, improves UX)
+        if (event === 'SIGNED_IN' && window.location.hash.includes('access_token')) {
+            // Use replaceState to remove tokens from URL without page reload
+            window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
         }
     });
 

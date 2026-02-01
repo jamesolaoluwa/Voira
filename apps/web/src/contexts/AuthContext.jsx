@@ -1,109 +1,146 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { supabase } from '@/components/lib/supabase';
-import { auth as apiAuth, processOAuthRedirect } from '@/components/services/api';
+import { auth as apiAuth } from '@/components/services/api';
 import { isAdminByEmail } from '@/lib/isAdmin';
 
 const AuthContext = createContext(null);
+
+/**
+ * Detect if we're in the middle of an OAuth redirect.
+ * Supabase v2 uses URL hash for implicit flow or query params for PKCE.
+ * During redirect, we should NOT call /auth/me - let onAuthStateChange handle it.
+ */
+function isOAuthRedirectInProgress() {
+  const hash = window.location.hash;
+  const search = window.location.search;
+  
+  // Check for OAuth tokens in hash (implicit flow)
+  if (hash.includes('access_token=') || hash.includes('refresh_token=')) {
+    return true;
+  }
+  
+  // Check for OAuth code in query params (PKCE flow)
+  if (search.includes('code=') && search.includes('state=')) {
+    return true;
+  }
+  
+  // Check for error responses from OAuth
+  if (hash.includes('error=') || search.includes('error=')) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Fetch user profile from backend, with session guard.
+ * Only calls /auth/me if session has a valid access token.
+ */
+async function fetchUserProfile(session) {
+  if (!session?.access_token) {
+    console.debug('[AuthContext] No access token, skipping /auth/me');
+    return null;
+  }
+  
+  try {
+    const richer = await apiAuth.getMe();
+    return richer || {
+      id: session.user.id,
+      email: session.user.email,
+      full_name: session.user.user_metadata?.full_name || 'User',
+      role: session.user.user_metadata?.role || 'free_user',
+    };
+  } catch (e) {
+    console.warn('[AuthContext] getMe failed, using fallback:', e.message);
+    return {
+      id: session.user.id,
+      email: session.user.email,
+      full_name: session.user.user_metadata?.full_name || 'User',
+      role: session.user.user_metadata?.role || 'free_user',
+    };
+  }
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const lastCheckedEmailRef = React.useRef(null);
+  const lastCheckedEmailRef = useRef(null);
+  
+  // Track if we've already fetched profile for this session to prevent duplicates
+  const lastFetchedSessionIdRef = useRef(null);
+  // Track if initial load is complete
+  const initialLoadCompleteRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
 
-    async function init() {
-      setIsLoading(true);
-
-      // If redirected from OAuth, parse the URL fragment/auth codes first and store session.
-      // We avoid cleaning the URL until after we have a valid session to prevent losing tokens
-      // before they are processed by the Supabase client.
-      if (typeof window !== 'undefined' && (window.location.href.includes('access_token') || window.location.href.includes('code') || window.location.href.includes('token'))) {
-        console.debug('[AuthContext] Detected OAuth/verify redirect in URL, calling processOAuthRedirect');
-        try {
-          const parsed = await processOAuthRedirect();
-          console.debug('[AuthContext] processOAuthRedirect result', parsed);
-          // Only clean the URL if we have a session now
-          if (parsed && parsed.user) {
-            try { history.replaceState({}, document.title, window.location.pathname + window.location.search); } catch (e) { }
-          }
-        } catch (e) { console.warn('[AuthContext] processOAuthRedirect failed', e); }
-      }
-
+    // Helper to process session and fetch profile
+    async function processSession(newSession) {
+      if (!mounted) return;
+      
       try {
-        console.debug('[AuthContext] fetching session with apiAuth.getSession()');
-        const s = await apiAuth.getSession();
-        console.debug('[AuthContext] getSession result', s);
-        if (!mounted) return;
-        setSession(s);
-
-  if (s && s.user) {
-          // try to get richer profile
-          try {
-            console.debug('[AuthContext] fetching richer profile with apiAuth.getMe()');
-            const richer = await apiAuth.getMe();
-            console.debug('[AuthContext] getMe result', richer);
-            if (!mounted) return;
-            const finalUser = richer || {
-              id: s.user.id,
-              email: s.user.email,
-              full_name: s.user.user_metadata?.full_name || 'User',
-              role: s.user.user_metadata?.role || 'free_user',
-            };
-            setUser(finalUser);
-          } catch (e) {
-            console.warn('[AuthContext] getMe failed', e);
-            const fallbackUser = {
-              id: s.user.id,
-              email: s.user.email,
-              full_name: s.user.user_metadata?.full_name || 'User',
-              role: s.user.user_metadata?.role || 'free_user',
-            };
-            setUser(fallbackUser);
-            setUser(fallbackUser);
+        setSession(newSession ?? null);
+        
+        if (newSession?.user) {
+          const sessionId = newSession.access_token?.substring(0, 20);
+          
+          // Only fetch if this is a new session
+          if (sessionId !== lastFetchedSessionIdRef.current) {
+            lastFetchedSessionIdRef.current = sessionId;
+            const profile = await fetchUserProfile(newSession);
+            if (mounted) setUser(profile);
           }
         } else {
+          lastFetchedSessionIdRef.current = null;
           setUser(null);
           setIsAdmin(false);
         }
       } catch (e) {
-        console.warn('[AuthContext] error fetching session/profile', e);
-        setUser(null);
-        setSession(null);
-      } finally {
-        if (mounted) setIsLoading(false);
-      }
-
-      // subscribe to auth changes
-      const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-        if (!mounted) return;
-        setSession(session ?? null);
-        if (session && session.user) {
-          try {
-            const richer = await apiAuth.getMe();
-            const finalUser = richer || { id: session.user.id, email: session.user.email };
-            setUser(finalUser);
-          } catch (e) {
-            const fallbackUser = { id: session.user.id, email: session.user.email };
-            setUser(fallbackUser);
-          }
-        } else {
+        console.error('[AuthContext] Error processing session:', e);
+        // On error, still clear loading state
+        if (mounted) {
           setUser(null);
-          setIsAdmin(false);
+          setSession(null);
         }
-      });
-
-      return () => {
-        mounted = false;
-        if (listener?.subscription) listener.subscription.unsubscribe();
-      };
+      } finally {
+        if (mounted) {
+          initialLoadCompleteRef.current = true;
+          setIsLoading(false);
+        }
+      }
     }
 
-    const cleanup = init();
-    return () => { if (cleanup && typeof cleanup.then === 'function') cleanup.then(fn => fn).catch(()=>{}); };
+    // 1. Subscribe to auth changes FIRST
+    const { data: listener } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      console.debug('[AuthContext] onAuthStateChange:', event, 'hasSession:', !!newSession);
+      await processSession(newSession);
+    });
+
+    // 2. Get initial session immediately (covers page load and OAuth redirect)
+    // Supabase v2 getSession() automatically processes OAuth tokens from URL
+    supabase.auth.getSession().then(async ({ data: { session: initialSession } }) => {
+      console.debug('[AuthContext] Initial getSession:', !!initialSession);
+      // Only process if we haven't already completed initial load
+      if (mounted && !initialLoadCompleteRef.current) {
+        await processSession(initialSession);
+      }
+    }).catch((e) => {
+      console.error('[AuthContext] getSession failed:', e);
+      if (mounted && !initialLoadCompleteRef.current) {
+        initialLoadCompleteRef.current = true;
+        setSession(null);
+        setUser(null);
+        setIsLoading(false);
+      }
+    });
+
+    // Cleanup
+    return () => {
+      mounted = false;
+      listener?.subscription?.unsubscribe();
+    };
   }, []);
 
   // Ensure admin check runs only when a fully-hydrated session user email is available

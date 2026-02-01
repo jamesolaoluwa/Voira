@@ -55,11 +55,18 @@ export const auth = {
 
   async getMe() {
     // Try backend first, fallback to direct Supabase if backend unavailable
+    // Use requireAuth: true to fail fast if no session exists (prevents 429s during OAuth)
     try {
       const { apiClient } = await import('@/lib/apiClient');
-      return await apiClient.get('/auth/me');
+      return await apiClient.get('/auth/me', { requireAuth: true });
     } catch (error) {
-      console.warn('Backend /auth/me failed, falling back to direct Supabase:', error);
+      // If no session, return null immediately (don't try fallback)
+      if (error.code === 'NO_SESSION') {
+        console.debug('[api.getMe] No session available, returning null');
+        return null;
+      }
+      
+      console.warn('Backend /auth/me failed, falling back to direct Supabase:', error.message);
       // Fallback to direct Supabase query
       const { data: { user }, error: supabaseError } = await supabase.auth.getUser();
       if (supabaseError) throw supabaseError;
@@ -90,16 +97,9 @@ export const auth = {
   }
 };
 
-// Utility to process OAuth redirect responses (useful after signInWithOAuth redirects)
-export async function processOAuthRedirect() {
-  try {
-    const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-    if (error) throw error;
-    return data.session;
-  } catch (e) {
-    return null;
-  }
-}
+// Note: processOAuthRedirect is no longer needed in Supabase v2.
+// OAuth redirects are handled automatically by the Supabase client.
+// The session is restored via onAuthStateChange when the page loads.
 
 // ============================================
 // SESSIONS
