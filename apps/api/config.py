@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     # CORS Configuration
     # ==========================================================================
     # Allowed origins (comma-separated in env var)
+    # In production, set CORS_ORIGINS=https://heyvoira.com
+    # For local development, defaults include localhost origins
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     
     # ==========================================================================
@@ -104,8 +106,24 @@ class Settings(BaseSettings):
     
     @property
     def cors_origins_list(self) -> List[str]:
-        """Parse CORS origins from comma-separated string."""
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        """
+        Parse CORS origins from comma-separated string.
+        
+        Production: Must explicitly set CORS_ORIGINS env var
+        Development: Uses defaults (localhost origins)
+        
+        SECURITY: Never returns wildcard '*' when credentials are enabled.
+        """
+        origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        
+        # Validate no wildcards in production (credentials require explicit origins)
+        if self.is_production and "*" in origins:
+            raise ValueError(
+                "CORS wildcard '*' is not allowed in production with credentials. "
+                "Set CORS_ORIGINS to explicit origins like 'https://heyvoira.com'"
+            )
+        
+        return origins
     
     @property
     def is_production(self) -> bool:
