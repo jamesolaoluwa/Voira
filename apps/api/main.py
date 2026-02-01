@@ -180,6 +180,19 @@ async def startup_validation():
         if not settings.sentry_dsn:
             warnings.append("SENTRY_DSN not set - error tracking disabled in production")
         # Note: Redis validation is now handled by initialize_rate_limiter()
+        
+        # CORS validation for production
+        cors_origins = settings.cors_origins_list
+        if not cors_origins:
+            missing_vars.append("CORS_ORIGINS (required in production)")
+        elif all(("localhost" in o or "127.0.0.1" in o) for o in cors_origins):
+            warnings.append(
+                "CORS_ORIGINS contains only localhost origins - "
+                "set to 'https://heyvoira.com' for production"
+            )
+    
+    # Log CORS configuration (safe to log origins)
+    logger.info(f"CORS allowed origins: {settings.cors_origins_list}")
     
     # Log warnings
     for warning in warnings:
@@ -221,16 +234,24 @@ async def shutdown():
 # Import additional middleware
 from middleware import TimeoutMiddleware, PerformanceLoggingMiddleware, ErrorHandlingMiddleware
 
-# CORS configuration - must be added before other middleware
-# Origins are configured via CORS_ORIGINS env var (comma-separated)
+# =============================================================================
+# CORS Configuration
+# =============================================================================
+# Production: Set CORS_ORIGINS=https://heyvoira.com in Render env vars
+# Development: Defaults to localhost:5173 (Vite dev server)
+#
+# IMPORTANT:
+# - allow_credentials=True requires explicit origins (no wildcards)
+# - This is required for Supabase auth cookies to work
+# - CORS middleware must be registered BEFORE routers
+# =============================================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins_list,  # Explicit origins only, no wildcards
+    allow_credentials=True,                     # Required for Supabase auth
+    allow_methods=["*"],                        # Allow all HTTP methods
+    allow_headers=["*"],                        # Allow all headers
     expose_headers=[
-        "*",
         "X-Request-ID",
         "X-RateLimit-Limit",
         "X-RateLimit-Remaining",
