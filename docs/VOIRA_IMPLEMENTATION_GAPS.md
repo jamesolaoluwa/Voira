@@ -1,53 +1,255 @@
 # Voira Implementation Gaps
 
-A prioritized, actionable list of implementation gaps, bugs, and technical debt in the Voira codebase. Each item is scoped for independent resolution.
+**Last Updated:** February 2, 2026  
+**Audit Scope:** Full codebase scan with deep focus on authentication flows
+
+A prioritized, actionable list of implementation gaps, bugs, and technical debt in the Voira codebase. Each item is scoped for independent resolution with precise file locations, root causes, and fix plans.
 
 ---
 
-## 1. Not Implemented at All
+## Executive Summary
 
-### P1 - High (Feature Gaps)
+### Critical Issues (P0)
+1. **AUTH-001**: Email/password sign-in hangs indefinitely — user stuck on "Signing in..."
+2. **AUTH-002**: No auth timeout / fallback error handling
+3. **AUTH-003**: Missing debounce on sign-in button — can trigger 429s
+4. **AUTH-004**: Email confirmation errors not handled in UI
+5. **STRIPE-001**: Stripe subscription integration not implemented (billing UI exists but no backend)
 
-*No remaining P1 gaps - all high-priority features are implemented.*
+### High Priority (P1)
+- WebSocket reconnection logic missing
+- Session save race condition
+- Fake `useLiveTranscription` hook (unused but misleading)
 
-### P2 - Medium (Nice-to-Have)
+---
 
-**GAP-004: Email Notifications for Credit Depletion**
-- Location: `apps/api/notifications.py` (empty/stub file)
+## P0 - Critical Authentication Issues
+
+### AUTH-001: Email/Password Sign-In Hangs Indefinitely
+
+**Symptom:** User clicks "Sign In", sees spinner with "Signing in..." forever, page never redirects.
+
+**Root Cause:** Race condition between `signInWithPassword` completion and `onAuthStateChange` firing. After successful auth, `setIsLoading(false)` is never called because code assumes redirect will happen via `useEffect`.
+
+**Evidence:**
+- File: `apps/web/src/pages/Auth.jsx` (lines 43-69)
+- File: `apps/web/src/contexts/AuthContext.jsx` (lines 64-145)
+
+**Flow Analysis:**
+1. User submits form → `setIsLoading(true)`
+2. `auth.signIn()` calls `supabase.auth.signInWithPassword()` → SUCCEEDS
+3. Expected: `onAuthStateChange` fires → `session` state updates → `useEffect` redirects
+4. **ACTUAL**: If `onAuthStateChange` doesn't fire OR fires before Auth component mounts, session state never updates in Auth.jsx
+5. Result: `isLoading` stays `true` forever, no redirect, no error shown
+
+**Why `onAuthStateChange` may not fire:**
+- Supabase client already processed the session before component mounted
+- Race condition between `getSession()` and `signInWithPassword()` completion
+- Session already set in AuthContext before Auth.jsx's useEffect runs
+
+**Fix Plan:** Add explicit session check after sign-in with timeout fallback.
+
+---
+
+### AUTH-002: No Auth Timeout / Fallback Error Handling
+
+**Symptom:** If backend `/auth/me` is slow or unreachable, auth loading state hangs.
+
+**Root Cause:** `fetchUserProfile` in AuthContext has no timeout, and errors are caught but don't prevent infinite loading.
+
+**Evidence:**
+- File: `apps/web/src/contexts/AuthContext.jsx` (lines 36-58)
+- `apiAuth.getMe()` can hang indefinitely
+
+**Fix Plan:** Add 5-second timeout wrapper to profile fetch, use session fallback on failure.
+
+---
+
+### AUTH-003: No Debounce on Sign-In Button
+
+**Symptom:** User can spam-click sign-in button, triggering multiple auth attempts → 429 rate limit.
+
+**Root Cause:** No guard against double-submission. Window exists between click and `setIsLoading(true)`.
+
+**Evidence:**
+- File: `apps/web/src/pages/Auth.jsx` (lines 260-269)
+- Button only disabled when `isLoading` is true, but there's a race window
+
+**Fix Plan:** Add ref to track in-flight requests, check before submitting.
+
+---
+
+### AUTH-004: Email Confirmation Not Handled in UI
+
+**Symptom:** User signs up, tries to sign in, gets cryptic error or silent failure.
+
+**Root Cause:** Supabase `signInWithPassword` returns specific error for unconfirmed emails ("Email not confirmed"), but UI displays raw error message.
+
+**Evidence:**
+- File: `apps/web/src/components/services/api.jsx` (lines 31-37)
+- Raw Supabase error re-thrown without user-friendly transformation
+
+**Fix Plan:** Map common Supabase auth errors to user-friendly messages.
+
+---
+
+### STRIPE-001: Stripe Subscription Integration Not Implemented
+
+**Symptom:** Pricing page exists with billing UI, but no actual payment processing.
+
+**Root Cause:** No Stripe integration in backend or frontend.
+
+**Evidence:**
+- File: `apps/web/src/pages/Pricing.jsx` — Has billing toggle (monthly/yearly), pricing tiers, but buttons don't trigger payment
+- File: `apps/web/src/components/services/api.jsx` (lines 560-592) — `billing` object only reads from profile
+- No `stripe` imports anywhere in codebase
+- No Stripe webhook handler in `apps/api/main.py`
+
+**Impact:** Users cannot upgrade to premium plans.
+
+**Fix Plan:** Full Stripe integration (2-3 day effort, separate milestone).
+
+---
+
+## P1 - High Priority Issues
+
+### PARTIAL-001: Live Transcription WebSocket Reconnection
+
+**Location:** `apps/web/src/components/recording/AudioRecorder.jsx` (lines 268-305)
+
+**Current State:** WebSocket errors are caught but no automatic reconnection. If connection drops mid-recording, user sees stale transcript with no indication of failure.
+
+**Fix Plan:**
+- Implement exponential backoff reconnection (max 3 retries)
+- Show "Reconnecting..." indicator
+- Queue audio chunks during reconnection
+- Fall back to offline mode if reconnection fails
+
+**Effort:** 4 hours
+
+---
+
+### BUG-001: Fake useLiveTranscription Hook
+
+**Location:** `apps/web/src/hooks/useLiveTranscription.ts`
+
+**Issue:** Returns hardcoded demo phrases on a timer, never connects to WebSocket. File is unused but misleading.
+
+**Fix:** Delete file entirely.
+
+**Effort:** 5 minutes
+
+---
+
+### BUG-002: confidenceLevel State Never Updates
+
+**Location:** `apps/web/src/pages/Speak.jsx` (line 215)
+
+**Issue:** `const [confidenceLevel, setConfidenceLevel] = useState(0)` declared but `setConfidenceLevel` only called to reset to 0. UI shows "Confidence: 0%" always.
+
+**Fix:** Either compute confidence from analytics and update state, or remove the UI element.
+
+**Effort:** 30 minutes
+
+---
+
+### PARTIAL-002: Session Save Race Condition
+
+**Location:** `apps/web/src/pages/Speak.jsx` `handleFinish()` (lines ~900-1000)
+
+**Current State:** `stopRecording()` is async, but navigation can happen before blob is ready.
+
+**Fix:** Await `stopRecording()` fully, validate blob exists before constructing session.
+
+**Effort:** 2 hours
+
+---
+
+### DATA-003: Audio Blob Size Unbounded
+
+**Location:** `apps/api/main.py` `/upload-audio` endpoint
+
+**Issue:** Config has `max_audio_file_size: int = 15 * 1024 * 1024` but not enforced in upload handler.
+
+**Fix:** Add size check before processing.
+
+**Effort:** 1 hour
+
+---
+
+## P2 - Medium Priority Issues
+
+### HARDCODE-001: Default Credit Amount
+- Location: `apps/api/credits.py`
+- Fix: Move to environment variable
+
+### HARDCODE-002: LLM Model Selection
+- Location: `apps/api/llm_refinement.py` line ~1575
+- Value: `model="gpt-4o-mini"` hardcoded
+- Fix: Move to config
+
+### BUG-006: Filler Detection Double-Counting
+- Location: `apps/api/adaptive_analytics.py` FILLER_PATTERNS
+- Fix: Track matched positions, skip overlapping matches
+
+### BUG-007: Dark Mode Toggle Doesn't Persist
+- Fix: Store in localStorage, read on mount
+
+### LLM-003: No Retry Logic on LLM Failure
+- Location: `apps/api/llm_refinement.py`
+- Fix: Implement retry with exponential backoff (max 3 attempts)
+
+### GAP-004: Email Notifications for Credit Depletion
+- Location: `apps/api/notifications.py` (stub file)
 - Status: No email integration exists
-- Impact: Users have no warning when credits are low
-- Fix: Integrate email service (SendGrid, SES), trigger on credit thresholds
+- Fix: Integrate email service (SendGrid, SES)
 
-**GAP-005: Batch Export of Sessions**
-- Location: `apps/api/main.py` `/export-data` endpoint (lines 1350-1386)
-- Status: GDPR export exists but no UI-driven batch export of selected sessions
-- Impact: Users must export one session at a time
+### GAP-005: Batch Export of Sessions
+- Location: `apps/api/main.py` `/export-data` endpoint
+- Status: GDPR export exists but no UI-driven batch export
 - Fix: Add multi-select in Library, endpoint for batch export as ZIP
 
-**GAP-006: Search/Filter in Library**
+### GAP-006: Search/Filter in Library
 - Location: `apps/web/src/pages/Library.jsx`
-- Status: Sessions are listed but not searchable or filterable (basic filter by type exists)
-- Impact: Users with many sessions cannot find specific recordings
-- Fix: Add client-side search by title/transcript keywords, date range filtering
+- Status: Sessions listed but not searchable
+- Fix: Add client-side search by title/transcript keywords
 
 ---
 
-## Recently Implemented
+## Recently Completed (Verified Working)
 
-**GAP-003A: Admin Dashboard V1** — ✅ COMPLETE
-- Base Implementation: 2026-01-28
-- Hardening Completed: 2026-01-28
-- Location: 
-  - Backend: `apps/api/admin.py`, `apps/api/admin_models.py`, `apps/api/auth.py`
-  - Frontend: `apps/web/src/pages/admin/*`, `apps/web/src/lib/adminApi.js`, `apps/web/src/hooks/useAdminApi.js`
-  - Database: `supabase/migrations/20260127_create_admin_audit_log.sql`, `supabase/migrations/20260127_add_user_disabled_fields.sql`
-- Features:
-  - **User Management:** List, view, adjust credits, disable/enable accounts (all audited)
-  - **Session/Draft Overview:** View metadata only (NO transcript/audio content)
-  - **Analytics Dashboard:** User counts, session stats, credit usage, role breakdown
-  - **Audit Log:** Immutable record of all admin actions
-  - **Disabled User Blocking:** `get_active_user()` dependency blocks disabled users from write operations
-- Security:
+### ✅ GAP-003A: Admin Dashboard V1
+- **Completed:** 2026-01-28
+- **Location:** `apps/api/admin.py`, `apps/web/src/pages/admin/*`
+- **Features:** User management, session overview, analytics, audit log
+- **Tests:** 200/200 passing
+
+### ✅ Rate Limit Persistence
+- **Completed:** 2026-01-27
+- **Location:** `apps/api/rate_limit.py`
+- **Feature:** Redis-backed rate limiting in production, in-memory fallback for dev
+
+### ✅ Word Limit Enforcement
+- **Completed:** 2026-01-26
+- **Location:** `apps/api/llm_refinement.py`
+- **Feature:** Deterministic word counting and truncation
+
+### ✅ Atomic Credit Deduction
+- **Completed:** 2026-01-26
+- **Location:** `apps/api/credits.py`, migration `20260126_atomic_credit_deduction.sql`
+- **Feature:** Race-condition-safe credit deduction
+
+### ✅ Interview Response Refinement
+- **Completed:** 2026-01-26
+- **Location:** `apps/api/llm_refinement.py`, `/refine-interview` endpoint
+
+### ✅ Partial Save / Draft System
+- **Completed:** 2026-01-27
+- **Location:** `apps/api/main.py` draft endpoints, `apps/web/src/pages/Draft.jsx`
+
+---
+
+## Admin Dashboard Security (Verified)
   - All `/admin/*` routes require admin via `require_admin()` dependency
   - DTOs use explicit allow-lists (never expose transcript/audio)
   - Audit log entries cannot be deleted or modified
@@ -465,104 +667,72 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ---
 
-## 7. Transition Note: Next Focus
-
-### Next Priority: GAP-002 (Session Resume/Continue Recording)
-
-**Schema/API Decisions Needed:**
-1. Should `/analyze` remain free or consume credits?
-2. How is token usage attributed per request type?
-3. Credit cost table by operation type:
-   - `refine` (existing) - 1 credit
-   - `refine-interview` (implemented) - 1 credit
-   - `analyze` (currently free) - TBD
-
-**Impact of Longer Prompts:**
-- Interview refinement with company context uses more tokens
-- Should credit cost vary by prompt complexity?
-- Token usage is now logged for `/refine-interview` endpoint
-
----
-
-## 8. Recommended Fix Order
+## 7. Recommended Fix Order (Auth-First)
 
 Priority is determined by: User impact, Data risk, Effort, Dependencies.
 
-### Phase 1: Stabilize Core (Week 1-2)
+### Immediate (This Week): Fix Critical Auth Issues
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 1 | BUG-001 | Delete fake useLiveTranscription hook | 5 min |
-| 2 | BUG-002 | Remove or implement confidenceLevel display | 30 min |
-| 3 | ~~BUG-005~~ | ~~Fix credits race condition~~ | ✅ DONE |
-| 4 | DATA-003 | Add audio file size limit | 1 hr |
-| 5 | LLM-001 | Add Pydantic validation to LLM responses | 2 hr |
-| 6 | LLM-002 | Sanitize user content in prompts | 1 hr |
-| 7 | PARTIAL-001 | Add WebSocket reconnection logic | 4 hr |
+| 1 | AUTH-003 | Add debounce to sign-in button | 30 min |
+| 2 | AUTH-004 | Handle email confirmation errors in UI | 30 min |
+| 3 | AUTH-001 | Fix sign-in hang (explicit session check + timeout) | 2 hr |
+| 4 | AUTH-002 | Add timeout to profile fetch | 1 hr |
+| 5 | BUG-001 | Delete fake useLiveTranscription hook | 5 min |
 
-### Phase 2: Credit System & Configuration (Week 2-3)
+### Week 2: Stability & Data Integrity
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 8 | ~~GAP-001~~ | ~~Implement analysis credit cost~~ | ✅ DONE |
-| 9 | HARDCODE-001 | Externalize default credit amount | 30 min |
-| 10 | HARDCODE-002 | Externalize LLM model selection | 30 min |
-| 11 | PARTIAL-003 | Enforce analytics contract versioning | 2 hr |
-| 12 | LLM-005 | Add prompt versioning | 3 hr |
-| 13 | BUG-004 | Map WebSocket close codes to messages | 1 hr |
+| 6 | PARTIAL-001 | WebSocket reconnection logic | 4 hr |
+| 7 | PARTIAL-002 | Session save race condition | 2 hr |
+| 8 | DATA-003 | Audio file size limit | 1 hr |
+| 9 | BUG-002 | Fix/remove confidenceLevel display | 30 min |
 
-### Phase 3: Data Integrity (Week 3-4)
+### Week 3+: Configuration & Polish
 
 | Order | ID | Summary | Effort |
 |-------|------|---------|--------|
-| 14 | DATA-001 | Audit and add FK constraints | 3 hr |
-| 15 | DATA-002 | Implement auto-save drafts | 4 hr |
-| 16 | DATA-005 | Delete storage files on session delete | 1 hr |
-| 17 | PARTIAL-002 | Fix session save race condition | 2 hr |
-| 18 | DATA-003 | Add audio file size limit | 1 hr |
+| 10 | HARDCODE-001 | Externalize default credits | 30 min |
+| 11 | HARDCODE-002 | Externalize LLM model | 30 min |
+| 12 | BUG-007 | Persist dark mode preference | 30 min |
+| 13 | LLM-003 | Add LLM retry logic | 2 hr |
 
-### Phase 4: Data Integrity Continued (Week 4-5)
+### Deferred
 
-| Order | ID | Summary | Effort |
-|-------|------|---------|--------|
-| 19 | DATA-004 | Transcript UTF-8 handling | 2 hr |
-| 20 | DATA-006 | Concurrent edit conflicts | 2 hr |
-| 21 | DATA-007 | Persist analytics results | 3 hr |
-| 22 | ~~GAP-001~~ | ~~Validate LLM word limit compliance~~ | ✅ DONE |
-| 23 | LLM-003 | Add retry logic to LLM calls | 2 hr |
-| 24 | LLM-008 | Make temperature configurable | 1 hr |
-
-### Phase 5: Polish (Week 5+)
-
-| Order | ID | Summary | Effort |
-|-------|------|---------|--------|
-| 25 | GAP-008 | Add search/filter to Library | 3 hr |
-| 26 | LLM-006 | Stream LLM responses to client | 4 hr |
-| 27 | GAP-002 | Session resume after navigation | 6 hr |
-| 28 | PARTIAL-004 | Feature flag refresh mechanism | 2 hr |
-| 29 | BUG-006 | Fix filler detection double-counting | 2 hr |
-| 30 | GAP-003 | Offline transcription fallback | 4 hr |
-
-### Deferred / Low Priority
-
-- GAP-005 (Admin Dashboard) - Build only when needed
-- GAP-006 (Email Notifications) - Requires email provider setup
-- GAP-007 (Batch Export) - Nice-to-have for power users
-- HARDCODE-005 (Filler Word List) - Current list adequate for MVP
-- LLM-007 (Prompt Caching) - Optimization, not correctness
+- **STRIPE-001**: Stripe integration (2-3 days, separate milestone)
+- **BUG-006**: Filler double-counting (low impact)
+- **Email Notifications**: Requires email provider setup
 
 ---
 
-## Appendix: File Reference Index
+## 8. Appendix: File Reference Index
 
 | File | Gap IDs |
 |------|---------|
-| `apps/api/main.py` | DATA-003, DATA-005, DATA-006 |
-| `apps/api/llm_refinement.py` | LLM-001 through LLM-008 |
-| `apps/api/adaptive_analytics.py` | BUG-006, HARDCODE-004, HARDCODE-005 |
-| `apps/api/credits.py` | HARDCODE-001 |
+| `apps/web/src/pages/Auth.jsx` | AUTH-001, AUTH-003, AUTH-004 |
+| `apps/web/src/contexts/AuthContext.jsx` | AUTH-002 |
+| `apps/web/src/components/services/api.jsx` | AUTH-004 |
 | `apps/web/src/hooks/useLiveTranscription.ts` | BUG-001 |
-| `apps/web/src/pages/Speak.jsx` | BUG-002, BUG-008, PARTIAL-002 |
-| `apps/web/src/pages/Draft.jsx` | BUG-003, HARDCODE-007 |
-| `apps/web/src/components/recording/AudioRecorder.jsx` | PARTIAL-001, BUG-004, HARDCODE-003, HARDCODE-006, PARTIAL-006 |
-| `supabase/migrations/` | DATA-001, PARTIAL-005 |
+| `apps/web/src/pages/Speak.jsx` | BUG-002, PARTIAL-002 |
+| `apps/web/src/components/recording/AudioRecorder.jsx` | PARTIAL-001 |
+| `apps/api/main.py` | DATA-003 |
+| `apps/api/llm_refinement.py` | HARDCODE-002, LLM-003 |
+| `apps/api/credits.py` | HARDCODE-001 |
+| `supabase/migrations/` | DATA-001 |
+
+---
+
+## 9. Verification Checklist
+
+After implementing P0 auth fixes:
+
+- [ ] **Local dev**: Password sign-in works reliably (< 3 seconds to redirect)
+- [ ] **Local dev**: Wrong password shows clear error message
+- [ ] **Local dev**: Unconfirmed email shows "please confirm email" message
+- [ ] **Local dev**: Rapid clicking sign-in only fires 1 request
+- [ ] **Production**: Password sign-in works, session persists after refresh
+- [ ] **Production**: No infinite `/auth/me` loops in network tab
+- [ ] **Production**: No 429 errors during normal sign-in
+- [ ] Auth state + redirects behave correctly (login → /home, logout → /auth)

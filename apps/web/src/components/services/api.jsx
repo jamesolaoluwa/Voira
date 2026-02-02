@@ -32,7 +32,30 @@ export const auth = {
       email,
       password,
     });
-    if (error) throw error;
+    
+    if (error) {
+      // Map common Supabase auth errors to user-friendly messages
+      const msg = error.message?.toLowerCase() || '';
+      
+      if (msg.includes('email not confirmed')) {
+        throw new Error('Please confirm your email before signing in. Check your inbox for a confirmation link.');
+      }
+      if (msg.includes('invalid login credentials') || msg.includes('invalid password')) {
+        throw new Error('Invalid email or password. Please check your credentials and try again.');
+      }
+      if (msg.includes('user not found')) {
+        throw new Error('No account found with this email. Please sign up first.');
+      }
+      if (msg.includes('too many requests') || msg.includes('rate limit')) {
+        throw new Error('Too many sign-in attempts. Please wait a moment and try again.');
+      }
+      if (msg.includes('network') || msg.includes('fetch')) {
+        throw new Error('Network error. Please check your connection and try again.');
+      }
+      
+      // Re-throw original error for unhandled cases
+      throw error;
+    }
     return data;
   },
 

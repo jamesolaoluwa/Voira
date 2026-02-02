@@ -5,6 +5,9 @@ import { isAdminByEmail } from '@/lib/isAdmin';
 
 const AuthContext = createContext(null);
 
+// Timeout for profile fetch operations
+const PROFILE_FETCH_TIMEOUT_MS = 5000;
+
 /**
  * Detect if we're in the middle of an OAuth redirect.
  * Supabase v2 uses URL hash for implicit flow or query params for PKCE.
@@ -33,8 +36,33 @@ function isOAuthRedirectInProgress() {
 }
 
 /**
- * Fetch user profile from backend, with session guard.
+ * Build fallback user profile from session data when backend is unavailable
+ */
+function buildFallbackUser(session) {
+  return {
+    id: session.user.id,
+    email: session.user.email,
+    full_name: session.user.user_metadata?.full_name || 'User',
+    role: session.user.user_metadata?.role || 'free_user',
+  };
+}
+
+/**
+ * Promise wrapper that adds a timeout
+ */
+function withTimeout(promise, ms, errorMsg) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error(errorMsg)), ms)
+    )
+  ]);
+}
+
+/**
+ * Fetch user profile from backend, with session guard and timeout.
  * Only calls /auth/me if session has a valid access token.
+ * Falls back to session data if backend is slow or unavailable.
  */
 async function fetchUserProfile(session) {
   if (!session?.access_token) {
@@ -43,21 +71,16 @@ async function fetchUserProfile(session) {
   }
   
   try {
-    const richer = await apiAuth.getMe();
-    return richer || {
-      id: session.user.id,
-      email: session.user.email,
-      full_name: session.user.user_metadata?.full_name || 'User',
-      role: session.user.user_metadata?.role || 'free_user',
-    };
+    // Add timeout to prevent hanging if backend is slow/down
+    const richer = await withTimeout(
+      apiAuth.getMe(),
+      PROFILE_FETCH_TIMEOUT_MS,
+      'Profile fetch timed out'
+    );
+    return richer || buildFallbackUser(session);
   } catch (e) {
     console.warn('[AuthContext] getMe failed, using fallback:', e.message);
-    return {
-      id: session.user.id,
-      email: session.user.email,
-      full_name: session.user.user_metadata?.full_name || 'User',
-      role: session.user.user_metadata?.role || 'free_user',
-    };
+    return buildFallbackUser(session);
   }
 }
 

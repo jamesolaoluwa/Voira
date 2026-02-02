@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
@@ -15,6 +15,9 @@ import { safeParseEmail, safeParsePassword } from '@/lib/validation';
 import { normalizeEmail } from '@/lib/sanitize';
 import { useAuth } from '@/contexts/AuthContext';
 
+// Auth flow timeout - if session not established after this, show error
+const AUTH_TIMEOUT_MS = 8000;
+
 export default function Auth() {
   const navigate = useNavigate();
   const { session, isLoading: authLoading } = useAuth();
@@ -25,6 +28,10 @@ export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [signUpSuccess, setSignUpSuccess] = useState(false);
+  
+  // Ref to prevent double-submission (covers race window before isLoading is set)
+  const authInFlightRef = useRef(false);
 
   // forgot password flow
   const [forgotMode, setForgotMode] = useState(false);
@@ -42,8 +49,17 @@ export default function Auth() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Prevent double-submission (covers race window before isLoading state updates)
+    if (authInFlightRef.current || isLoading) {
+      console.debug('[Auth] Sign-in already in progress, ignoring duplicate submit');
+      return;
+    }
+    
+    authInFlightRef.current = true;
     setError('');
     setIsLoading(true);
+    setSignUpSuccess(false);
 
     try {
       // Validate and normalize inputs before calling auth
@@ -56,23 +72,63 @@ export default function Auth() {
 
       if (isSignUp) {
         console.log('[Auth] Calling signUp...');
-        await auth.signUp(normalizedEmail, password, name);
-        console.log('[Auth] signUp completed');
+        const result = await auth.signUp(normalizedEmail, password, name);
+        console.log('[Auth] signUp completed:', result);
+        
+        // Check if email confirmation is required
+        // Supabase returns user but session is null when confirmation is required
+        if (result?.user && !result?.session) {
+          setSignUpSuccess(true);
+          setIsLoading(false);
+          authInFlightRef.current = false;
+          return;
+        }
+        // If we got a session, let the useEffect redirect us
       } else {
         console.log('[Auth] Calling signIn...');
         const result = await auth.signIn(normalizedEmail, password);
         console.log('[Auth] signIn completed:', result);
+        
+        // signIn should return a session. If it succeeded but no session,
+        // wait briefly for onAuthStateChange, then check explicitly
+        if (result?.session) {
+          // Session returned directly, redirect should happen via useEffect
+          // Set a timeout fallback in case useEffect doesn't trigger
+          setTimeout(async () => {
+            if (authInFlightRef.current) {
+              // Still waiting - check session manually
+              const { data: { session: currentSession } } = await supabase.auth.getSession();
+              if (currentSession) {
+                console.log('[Auth] Timeout fallback: session found, navigating');
+                navigate('/home', { replace: true });
+              } else {
+                console.warn('[Auth] Timeout fallback: session still not established');
+                setError('Sign-in took too long. Please try again.');
+                setIsLoading(false);
+                authInFlightRef.current = false;
+              }
+            }
+          }, AUTH_TIMEOUT_MS);
+        }
       }
       // Don't navigate here - let useEffect handle it when session updates
+      // Don't setIsLoading(false) on success - page will redirect
+      
     } catch (err) {
-      console.log('[Auth] Error:', err);
+      console.error('[Auth] Error:', err);
       setError(err.message || 'Authentication failed');
       setIsLoading(false);
+      authInFlightRef.current = false;
     }
-    // Don't setIsLoading(false) on success - page will redirect
   };
 
   const handleGoogleSignIn = async () => {
+    // Prevent spam-clicking Google button too
+    if (authInFlightRef.current || isLoading) {
+      console.debug('[Auth] Google sign-in already in progress');
+      return;
+    }
+    
     setError('');
     try {
       await auth.signInWithGoogle();
@@ -242,6 +298,14 @@ export default function Auth() {
               {error && (
                 <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-3 text-sm text-rose-400">
                   {error}
+                </div>
+              )}
+
+              {/* Sign-up success message - shown when email confirmation is required */}
+              {signUpSuccess && (
+                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-sm text-emerald-400">
+                  <p className="font-medium">Account created! 🎉</p>
+                  <p className="mt-1">Please check your email for a confirmation link before signing in.</p>
                 </div>
               )}
 
