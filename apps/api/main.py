@@ -59,6 +59,9 @@ from health import get_all_health_checks, is_ready, get_overall_status
 # Import admin router
 from admin import router as admin_router
 
+# Import Stripe billing router
+from stripe_billing import router as billing_router, webhook_router as stripe_webhook_router
+
 app = FastAPI(
     title="Voira API",
     description="Backend API for Voira voice coaching platform",
@@ -281,6 +284,16 @@ app.add_middleware(TimeoutMiddleware)
 # NOTE: Admin routes are isolated under /admin prefix
 # All admin routes use require_admin() dependency for security
 app.include_router(admin_router)
+
+# =============================================================================
+# Include Billing Router
+# =============================================================================
+# NOTE: Billing routes are isolated under /billing prefix
+# Webhook endpoint has no auth (verified via Stripe signature)
+app.include_router(billing_router)
+
+# Also mount webhook at /webhooks/stripe (matches Stripe dashboard config)
+app.include_router(stripe_webhook_router)
 
 
 # =============================================================================

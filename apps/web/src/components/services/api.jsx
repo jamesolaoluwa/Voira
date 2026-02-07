@@ -577,42 +577,96 @@ Return JSON:
 };
 
 // ============================================
-// BILLING / PLAN
+// BILLING / STRIPE
 // ============================================
 
 export const billing = {
-  async getPlan() {
-    const user = await auth.getMe();
-    if (!user) return null;
+  /**
+   * Get current subscription status from backend.
+   * Returns plan, status, credits info, etc.
+   */
+  async getSubscriptionStatus() {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.get('/billing/subscription-status');
+    } catch (error) {
+      console.error('[billing.getSubscriptionStatus] Error:', error);
+      // Return free tier defaults on error
+      return {
+        plan: 'free',
+        status: 'inactive',
+        credits_remaining: 10,
+        credits_total: 10,
+        current_period_end: null,
+        cancel_at_period_end: false,
+      };
+    }
+  },
 
+  /**
+   * Create a Stripe Checkout session for subscription purchase.
+   * Returns the checkout URL to redirect the user to.
+   * 
+   * @param {string} priceId - Stripe Price ID (monthly or yearly)
+   * @returns {Promise<{checkout_url: string, session_id: string}>}
+   */
+  async createCheckoutSession(priceId) {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      const successUrl = `${window.location.origin}/pricing?success=true`;
+      const cancelUrl = `${window.location.origin}/pricing?canceled=true`;
+      
+      return await apiClient.post('/billing/create-checkout-session', {
+        price_id: priceId,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+      });
+    } catch (error) {
+      console.error('[billing.createCheckoutSession] Error:', error);
+      throw new Error('Failed to start checkout. Please try again.');
+    }
+  },
+
+  /**
+   * Create a Stripe Customer Portal session.
+   * Returns the portal URL where users can manage their subscription.
+   * 
+   * @returns {Promise<{portal_url: string}>}
+   */
+  async createPortalSession() {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      const returnUrl = `${window.location.origin}/pricing`;
+      
+      return await apiClient.post('/billing/create-portal-session', {
+        return_url: returnUrl,
+      });
+    } catch (error) {
+      console.error('[billing.createPortalSession] Error:', error);
+      throw new Error('Failed to open billing portal. Please try again.');
+    }
+  },
+
+  /**
+   * Legacy method for backward compatibility.
+   * @deprecated Use getSubscriptionStatus() instead
+   */
+  async getPlan() {
+    const status = await this.getSubscriptionStatus();
     return {
-      role: user.role,
-      credits_remaining: user.credits_remaining,
-      credits_reset_at: user.credits_reset_at,
+      role: status.plan === 'free' ? 'free_user' : 'premium_user',
+      credits_remaining: status.credits_remaining,
+      credits_reset_at: status.current_period_end,
     };
   },
 
+  /**
+   * Legacy method - no longer used.
+   * @deprecated Use createCheckoutSession() instead
+   */
   async setPlan(role) {
-    const user = await auth.getMe();
-    if (!user) throw new Error('Not authenticated');
-
-    const { error } = await supabase.auth.updateUser({
-      data: { role }
-    });
-
-    if (error) throw error;
-
-    const profiles = await base44.entities.UserProfile.filter({ user_id: user.id });
-    if (profiles.length > 0) {
-      await base44.entities.UserProfile.update(profiles[0].id, { role });
-    } else {
-      await base44.entities.UserProfile.create({
-        user_id: user.id,
-        full_name: user.full_name,
-        role,
-        credits_remaining: role === 'premium_user' ? 999 : 60,
-      });
-    }
+    console.warn('[billing.setPlan] Deprecated. Use createCheckoutSession() for upgrades.');
+    throw new Error('Direct plan changes are not supported. Please use the upgrade button.');
   },
 };
 

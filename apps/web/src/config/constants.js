@@ -119,14 +119,60 @@ export const MAX_AUDIO_FILE_SIZE_DISPLAY = '15MB';
 // =============================================================================
 
 /**
- * Default credits for new users.
+ * Default credits for free users.
  */
-export const DEFAULT_USER_CREDITS = 60;
+export const DEFAULT_USER_CREDITS = 10;
+
+/**
+ * Credits for Pro users.
+ */
+export const PRO_USER_CREDITS = 60;
+
+/**
+ * Credits for Pro+ users (future).
+ */
+export const PRO_PLUS_USER_CREDITS = 200;
 
 /**
  * Credits reset amount for admin actions.
  */
 export const CREDITS_RESET_AMOUNT = 60;
+
+// =============================================================================
+// STRIPE BILLING
+// =============================================================================
+
+/**
+ * Stripe publishable key (for frontend).
+ * REQUIRED for checkout integration.
+ */
+export const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
+
+/**
+ * Stripe Price IDs for subscription plans.
+ * These must match the Price IDs in your Stripe Dashboard.
+ * Set via environment variables in production.
+ */
+export const STRIPE_PRICES = {
+  PRO_MONTHLY: import.meta.env.VITE_STRIPE_PRICE_ID_MONTHLY || 'price_1SwSeWRMlOCa3iSrNXkanthZ',
+  PRO_YEARLY: import.meta.env.VITE_STRIPE_PRICE_ID_YEARLY || 'price_1SwShxRMlOCa3iSrmEInGSLw',
+};
+
+/**
+ * Plan display names.
+ */
+export const PLAN_NAMES = {
+  free: 'Free',
+  pro_monthly: 'Pro (Monthly)',
+  pro_yearly: 'Pro (Yearly)',
+  pro_plus_monthly: 'Pro+ (Monthly)',
+  pro_plus_yearly: 'Pro+ (Yearly)',
+};
+
+/**
+ * Check if Stripe is configured.
+ */
+export const isStripeConfigured = () => Boolean(STRIPE_PUBLISHABLE_KEY);
 
 // =============================================================================
 // SESSION STORE

@@ -10,110 +10,79 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 ## Executive Summary
 
 ### Critical Issues (P0)
-1. **AUTH-001**: Email/password sign-in hangs indefinitely — user stuck on "Signing in..."
-2. **AUTH-002**: No auth timeout / fallback error handling
-3. **AUTH-003**: Missing debounce on sign-in button — can trigger 429s
-4. **AUTH-004**: Email confirmation errors not handled in UI
-5. **STRIPE-001**: Stripe subscription integration not implemented (billing UI exists but no backend)
+| Task | Description | Status |
+|------|-------------|--------|
+| **STRIPE-001** | Stripe subscription not implemented | 🔄 In Progress |
 
 ### High Priority (P1)
-- WebSocket reconnection logic missing
-- Session save race condition
-- Fake `useLiveTranscription` hook (unused but misleading)
+- WebSocket reconnection logic missing (PARTIAL-001)
+- Session save race condition (PARTIAL-002)
+
+### Recently Completed (2026-02-02)
+- ✅ **AUTH-001**: Sign-in timeout fallback prevents infinite spinner
+- ✅ **AUTH-002**: Profile fetch timeout with session fallback
+- ✅ **AUTH-003**: Debounce prevents double-submission on sign-in
+- ✅ **AUTH-004**: User-friendly error messages for auth failures
+- ✅ **BUG-001**: Deleted fake `useLiveTranscription.ts` hook
 
 ---
 
-## P0 - Critical Authentication Issues
+## P0 - Critical Issues
 
-### AUTH-001: Email/Password Sign-In Hangs Indefinitely
+### STRIPE-001: Stripe Subscription Integration
 
-**Symptom:** User clicks "Sign In", sees spinner with "Signing in..." forever, page never redirects.
+**Status:** ⏳ IMPLEMENTED — Needs Testing
 
-**Root Cause:** Race condition between `signInWithPassword` completion and `onAuthStateChange` firing. After successful auth, `setIsLoading(false)` is never called because code assumes redirect will happen via `useEffect`.
+**Implementation Complete (2026-02-02):**
 
-**Evidence:**
-- File: `apps/web/src/pages/Auth.jsx` (lines 43-69)
-- File: `apps/web/src/contexts/AuthContext.jsx` (lines 64-145)
+#### ✅ Phase 1: Setup
+- Stripe account configured (test mode)
+- API keys added to `apps/api/.env`
+- Products created: Pro Monthly ($9.99), Pro Yearly ($79)
+- Webhook endpoint registered at `/webhooks/stripe`
 
-**Flow Analysis:**
-1. User submits form → `setIsLoading(true)`
-2. `auth.signIn()` calls `supabase.auth.signInWithPassword()` → SUCCEEDS
-3. Expected: `onAuthStateChange` fires → `session` state updates → `useEffect` redirects
-4. **ACTUAL**: If `onAuthStateChange` doesn't fire OR fires before Auth component mounts, session state never updates in Auth.jsx
-5. Result: `isLoading` stays `true` forever, no redirect, no error shown
+#### ✅ Phase 2: Backend
+- Added `stripe>=7.0.0` to `requirements.txt`
+- Created `apps/api/stripe_billing.py`:
+  - `POST /billing/create-checkout-session` — Redirects to Stripe Checkout
+  - `POST /billing/create-portal-session` — Opens customer billing portal
+  - `GET /billing/subscription-status` — Returns current plan & credits
+  - `POST /webhooks/stripe` — Handles all webhook events
+- Webhook signature validation with `STRIPE_WEBHOOK_SECRET`
+- Credit management: `check_user_credits()`, `deduct_user_credits()`
 
-**Why `onAuthStateChange` may not fire:**
-- Supabase client already processed the session before component mounted
-- Race condition between `getSession()` and `signInWithPassword()` completion
-- Session already set in AuthContext before Auth.jsx's useEffect runs
+#### ✅ Phase 3: Frontend
+- Updated `apps/web/src/components/services/api.jsx` with billing methods
+- Updated `apps/web/src/pages/Pricing.jsx`:
+  - Real Stripe Checkout integration
+  - Shows current subscription status
+  - "Manage Subscription" button for Pro users
+  - Success/cancel URL handling
+- Added Stripe constants to `apps/web/src/config/constants.js`
 
-**Fix Plan:** Add explicit session check after sign-in with timeout fallback.
+#### ✅ Phase 4: Database
+- Created migration `supabase/migrations/20260202_stripe_subscriptions.sql`:
+  - `stripe_customer_id`, `stripe_subscription_id`
+  - `subscription_status`, `subscription_plan`
+  - `subscription_current_period_end`
+  - `monthly_credit_allowance`, `credits_used_this_period`
+  - Helper functions: `deduct_credit()`, `reset_user_credits()`, etc.
 
----
-
-### AUTH-002: No Auth Timeout / Fallback Error Handling
-
-**Symptom:** If backend `/auth/me` is slow or unreachable, auth loading state hangs.
-
-**Root Cause:** `fetchUserProfile` in AuthContext has no timeout, and errors are caught but don't prevent infinite loading.
-
-**Evidence:**
-- File: `apps/web/src/contexts/AuthContext.jsx` (lines 36-58)
-- `apiAuth.getMe()` can hang indefinitely
-
-**Fix Plan:** Add 5-second timeout wrapper to profile fetch, use session fallback on failure.
-
----
-
-### AUTH-003: No Debounce on Sign-In Button
-
-**Symptom:** User can spam-click sign-in button, triggering multiple auth attempts → 429 rate limit.
-
-**Root Cause:** No guard against double-submission. Window exists between click and `setIsLoading(true)`.
-
-**Evidence:**
-- File: `apps/web/src/pages/Auth.jsx` (lines 260-269)
-- Button only disabled when `isLoading` is true, but there's a race window
-
-**Fix Plan:** Add ref to track in-flight requests, check before submitting.
-
----
-
-### AUTH-004: Email Confirmation Not Handled in UI
-
-**Symptom:** User signs up, tries to sign in, gets cryptic error or silent failure.
-
-**Root Cause:** Supabase `signInWithPassword` returns specific error for unconfirmed emails ("Email not confirmed"), but UI displays raw error message.
-
-**Evidence:**
-- File: `apps/web/src/components/services/api.jsx` (lines 31-37)
-- Raw Supabase error re-thrown without user-friendly transformation
-
-**Fix Plan:** Map common Supabase auth errors to user-friendly messages.
-
----
-
-### STRIPE-001: Stripe Subscription Integration Not Implemented
-
-**Symptom:** Pricing page exists with billing UI, but no actual payment processing.
-
-**Root Cause:** No Stripe integration in backend or frontend.
-
-**Evidence:**
-- File: `apps/web/src/pages/Pricing.jsx` — Has billing toggle (monthly/yearly), pricing tiers, but buttons don't trigger payment
-- File: `apps/web/src/components/services/api.jsx` (lines 560-592) — `billing` object only reads from profile
-- No `stripe` imports anywhere in codebase
-- No Stripe webhook handler in `apps/api/main.py`
-
-**Impact:** Users cannot upgrade to premium plans.
-
-**Fix Plan:** Full Stripe integration (2-3 day effort, separate milestone).
+#### 🧪 Testing Required
+- [ ] Run database migration on Supabase
+- [ ] Test checkout flow with Stripe test card (4242 4242 4242 4242)
+- [ ] Test webhook with `stripe listen --forward-to localhost:8000/webhooks/stripe`
+- [ ] Verify subscription status updates after payment
+- [ ] Test billing portal access
+- [ ] Test credit enforcement (usage blocked when credits = 0)
 
 ---
 
 ## P1 - High Priority Issues
 
 ### PARTIAL-001: Live Transcription WebSocket Reconnection
+
+**Status:** ❌ NOT STARTED
 
 **Location:** `apps/web/src/components/recording/AudioRecorder.jsx` (lines 268-305)
 
@@ -126,18 +95,6 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 - Fall back to offline mode if reconnection fails
 
 **Effort:** 4 hours
-
----
-
-### BUG-001: Fake useLiveTranscription Hook
-
-**Location:** `apps/web/src/hooks/useLiveTranscription.ts`
-
-**Issue:** Returns hardcoded demo phrases on a timer, never connects to WebSocket. File is unused but misleading.
-
-**Fix:** Delete file entirely.
-
-**Effort:** 5 minutes
 
 ---
 
@@ -218,19 +175,28 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 
 ## Recently Completed (Verified Working)
 
-### ✅ GAP-003A: Admin Dashboard V1
-- **Completed:** 2026-01-28
-- **Location:** `apps/api/admin.py`, `apps/web/src/pages/admin/*`
-- **Features:** User management, session overview, analytics, audit log
-- **Tests:** 200/200 passing
+### ✅ AUTH-001: Sign-in timeout fallback (2026-02-02)
+8-second timeout prevents infinite spinner; explicitly checks session and redirects or shows error.
 
-### ✅ Rate Limit Persistence
-- **Completed:** 2026-01-27
-- **Location:** `apps/api/rate_limit.py`
-- **Feature:** Redis-backed rate limiting in production, in-memory fallback for dev
+### ✅ AUTH-002: Profile fetch timeout (2026-02-02)
+5-second timeout on `/auth/me`; falls back to session-based user if backend slow/unreachable.
 
-### ✅ Word Limit Enforcement
-- **Completed:** 2026-01-26
+### ✅ AUTH-003: Sign-in debounce (2026-02-02)
+Ref guard prevents double-submission; rapid clicks only trigger one auth request.
+
+### ✅ AUTH-004: User-friendly auth errors (2026-02-02)
+Maps Supabase errors to clear messages (email not confirmed, invalid credentials, rate limit).
+
+### ✅ BUG-001: Fake useLiveTranscription hook deleted (2026-02-02)
+Removed misleading hook that returned hardcoded demo phrases.
+
+### ✅ GAP-003A: Admin Dashboard V1 (2026-01-28)
+User management, session overview, analytics, audit log. 200/200 tests passing.
+
+### ✅ Rate Limit Persistence (2026-01-27)
+Redis-backed rate limiting in production, in-memory fallback for dev.
+
+### ✅ Word Limit Enforcement (2026-01-26)
 - **Location:** `apps/api/llm_refinement.py`
 - **Feature:** Deterministic word counting and truncation
 
