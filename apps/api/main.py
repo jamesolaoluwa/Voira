@@ -1291,10 +1291,10 @@ async def analyze_transcript_endpoint(
     
     # Check if user is admin (admins bypass credit checks)
     # ADMIN BYPASS SCOPE:
-    # - Admin is determined by email presence in `admin_emails` table (auth.py:check_is_admin)
+    # - Admin is determined ONLY by user_profiles.role = 'admin' (auth.py:check_is_admin)
     # - This is intended for internal/testing use only
     # - Admins bypass: credit checks, credit deductions, some rate limits
-    # - RISK: If admin_emails table is compromised, attacker gets unlimited free usage
+    # - The DB-level enforcement is in deduct_credit() which also checks user_profiles.role
     # - Do NOT expand admin bypass to broader roles (e.g., "premium_user") without review
     is_admin = await check_is_admin(user)
     

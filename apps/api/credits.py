@@ -41,19 +41,16 @@ async def check_and_reset_credits(user_id: str) -> dict:
     if response.data:
         return response.data[0]
     
-    # Create default profile
-    user_response = supabase.auth.admin.get_user_by_id(user_id)
-    user = user_response.user
-    role = user.user_metadata.get("role") if user.user_metadata else "free_user"
-    
-    default_credits = 120 if role in ["premium_user", "admin"] else 10
-    default_reference_uploads = 999999 if role in ["premium_user", "admin"] else 1
-    
+    # Create default profile for new users
+    # NOTE: Admin status is NOT inferred from user_metadata.
+    # Admins are designated ONLY by setting user_profiles.role = 'admin' directly.
+    # New users always start as 'free_user' with 10 credits.
+    # Premium users get higher credits via subscription (Stripe webhook updates).
     insert_response = supabase.table("user_profiles").insert({
         "user_id": user_id,
-        "role": role,
-        "credits_remaining": default_credits,
-        "reference_uploads_remaining": default_reference_uploads,
+        "role": "free_user",
+        "credits_remaining": 10,
+        "reference_uploads_remaining": 1,
     }).execute()
     
     return insert_response.data[0] if insert_response.data else {}

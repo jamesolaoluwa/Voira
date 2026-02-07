@@ -3,7 +3,7 @@ Admin Dashboard API Router.
 
 SECURITY:
 - ALL routes use require_admin() dependency
-- Admin check is server-side via admin_emails table
+- Admin check is server-side via user_profiles.role = 'admin'
 - All write operations are logged to admin_audit_log
 - No content/audio data is exposed
 
