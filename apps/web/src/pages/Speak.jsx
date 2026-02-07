@@ -1352,7 +1352,7 @@ export default function Speak() {
             <p className="text-zinc-600 dark:text-zinc-500">Speak naturally, Voira will refine your words</p>
           </div>
         </div>
-        <CreditsDisplay credits={userCredits} total={user?.role === 'premium_user' ? 200 : 60} compact />
+        <CreditsDisplay credits={userCredits} total={user?.monthly_credit_allowance ?? 10} compact />
       </motion.div>
       
       {/* Contextual Prompt Input */}

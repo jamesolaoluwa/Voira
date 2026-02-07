@@ -7,7 +7,6 @@ import {
   Check, 
   Crown, 
   Sparkles, 
-  Zap,
   Calendar,
   TrendingUp,
   Loader2,
@@ -111,7 +110,7 @@ export default function Pricing() {
 
   const usage = {
     creditsRemaining: subscriptionStatus?.credits_remaining ?? authUser?.credits_remaining ?? DEFAULT_USER_CREDITS,
-    totalCredits: subscriptionStatus?.credits_total ?? (isProUser ? PRO_USER_CREDITS : DEFAULT_USER_CREDITS),
+    totalCredits: subscriptionStatus?.monthly_credit_allowance ?? authUser?.monthly_credit_allowance ?? DEFAULT_USER_CREDITS,
     sessionsUsed: 0, // Could be computed from sessions API
     resetDate: subscriptionStatus?.current_period_end 
       ? new Date(subscriptionStatus.current_period_end).toLocaleDateString() 
@@ -346,13 +345,7 @@ export default function Pricing() {
           <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-6">Your Usage</h3>
           <div className="grid sm:grid-cols-3 gap-6">
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Zap className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                <span className="text-sm text-zinc-600 dark:text-zinc-500">Credits Remaining</span>
-              </div>
-              <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                <CreditsDisplay credits={usage.creditsRemaining} total={usage.totalCredits} compact={false} showWarning />
-              </div>
+              <CreditsDisplay credits={usage.creditsRemaining} total={usage.totalCredits} compact={false} showWarning />
             </div>
 
             <div>

@@ -82,6 +82,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(
             "full_name": user_metadata.get("full_name"),
             "role": profile_role or "free_user",
             "credits_remaining": profile.get("credits_remaining") if profile else 10,
+            "monthly_credit_allowance": profile.get("monthly_credit_allowance") if profile else 10,
             "credits_reset_at": profile.get("credits_reset_at") if profile else None,
         }
     except HTTPException:
@@ -176,6 +177,7 @@ async def get_user_from_websocket_token(token: str):
             "full_name": user_metadata.get("full_name"),
             "role": profile_role or "free_user",
             "credits_remaining": profile.get("credits_remaining") if profile else 10,
+            "monthly_credit_allowance": profile.get("monthly_credit_allowance") if profile else 10,
             "credits_reset_at": profile.get("credits_reset_at") if profile else None,
         }
     except HTTPException:

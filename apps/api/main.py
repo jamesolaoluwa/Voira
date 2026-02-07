@@ -126,22 +126,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         identifier = request.client.host if request.client else "unknown"
         
         # Check rate limit
-        allowed, headers = await rate_limit_check(
+        allowed, rate_headers = await rate_limit_check(
             identifier=identifier,
             path=request.url.path,
         )
         
         if not allowed:
+            # Must include CORS headers in 429 responses for browser compatibility
+            origin = request.headers.get("origin", "")
+            cors_headers = {}
+            if origin in settings.cors_origins_list:
+                cors_headers = {
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Credentials": "true",
+                }
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded. Please try again later."},
-                headers=headers,
+                headers={**rate_headers, **cors_headers},
             )
         
         response = await call_next(request)
         
         # Add rate limit headers to response
-        for key, value in headers.items():
+        for key, value in rate_headers.items():
             response.headers[key] = value
         
         return response
@@ -376,6 +384,7 @@ async def get_me(user: dict = Depends(get_current_user)):
         full_name=user.get("full_name"),
         role=user.get("role", "free_user"),
         credits_remaining=user.get("credits_remaining", 10),
+        monthly_credit_allowance=user.get("monthly_credit_allowance", 10),
         credits_reset_at=user.get("credits_reset_at"),
     )
 

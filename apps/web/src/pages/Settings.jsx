@@ -341,7 +341,7 @@ export default function Settings() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-zinc-600 dark:text-zinc-400">Credits Remaining</span>
-              <span className="font-semibold text-zinc-800 dark:text-zinc-200"><CreditsDisplay credits={authUser?.credits_remaining ?? 0} total={authUser?.credits_total ?? (authUser?.role === 'premium_user' ? 200 : 60)} compact={true} /></span>
+              <span className="font-semibold text-zinc-800 dark:text-zinc-200"><CreditsDisplay credits={authUser?.credits_remaining ?? 0} total={authUser?.monthly_credit_allowance ?? 10} compact={true} /></span>
             </div>
           </div>
           {/* Small session stats */}

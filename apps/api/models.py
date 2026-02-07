@@ -63,6 +63,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
     role: str
     credits_remaining: int
+    monthly_credit_allowance: int
     credits_reset_at: Optional[datetime]
 
 

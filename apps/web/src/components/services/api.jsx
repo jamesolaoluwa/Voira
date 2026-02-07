@@ -102,8 +102,9 @@ export const auth = {
         id: user.id,
         email: user.email,
         full_name: user.user_metadata?.full_name || profile?.full_name || 'User',
-        role: user.user_metadata?.role || profile?.role || 'free_user',
-        credits_remaining: profile?.credits_remaining ?? 60,
+        role: profile?.role || 'free_user',
+        credits_remaining: profile?.credits_remaining ?? 10,
+        monthly_credit_allowance: profile?.monthly_credit_allowance ?? 10,
         credits_reset_at: profile?.credits_reset_at || null,
       };
     }
@@ -596,7 +597,7 @@ export const billing = {
         plan: 'free',
         status: 'inactive',
         credits_remaining: 10,
-        credits_total: 10,
+        monthly_credit_allowance: 10,
         current_period_end: null,
         cancel_at_period_end: false,
       };
@@ -787,7 +788,7 @@ export const credits = {
     }
 
     const profile = profiles[0];
-    const newCredits = Math.max(0, (profile.credits_remaining || 60) - 1);
+    const newCredits = Math.max(0, (profile.credits_remaining || 10) - 1);
 
     await base44.entities.UserProfile.update(profile.id, {
       credits_remaining: newCredits,
@@ -806,7 +807,7 @@ export const credits = {
 
     if (profiles.length === 0) {
       // Create a profile with starting credits minus amount
-      const starting = Math.max(0, 60 - amount);
+      const starting = Math.max(0, 10 - amount);
       await base44.entities.UserProfile.create({
         user_id: user.id,
         full_name: user.full_name,
@@ -817,7 +818,7 @@ export const credits = {
     }
 
     const profile = profiles[0];
-    const newCredits = Math.max(0, (profile.credits_remaining || 60) - Number(amount));
+    const newCredits = Math.max(0, (profile.credits_remaining || 10) - Number(amount));
 
     await base44.entities.UserProfile.update(profile.id, {
       credits_remaining: newCredits,
@@ -832,7 +833,7 @@ export const credits = {
     return user.credits_remaining;
   },
 
-  async resetCredits(amount = 60) {
+  async resetCredits(amount = 10) {
     const user = await auth.getMe();
     if (!user) throw new Error('Not authenticated');
 

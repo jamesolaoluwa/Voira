@@ -193,7 +193,7 @@ export default function Home() {
             <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Recordings</p>
           </div>
           <div>
-            <div className="text-3xl font-bold text-violet-600 dark:text-violet-400"><CreditsDisplay credits={user?.credits_remaining || 0} total={user?.credits_total ?? 60} compact={true} /></div>
+            <div className="text-3xl font-bold text-violet-600 dark:text-violet-400"><CreditsDisplay credits={user?.credits_remaining || 0} total={user?.monthly_credit_allowance ?? 10} compact={true} /></div>
             <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">Credits Left</p>
           </div>
           <div>

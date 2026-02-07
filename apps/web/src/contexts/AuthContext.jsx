@@ -6,7 +6,7 @@ import { isAdminByEmail } from '@/lib/isAdmin';
 const AuthContext = createContext(null);
 
 // Timeout for profile fetch operations
-const PROFILE_FETCH_TIMEOUT_MS = 5000;
+const PROFILE_FETCH_TIMEOUT_MS = 10000;
 
 /**
  * Detect if we're in the middle of an OAuth redirect.
@@ -44,6 +44,9 @@ function buildFallbackUser(session) {
     email: session.user.email,
     full_name: session.user.user_metadata?.full_name || 'User',
     role: session.user.user_metadata?.role || 'free_user',
+    // Default credits for fallback - will be updated when backend is available
+    credits_remaining: 10,
+    monthly_credit_allowance: 10,
   };
 }
 
