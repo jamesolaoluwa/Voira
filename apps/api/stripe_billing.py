@@ -200,6 +200,7 @@ async def _update_user_subscription(
     Update user's subscription status in database.
     Called by webhook handlers.
     """
+    logger.info(f"[Stripe] _update_user_subscription called for customer {stripe_customer_id}")
     try:
         # Determine role for backward compatibility
         role = "free_user"
@@ -218,10 +219,14 @@ async def _update_user_subscription(
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
         
+        logger.info(f"[Stripe] Update data: {update_data}")
+        
         # If upgrading, also update credits_remaining
         result = supabase.table("user_profiles").select("monthly_credit_allowance, credits_remaining").eq(
             "stripe_customer_id", stripe_customer_id
         ).execute()
+        
+        logger.info(f"[Stripe] Query result for customer {stripe_customer_id}: {result.data}")
         
         if result.data:
             old_allowance = result.data[0].get("monthly_credit_allowance", 10)
@@ -232,11 +237,14 @@ async def _update_user_subscription(
                 bonus_credits = credit_allowance - old_allowance
                 update_data["credits_remaining"] = old_remaining + bonus_credits
                 logger.info(f"[Stripe] Upgrading user: adding {bonus_credits} bonus credits")
+        else:
+            logger.warning(f"[Stripe] No user found with stripe_customer_id={stripe_customer_id}")
         
-        supabase.table("user_profiles").update(update_data).eq(
+        update_result = supabase.table("user_profiles").update(update_data).eq(
             "stripe_customer_id", stripe_customer_id
         ).execute()
         
+        logger.info(f"[Stripe] Update result: {update_result.data}")
         logger.info(f"[Stripe] Updated subscription for customer {stripe_customer_id}: plan={plan.value}, status={status.value}")
         
     except Exception as e:
@@ -244,18 +252,23 @@ async def _update_user_subscription(
         raise
 
 
-async def _handle_subscription_created_or_updated(subscription: stripe.Subscription):
+async def _handle_subscription_created_or_updated(subscription: dict):
     """Handle subscription creation or update from webhook."""
-    customer_id = subscription.customer
-    subscription_id = subscription.id
+    customer_id = subscription["customer"]
+    subscription_id = subscription["id"]
     
-    # Get price and plan details
-    if not subscription.items.data:
+    logger.info(f"[Stripe] Processing subscription {subscription_id} for customer {customer_id}")
+    
+    # Get price and plan details - handle nested dict structure
+    items_data = subscription.get("items", {}).get("data", [])
+    if not items_data:
         logger.error(f"[Stripe] Subscription {subscription_id} has no items")
         return
     
-    price_id = subscription.items.data[0].price.id
+    price_id = items_data[0]["price"]["id"]
     mapping = get_price_plan_mapping()
+    
+    logger.info(f"[Stripe] Price ID: {price_id}, Available mappings: {list(mapping.keys())}")
     
     if price_id not in mapping:
         logger.error(f"[Stripe] Unknown price_id in subscription: {price_id}")
@@ -273,12 +286,13 @@ async def _handle_subscription_created_or_updated(subscription: stripe.Subscript
         "incomplete_expired": SubscriptionStatus.INACTIVE,
         "unpaid": SubscriptionStatus.PAST_DUE,
     }
-    status = status_map.get(subscription.status, SubscriptionStatus.INACTIVE)
+    status = status_map.get(subscription["status"], SubscriptionStatus.INACTIVE)
     
     # Get period end
     period_end = None
-    if subscription.current_period_end:
-        period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
+    current_period_end = subscription.get("current_period_end")
+    if current_period_end:
+        period_end = datetime.fromtimestamp(current_period_end, tz=timezone.utc)
     
     await _update_user_subscription(
         stripe_customer_id=customer_id,
@@ -290,9 +304,9 @@ async def _handle_subscription_created_or_updated(subscription: stripe.Subscript
     )
 
 
-async def _handle_subscription_deleted(subscription: stripe.Subscription):
+async def _handle_subscription_deleted(subscription: dict):
     """Handle subscription cancellation/deletion from webhook."""
-    customer_id = subscription.customer
+    customer_id = subscription["customer"]
     
     try:
         # Downgrade to free plan
@@ -311,9 +325,9 @@ async def _handle_subscription_deleted(subscription: stripe.Subscription):
         raise
 
 
-async def _handle_invoice_payment_failed(invoice: stripe.Invoice):
+async def _handle_invoice_payment_failed(invoice: dict):
     """Handle failed payment - mark subscription as past_due."""
-    customer_id = invoice.customer
+    customer_id = invoice["customer"]
     
     try:
         supabase.table("user_profiles").update({
@@ -327,17 +341,18 @@ async def _handle_invoice_payment_failed(invoice: stripe.Invoice):
         logger.error(f"[Stripe] Failed to handle payment failure for customer {customer_id}: {e}")
 
 
-async def _handle_checkout_session_completed(session: stripe.checkout.Session):
+async def _handle_checkout_session_completed(session: dict):
     """
     Handle successful checkout completion.
     This fires when user completes payment, before subscription is fully active.
     We use this to ensure the stripe_customer_id is linked if it wasn't already.
     """
-    customer_id = session.customer
-    user_id = session.metadata.get("user_id") if session.metadata else None
+    customer_id = session["customer"]
+    metadata = session.get("metadata", {})
+    user_id = metadata.get("user_id") if metadata else None
     
     if not user_id:
-        logger.error(f"[Stripe] Checkout session {session.id} missing user_id in metadata")
+        logger.error(f"[Stripe] Checkout session {session['id']} missing user_id in metadata")
         return
     
     try:
@@ -575,7 +590,9 @@ async def stripe_webhook(
             logger.debug(f"[Stripe] Unhandled webhook event type: {event_type}")
     
     except Exception as e:
+        import traceback
         logger.error(f"[Stripe] Error processing webhook {event_type}: {e}")
+        logger.error(f"[Stripe] Traceback: {traceback.format_exc()}")
         # Return 200 anyway to prevent Stripe from retrying
         # We've logged the error for manual investigation
     
