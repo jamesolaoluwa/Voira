@@ -38,8 +38,11 @@ export default function Pricing() {
         description: 'Welcome to Pro! Your subscription is now active.',
         duration: 5000,
       });
-      // Reload subscription status
+      // Reload subscription status and refresh user profile to get updated credits
       loadSubscriptionStatus();
+      if (refreshUser) {
+        refreshUser();
+      }
     } else if (searchParams.get('canceled') === 'true') {
       toast({
         title: 'Checkout canceled',
@@ -48,7 +51,7 @@ export default function Pricing() {
         duration: 3000,
       });
     }
-  }, [searchParams]);
+  }, [searchParams, refreshUser]);
 
   const plans = {
     free: {
@@ -82,7 +85,7 @@ export default function Pricing() {
     },
   };
 
-  const { user: authUser } = useAuth();
+  const { user: authUser, refreshUser } = useAuth();
 
   // Load subscription status from backend
   const loadSubscriptionStatus = async () => {

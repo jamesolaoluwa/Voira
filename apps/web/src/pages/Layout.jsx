@@ -8,7 +8,10 @@ import AuthDebug from '@/components/AuthDebug';
 export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
   const isAuthPage = currentPageName === 'Auth';
-  const { user, isLoading, isAdmin } = useAuth();
+  const auth = useAuth();
+  const user = auth?.user;
+  const isLoading = auth?.isLoading ?? true;
+  const isAdmin = auth?.isAdmin ?? false;
   const isAuthenticated = !!user && !isLoading;
   
   return (
