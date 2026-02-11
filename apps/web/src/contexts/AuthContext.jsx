@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '@/components/lib/supabase';
 import { auth as apiAuth } from '@/components/services/api';
 import { isAdminByEmail } from '@/lib/isAdmin';
@@ -98,6 +98,23 @@ export function AuthProvider({ children }) {
   const lastFetchedSessionIdRef = useRef(null);
   // Track if initial load is complete
   const initialLoadCompleteRef = useRef(false);
+
+  // Function to manually refresh user profile (e.g., after subscription changes)
+  const refreshUser = useCallback(async () => {
+    if (!session?.access_token) {
+      console.debug('[AuthContext] refreshUser: No session, skipping');
+      return null;
+    }
+    try {
+      console.debug('[AuthContext] refreshUser: Fetching fresh profile');
+      const profile = await fetchUserProfile(session);
+      setUser(profile);
+      return profile;
+    } catch (e) {
+      console.warn('[AuthContext] refreshUser failed:', e.message);
+      return null;
+    }
+  }, [session]);
 
   useEffect(() => {
     let mounted = true;
@@ -239,7 +256,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, isLoading, isAdmin, signOut }}>
+    <AuthContext.Provider value={{ user, session, isLoading, isAdmin, signOut, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
