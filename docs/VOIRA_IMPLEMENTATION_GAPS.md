@@ -12,7 +12,7 @@ A prioritized, actionable list of implementation gaps, bugs, and technical debt 
 ### Critical Issues (P0)
 | Task | Description | Status |
 |------|-------------|--------|
-| **STRIPE-001** | Stripe subscription not implemented | 🔄 In Progress |
+| **STRIPE-001** | Stripe subscription not implemented | 🔄 In Progress |(Test environment now works, just remains to add real product)
 
 ### High Priority (P1)
 - WebSocket reconnection logic missing (PARTIAL-001)
