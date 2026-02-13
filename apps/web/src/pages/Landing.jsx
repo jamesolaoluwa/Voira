@@ -358,39 +358,39 @@ export default function Landing() {
             transition={{ duration: 0.9, ease: SMOOTH }}
             className="flex flex-col items-center text-center mx-auto max-w-4xl px-5 sm:px-8"
           >
-            {/* Orb with floating labels (No fillers, Your voice, Refined output) */}
-            <div className="relative flex justify-center items-center mb-12" style={{ width: 320, height: 320 }}>
-              <motion.div
-                className="absolute flex justify-center items-center"
-                initial={{ opacity: 0, scale: 0.92 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                viewport={{ once: true, amount: 0.3 }}
-                transition={{ duration: 1, ease: SMOOTH }}
-              >
-                <VoiceVisualizer size={220} isActive amplitude={0.2} />
-              </motion.div>
-              <motion.span
-                className="absolute top-[8%] left-[18%] px-3 py-1.5 rounded-full text-sm font-medium bg-white/10 text-white/90 backdrop-blur-sm border border-white/10 shadow-sm"
-                animate={{ y: [0, -4, 0] }}
-                transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-              >
-                No fillers
-              </motion.span>
-              <motion.span
-                className="absolute top-[42%] right-[5%] px-3 py-1.5 rounded-full text-sm font-medium bg-white/10 text-white/90 backdrop-blur-sm border border-white/10 shadow-sm"
-                animate={{ y: [0, 4, 0] }}
-                transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut', delay: 0.3 }}
-              >
-                Your voice
-              </motion.span>
-              <motion.span
-                className="absolute bottom-[12%] left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-sm font-medium bg-white/10 text-white/90 backdrop-blur-sm border border-white/10 shadow-sm"
-                animate={{ y: [0, -3, 0] }}
-                transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut', delay: 0.6 }}
-              >
-                Refined output
-              </motion.span>
-            </div>
+            {/* Voice Visualizer */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+              className="flex justify-center lg:justify-end mb-12"
+            >
+              <div className="relative">
+                <VoiceVisualizer size={280} isActive={true} amplitude={0.3} />
+                {/* Floating labels */}
+                <motion.div
+                  className="absolute -top-4 -left-8 px-4 py-2 bg-white dark:bg-[#1a1a24] rounded-xl border border-zinc-200 dark:border-white/5 text-sm text-zinc-700 dark:text-zinc-400 shadow-sm dark:shadow-none"
+                  animate={{ y: [0, -8, 0] }}
+                  transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+                >
+                  No fillers
+                </motion.div>
+                <motion.div
+                  className="absolute top-1/2 -right-12 px-4 py-2 bg-white dark:bg-[#1a1a24] rounded-xl border border-zinc-200 dark:border-white/5 text-sm text-zinc-700 dark:text-zinc-400 shadow-sm dark:shadow-none"
+                  animate={{ y: [0, 8, 0] }}
+                  transition={{ duration: 3.5, repeat: Infinity, ease: 'easeInOut', delay: 0.5 }}
+                >
+                  Your voice
+                </motion.div>
+                <motion.div
+                  className="absolute -bottom-4 left-8 px-4 py-2 bg-white dark:bg-[#1a1a24] rounded-xl border border-zinc-200 dark:border-white/5 text-sm text-zinc-700 dark:text-zinc-400 shadow-sm dark:shadow-none"
+                  animate={{ y: [0, -6, 0] }}
+                  transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
+                >
+                  Refined output
+                </motion.div>
+              </div>
+            </motion.div>
             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-5 text-white">
               Speak. Refine. Shine.
             </h2>
