@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { motion } from 'framer-motion';
+import { motion, useScroll, useTransform } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { GetStartedButton } from '@/components/ui/GetStartedButton';
+import { GradientButton } from '@/components/ui/GradientButton';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import Container from '@/components/layout/Container';
@@ -148,17 +148,29 @@ const TESTIMONIALS = [
   },
 ];
 
-/* ─── Full-viewport cinematic feature scene ──────────────────────────── */
+/* ─── Full-viewport cinematic feature scene with strong parallax ──────── */
 function CinematicScene({ scene }) {
+  const ref = useRef(null);
+  const { scrollYProgress } = useScroll({
+    target: ref,
+    offset: ['start end', 'end start'],
+  });
+
+  // Background moves at ~40% of scroll speed — strong visible parallax depth
+  const bgY = useTransform(scrollYProgress, [0, 1], ['-15%', '15%']);
+  // Zoom: starts zoomed-in, settles at center, slightly zooms again on exit
+  const bgScale = useTransform(scrollYProgress, [0, 0.4, 0.6, 1], [1.2, 1.05, 1.05, 1.15]);
+  // Content slides up slightly as user scrolls (counter-parallax for depth)
+  const contentY = useTransform(scrollYProgress, [0, 0.5, 1], [60, 0, -40]);
+  // Content fades in as it enters center, fades out as it leaves
+  const contentOpacity = useTransform(scrollYProgress, [0, 0.25, 0.5, 0.75, 1], [0, 1, 1, 1, 0]);
+
   return (
-    <section className="relative w-full h-screen overflow-hidden" style={{ background: PURPLE_DARK }}>
-      {/* Background image — slow reveal */}
+    <section ref={ref} className="relative w-full h-screen overflow-hidden" style={{ background: PURPLE_DARK }}>
+      {/* Background image — parallax layer (taller than viewport for shift room) */}
       <motion.div
-        className="absolute inset-0 z-0"
-        initial={{ opacity: 0, scale: 1.08 }}
-        whileInView={{ opacity: 1, scale: 1 }}
-        viewport={{ once: true, amount: 0.3 }}
-        transition={{ duration: 1.4, ease: SMOOTH }}
+        className="absolute -inset-x-0 -top-[15%] -bottom-[15%] z-0 will-change-transform"
+        style={{ y: bgY, scale: bgScale }}
       >
         <img
           src={scene.bgImage}
@@ -166,15 +178,18 @@ function CinematicScene({ scene }) {
           className="h-full w-full object-cover"
           loading="lazy"
         />
-        {/* Overlays — seamless, no visible edges */}
+        {/* Overlays — seamless blending */}
         <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/55 to-black/20" />
-        <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-[#0A0515] to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-[#0A0515] to-transparent" />
+        <div className="absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-[#0A0515] to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-[#0A0515] to-transparent" />
         <div className="absolute inset-0 bg-[#5B5CF6]/[0.04] mix-blend-overlay" />
       </motion.div>
 
-      {/* Content — centered vertically, left-aligned */}
-      <div className="relative z-10 flex h-screen items-center">
+      {/* Content — counter-parallax (moves opposite to bg for depth) */}
+      <motion.div
+        className="relative z-10 flex h-screen items-center will-change-transform"
+        style={{ y: contentY, opacity: contentOpacity }}
+      >
         <div className="w-full max-w-7xl mx-auto px-5 sm:px-8 lg:px-12">
           <div className="max-w-xl lg:max-w-2xl">
             <MotionDiv
@@ -215,7 +230,7 @@ function CinematicScene({ scene }) {
             </MotionDiv>
           </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -224,11 +239,20 @@ function CinematicScene({ scene }) {
    MAIN LANDING PAGE
 ═══════════════════════════════════════════════════════════════════════ */
 export default function Landing() {
+  const heroRef = useRef(null);
+  const { scrollYProgress: heroScroll } = useScroll({
+    target: heroRef,
+    offset: ['start start', 'end start'],
+  });
+  // Hero text floats up as user scrolls down — creates depth against static bg
+  const heroTextY = useTransform(heroScroll, [0, 1], [0, -120]);
+  const heroTextOpacity = useTransform(heroScroll, [0, 0.6, 1], [1, 0.6, 0]);
+
   return (
     <div className="min-h-screen overflow-x-hidden" style={{ background: PURPLE_DARK, color: '#F5F5F7' }}>
 
       {/* ═══ 1. HERO + ORB — Single shared background ═════════════════ */}
-      <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
+      <section ref={heroRef} className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
         {/* Header: absolute so it floats on top */}
         <header className="absolute inset-x-0 top-0 z-30">
           <div className="w-full mx-auto flex h-16 items-center justify-between px-5 sm:px-8 lg:px-12">
@@ -266,21 +290,23 @@ export default function Landing() {
             speed="slow"
             waveOpacity={0.38}
             waveWidth={48}
+            waveCenterY={0.49}
           >
             <div className="sr-only" />
           </WavyBackground>
         </div>
         {/* Ethereal effects — span the full section seamlessly */}
         <EtherealShadowFilter
-          color="rgba(91, 92, 246, 0.5)"
+          color="rgba(193, 53, 135, 0.5)"
           animation={{ scale: 80, speed: 70 }}
           sizing="fill"
           enabled
         />
         <EtherealShadow variant="absolute" opacity="hero" className="inset-0 z-0" />
 
-        {/* Hero content */}
+        {/* Hero content — floats up on scroll for depth */}
         <div className="relative z-10 flex min-h-screen flex-col items-center justify-center py-24 px-4 sm:px-6 lg:px-8">
+          <motion.div style={{ y: heroTextY, opacity: heroTextOpacity }} className="will-change-transform">
           <Container size="wide" className="flex flex-col items-center justify-center text-center">
             <motion.div
               className="w-full max-w-3xl mx-auto"
@@ -310,11 +336,17 @@ export default function Landing() {
               </motion.div>
               <motion.div variants={itemUp} className="flex flex-wrap gap-4 justify-center">
                 <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-                  <GetStartedButton className="h-12 bg-accent px-8 text-white shadow-sm hover:bg-accent/90 transition-colors duration-normal ease-smooth" />
+                  <button
+                    type="button"
+                    className="h-12 px-8 rounded-xl text-base font-medium text-white/90 hover:text-white backdrop-blur-md bg-white/[0.08] border border-white/[0.15] hover:bg-white/[0.14] transition-all duration-300 cursor-pointer"
+                  >
+                    Get Started
+                  </button>
                 </Link>
               </motion.div>
             </motion.div>
           </Container>
+          </motion.div>
         </div>
 
         {/* Orb content — same section, same background, no seam */}
@@ -326,15 +358,39 @@ export default function Landing() {
             transition={{ duration: 0.9, ease: SMOOTH }}
             className="flex flex-col items-center text-center mx-auto max-w-4xl px-5 sm:px-8"
           >
-            <motion.div
-              className="mb-12 flex justify-center"
-              initial={{ opacity: 0, scale: 0.92 }}
-              whileInView={{ opacity: 1, scale: 1 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 1, ease: SMOOTH }}
-            >
-              <VoiceVisualizer size={220} isActive amplitude={0.2} />
-            </motion.div>
+            {/* Orb with floating labels (No fillers, Your voice, Refined output) */}
+            <div className="relative flex justify-center items-center mb-12" style={{ width: 320, height: 320 }}>
+              <motion.div
+                className="absolute flex justify-center items-center"
+                initial={{ opacity: 0, scale: 0.92 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: true, amount: 0.3 }}
+                transition={{ duration: 1, ease: SMOOTH }}
+              >
+                <VoiceVisualizer size={220} isActive amplitude={0.2} />
+              </motion.div>
+              <motion.span
+                className="absolute top-[8%] left-[18%] px-3 py-1.5 rounded-full text-sm font-medium bg-white/10 text-white/90 backdrop-blur-sm border border-white/10 shadow-sm"
+                animate={{ y: [0, -4, 0] }}
+                transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+              >
+                No fillers
+              </motion.span>
+              <motion.span
+                className="absolute top-[42%] right-[5%] px-3 py-1.5 rounded-full text-sm font-medium bg-white/10 text-white/90 backdrop-blur-sm border border-white/10 shadow-sm"
+                animate={{ y: [0, 4, 0] }}
+                transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut', delay: 0.3 }}
+              >
+                Your voice
+              </motion.span>
+              <motion.span
+                className="absolute bottom-[12%] left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-sm font-medium bg-white/10 text-white/90 backdrop-blur-sm border border-white/10 shadow-sm"
+                animate={{ y: [0, -3, 0] }}
+                transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut', delay: 0.6 }}
+              >
+                Refined output
+              </motion.span>
+            </div>
             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-5 text-white">
               Speak. Refine. Shine.
             </h2>
@@ -351,30 +407,38 @@ export default function Landing() {
         <CinematicScene key={scene.id} scene={scene} />
       ))}
 
-      {/* ═══ 4. TESTIMONIALS ══════════════════════════════════════════ */}
-      <section className="relative w-full overflow-hidden" style={{ background: PURPLE_MID }}>
-        <TestimonialSection
-          title="Hear from students like you"
-          subtitle="Real stories from real people who used Voira to find their voice."
-          testimonials={TESTIMONIALS}
-        />
-      </section>
-
-      {/* ═══ 5. FEATURE TABS ═════════════════════════════════════════ */}
+      {/* ═══ 4–6. TESTIMONIALS → FEATURE TABS → CTA → FOOTER
+           Shared ethereal background for consistent color throughout ═══ */}
       <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
-        <FeatureTabs
-          badge="Voira"
-          heading="Built for moments that shape your future."
-          description="Whether you're applying to college, going for a scholarship, or prepping for interviews."
-          tabs={FEATURE_TABS}
+        {/* Shared ethereal effects — match hero wave color */}
+        <EtherealShadowFilter
+          color="rgba(193, 53, 135, 0.35)"
+          animation={{ scale: 60, speed: 50 }}
+          sizing="fill"
+          enabled
         />
-      </section>
+        <EtherealShadow variant="absolute" opacity="hero" className="inset-0 z-0" color="rgba(193, 53, 135, 0.4)" />
 
-      {/* ═══ 6. FINAL CTA ════════════════════════════════════════════ */}
-      <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
-        <div className="absolute inset-0 pointer-events-none">
-          <EtherealShadow variant="absolute" opacity="subtle" className="inset-0 z-0" />
+        {/* ── Testimonials ────────────────────────────────────────── */}
+        <div className="relative z-10">
+          <TestimonialSection
+            title="Hear from students like you"
+            subtitle="Real stories from real people who used Voira to find their voice."
+            testimonials={TESTIMONIALS}
+          />
         </div>
+
+        {/* ── Feature Tabs ────────────────────────────────────────── */}
+        <div className="relative z-10">
+          <FeatureTabs
+            badge="Voira"
+            heading="Built for moments that shape your future."
+            description="Whether you're applying to college, going for a scholarship, or prepping for interviews."
+            tabs={FEATURE_TABS}
+          />
+        </div>
+
+        {/* ── Final CTA ───────────────────────────────────────────── */}
         <div className="relative z-10 mx-auto max-w-3xl px-5 sm:px-8 lg:px-12 py-28 sm:py-36 lg:py-48">
           <MotionDiv
             initial={{ opacity: 0, y: 30 }}
@@ -401,29 +465,29 @@ export default function Landing() {
             className="text-center mt-10"
           >
             <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-              <GetStartedButton className="h-12 bg-accent px-10 text-white shadow-sm hover:bg-accent/90 transition-colors duration-normal ease-smooth" />
+              <GradientButton className="h-12 px-10">Get Started</GradientButton>
             </Link>
           </MotionDiv>
         </div>
-      </section>
 
-      {/* ═══ FOOTER ═══════════════════════════════════════════════════ */}
-      <footer className="relative z-10 py-10" style={{ background: PURPLE_DARK }}>
-        <Container size="wide" className="flex flex-col items-center justify-between gap-4 sm:flex-row">
-          <p className="text-sm text-white/30">© 2025 Voira. All rights reserved.</p>
-          <nav className="flex gap-6 text-sm">
-            <Link to={createPageUrl('Privacy')} className="text-white/30 transition-colors duration-300 hover:text-white/60">
-              Privacy
-            </Link>
-            <Link to={createPageUrl('Terms')} className="text-white/30 transition-colors duration-300 hover:text-white/60">
-              Terms
-            </Link>
-            <Link to={createPageUrl('Contact')} className="text-white/30 transition-colors duration-300 hover:text-white/60">
-              Contact
-            </Link>
-          </nav>
-        </Container>
-      </footer>
+        {/* ── Footer ──────────────────────────────────────────────── */}
+        <footer className="relative z-10 py-10">
+          <Container size="wide" className="flex flex-col items-center justify-between gap-4 sm:flex-row">
+            <p className="text-sm text-white/70">© 2026 Voira. All rights reserved.</p>
+            <nav className="flex gap-6 text-sm">
+              <Link to={createPageUrl('Privacy')} className="text-white/70 transition-colors duration-300 hover:text-white">
+                Privacy
+              </Link>
+              <Link to={createPageUrl('Terms')} className="text-white/70 transition-colors duration-300 hover:text-white">
+                Terms
+              </Link>
+              <Link to={createPageUrl('Contact')} className="text-white/70 transition-colors duration-300 hover:text-white">
+                Contact
+              </Link>
+            </nav>
+          </Container>
+        </footer>
+      </section>
     </div>
   );
 }

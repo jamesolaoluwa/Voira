@@ -10,6 +10,7 @@ export default function EtherealShadow({
   enabled = true,
   opacity = 'default',
   variant = 'fixed',
+  color: colorOverride,
   className,
   ...props
 }) {
@@ -23,6 +24,17 @@ export default function EtherealShadow({
   };
   const opacityKey = opacityClasses[opacity] ?? opacityClasses.default;
   const positionClass = variant === 'absolute' ? 'absolute inset-0' : 'fixed inset-0';
+
+  const withAlpha = (a) => colorOverride.replace(/,?\s*[\d.]+\)$/, `, ${a})`);
+  const orb1 = colorOverride
+    ? `radial-gradient(circle, ${withAlpha(0.28)} 0%, ${withAlpha(0.08)} 40%, transparent 70%)`
+    : 'radial-gradient(circle, hsl(var(--accent) / 0.28) 0%, hsl(var(--accent) / 0.08) 40%, transparent 70%)';
+  const orb2 = colorOverride
+    ? `radial-gradient(circle, ${withAlpha(0.2)} 0%, ${withAlpha(0.06)} 40%, transparent 70%)`
+    : 'radial-gradient(circle, hsl(var(--accent) / 0.2) 0%, hsl(var(--accent) / 0.06) 40%, transparent 70%)';
+  const orb3 = colorOverride
+    ? `radial-gradient(circle, ${withAlpha(0.15)} 0%, transparent 65%)`
+    : 'radial-gradient(circle, hsl(var(--accent) / 0.15) 0%, transparent 65%)';
 
   return (
     <div
@@ -39,7 +51,7 @@ export default function EtherealShadow({
       <div
         className="absolute -top-1/4 -left-1/4 w-[80vw] max-w-[800px] h-[80vw] max-h-[800px] rounded-full"
         style={{
-          background: 'radial-gradient(circle, hsl(var(--accent) / 0.28) 0%, hsl(var(--accent) / 0.08) 40%, transparent 70%)',
+          background: orb1,
           filter: 'blur(32px)',
           transform: 'translate(0, 0)',
           animation: 'ethereal-float-1 25s ease-in-out infinite',
@@ -48,7 +60,7 @@ export default function EtherealShadow({
       <div
         className="absolute top-1/2 -right-1/4 w-[60vw] max-w-[600px] h-[60vw] max-h-[600px] rounded-full"
         style={{
-          background: 'radial-gradient(circle, hsl(var(--accent) / 0.2) 0%, hsl(var(--accent) / 0.06) 40%, transparent 70%)',
+          background: orb2,
           filter: 'blur(40px)',
           animation: 'ethereal-float-2 30s ease-in-out infinite',
         }}
@@ -56,7 +68,7 @@ export default function EtherealShadow({
       <div
         className="absolute -bottom-1/4 left-1/3 w-[50vw] max-w-[500px] h-[50vw] max-h-[500px] rounded-full"
         style={{
-          background: 'radial-gradient(circle, hsl(var(--accent) / 0.15) 0%, transparent 65%)',
+          background: orb3,
           filter: 'blur(44px)',
           animation: 'ethereal-float-3 28s ease-in-out infinite',
         }}

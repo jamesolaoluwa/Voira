@@ -19,6 +19,7 @@ export function WavyBackground({
   blur = 10,
   speed = 'slow',
   waveOpacity = 0.4,
+  waveCenterY = 0.5,
   ...props
 }) {
   const canvasRef = useRef(null);
@@ -43,7 +44,7 @@ export function WavyBackground({
         ctx.strokeStyle = colors[i % colors.length];
         for (let x = 0; x < w; x += 5) {
           const y = noise(x / 800, 0.3 * i, nt) * 80;
-          ctx.lineTo(x, y + h * 0.5);
+          ctx.lineTo(x, y + h * waveCenterY);
         }
         ctx.stroke();
         ctx.closePath();
@@ -69,7 +70,7 @@ export function WavyBackground({
       window.removeEventListener('resize', onResize);
       if (animationIdRef.current) cancelAnimationFrame(animationIdRef.current);
     };
-  }, [blur, speedVal, waveOpacity, backgroundFill, waveWidth]);
+  }, [blur, speedVal, waveOpacity, backgroundFill, waveWidth, waveCenterY]);
 
   return (
     <div
