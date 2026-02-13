@@ -258,9 +258,9 @@ export default function Landing() {
           <div className="w-full mx-auto flex h-16 items-center justify-between px-5 sm:px-8 lg:px-12">
             <Link to={createPageUrl('Landing')} className="flex items-center group">
               <img
-                src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/694481d7a7391caf3ba6ba15/fbc3f3b33_VoiraLogoReduced.jpg"
+                src="/assets/VoiraLogoMain.png"
                 alt="Voira"
-                className="h-9 w-9 object-contain transition-transform duration-normal ease-smooth group-hover:scale-105"
+                className="h-14 w-14 object-contain transition-transform duration-normal ease-smooth group-hover:scale-105"
               />
             </Link>
             <div className="flex items-center gap-3">

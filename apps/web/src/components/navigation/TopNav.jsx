@@ -35,7 +35,7 @@ export default function TopNav({ currentPageName, isAuthenticated = true, isAdmi
             {/* Left: Logo */}
             <Link to={isAuthenticated ? createPageUrl('Home') : createPageUrl('Landing')} className="flex items-center gap-3 shrink-0 group">
               <img 
-                src="/assets/VoiraLogoReduced.jpg"
+                src="/assets/VoiraLogoMain.png"
                 alt="Voira"
                 className="w-8 h-8 object-contain group-hover:scale-105 transition-transform"
               />

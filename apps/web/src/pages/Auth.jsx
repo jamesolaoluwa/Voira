@@ -223,7 +223,7 @@ export default function Auth() {
           <div className="mb-8 flex items-center justify-between">
             <Link to={createPageUrl('Landing')} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
               <img
-                src="/assets/VoiraLogoReduced.jpg"
+                src="/assets/VoiraLogoMain.png"
                 onError={(e) => { e.currentTarget.src = '/favicon.ico'; }}
                 alt="Voira logo"
                 className="w-10 h-10 object-contain"
