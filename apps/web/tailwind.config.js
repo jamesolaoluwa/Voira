@@ -4,6 +4,18 @@ module.exports = {
     content: ["./index.html", "./src/**/*.{ts,tsx,js,jsx}"],
   theme: {
   	extend: {
+  		fontFamily: {
+  			heading: ['var(--font-heading)'],
+  			body: ['var(--font-body)'],
+  		},
+  		transitionTimingFunction: {
+  			smooth: 'cubic-bezier(0.22, 1, 0.36, 1)',
+  		},
+  		transitionDuration: {
+  			fast: '300ms',
+  			normal: '450ms',
+  			slow: '600ms',
+  		},
   		borderRadius: {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',
@@ -43,6 +55,9 @@ module.exports = {
   			border: 'hsl(var(--border))',
   			input: 'hsl(var(--input))',
   			ring: 'hsl(var(--ring))',
+  			surface: {
+  				DEFAULT: 'hsl(var(--surface))',
+  			},
   			chart: {
   				'1': 'hsl(var(--chart-1))',
   				'2': 'hsl(var(--chart-2))',
