@@ -7,7 +7,6 @@ import { GetStartedButton } from '@/components/ui/GetStartedButton';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import Container from '@/components/layout/Container';
-import Section from '@/components/layout/Section';
 import { MotionDiv } from '@/components/ui/Motion';
 import EtherealShadow from '@/components/ui/EtherealShadow';
 import EtherealShadowFilter from '@/components/ui/EtherealShadowFilter';
@@ -228,8 +227,9 @@ export default function Landing() {
   return (
     <div className="min-h-screen overflow-x-hidden" style={{ background: PURPLE_DARK, color: '#F5F5F7' }}>
 
-      {/* ═══ 1. HERO ═══════════════════════════════════════════════════ */}
-      <Section as="section" spacing="loose" containerSize="none" className="relative min-h-screen !py-0">
+      {/* ═══ 1. HERO + ORB — Single shared background ═════════════════ */}
+      <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
+        {/* Header: absolute so it floats on top */}
         <header className="absolute inset-x-0 top-0 z-30">
           <div className="w-full mx-auto flex h-16 items-center justify-between px-5 sm:px-8 lg:px-12">
             <Link to={createPageUrl('Landing')} className="flex items-center group">
@@ -255,10 +255,11 @@ export default function Landing() {
           </div>
         </header>
 
-        <div className="relative min-h-screen w-full">
+        {/* Wavy canvas — pinned to the hero viewport area only */}
+        <div className="absolute inset-x-0 top-0 h-screen z-0 overflow-hidden">
           <WavyBackground
-            containerClassName="absolute inset-0 z-0 min-h-screen w-full"
-            className="flex min-h-screen flex-col items-center justify-center py-24 px-4 sm:px-6 lg:px-8"
+            containerClassName="absolute inset-0 w-full h-full"
+            className="w-full h-full"
             colors={['#5B5CF6', '#7c7df8', '#9d9efa']}
             backgroundFill={PURPLE_DARK}
             blur={12}
@@ -266,53 +267,57 @@ export default function Landing() {
             waveOpacity={0.38}
             waveWidth={48}
           >
-            <EtherealShadowFilter
-              color="rgba(91, 92, 246, 0.5)"
-              animation={{ scale: 80, speed: 70 }}
-              sizing="fill"
-              enabled
-            />
-            <EtherealShadow variant="absolute" opacity="hero" className="inset-0 z-0" />
-            <Container size="wide" className="relative z-10 flex flex-col items-center justify-center text-center">
-              <motion.div
-                className="w-full max-w-3xl mx-auto"
-                initial="initial"
-                animate="animate"
-                variants={HERO_STAGGER}
-              >
-                <motion.h1
-                  variants={itemUp}
-                  className="font-heading text-6xl sm:text-7xl lg:text-8xl xl:text-9xl font-bold tracking-[0.04em] sm:tracking-[0.06em] lg:tracking-[0.08em] mb-6 text-white"
-                >
-                  VOIRA
-                </motion.h1>
-                <motion.p
-                  variants={itemUp}
-                  className="font-heading text-lg sm:text-xl lg:text-2xl font-medium tracking-tight mb-3 text-white"
-                >
-                  Speak your truth. Voira refines it.
-                </motion.p>
-                <motion.div variants={itemUp} className="mb-10 h-8 flex items-center justify-center">
-                  <TextLoop interval={3} className="text-sm sm:text-base text-white/50">
-                    <span>Turn your spoken words into polished essays.</span>
-                    <span>Voira knows you and learns from you.</span>
-                    <span>From rough ideas to submission-ready answers.</span>
-                    <span>Your voice, refined — never replaced.</span>
-                  </TextLoop>
-                </motion.div>
-                <motion.div variants={itemUp} className="flex flex-wrap gap-4 justify-center">
-                  <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-                    <GetStartedButton className="h-12 bg-accent px-8 text-white shadow-sm hover:bg-accent/90 transition-colors duration-normal ease-smooth" />
-                  </Link>
-                </motion.div>
-              </motion.div>
-            </Container>
+            <div className="sr-only" />
           </WavyBackground>
         </div>
-      </Section>
+        {/* Ethereal effects — span the full section seamlessly */}
+        <EtherealShadowFilter
+          color="rgba(91, 92, 246, 0.5)"
+          animation={{ scale: 80, speed: 70 }}
+          sizing="fill"
+          enabled
+        />
+        <EtherealShadow variant="absolute" opacity="hero" className="inset-0 z-0" />
 
-      {/* ═══ 2. ORB SECTION ═══════════════════════════════════════════ */}
-      <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
+        {/* Hero content */}
+        <div className="relative z-10 flex min-h-screen flex-col items-center justify-center py-24 px-4 sm:px-6 lg:px-8">
+          <Container size="wide" className="flex flex-col items-center justify-center text-center">
+            <motion.div
+              className="w-full max-w-3xl mx-auto"
+              initial="initial"
+              animate="animate"
+              variants={HERO_STAGGER}
+            >
+              <motion.h1
+                variants={itemUp}
+                className="font-heading text-6xl sm:text-7xl lg:text-8xl xl:text-9xl font-bold tracking-[0.04em] sm:tracking-[0.06em] lg:tracking-[0.08em] mb-6 text-white"
+              >
+                VOIRA
+              </motion.h1>
+              <motion.p
+                variants={itemUp}
+                className="font-heading text-lg sm:text-xl lg:text-2xl font-medium tracking-tight mb-3 text-white"
+              >
+                Speak your truth. Voira refines it.
+              </motion.p>
+              <motion.div variants={itemUp} className="mb-10 h-8 flex items-center justify-center">
+                <TextLoop interval={3} className="text-sm sm:text-base text-white/50">
+                  <span>Turn your spoken words into polished essays.</span>
+                  <span>Voira knows you and learns from you.</span>
+                  <span>From rough ideas to submission-ready answers.</span>
+                  <span>Your voice, refined — never replaced.</span>
+                </TextLoop>
+              </motion.div>
+              <motion.div variants={itemUp} className="flex flex-wrap gap-4 justify-center">
+                <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
+                  <GetStartedButton className="h-12 bg-accent px-8 text-white shadow-sm hover:bg-accent/90 transition-colors duration-normal ease-smooth" />
+                </Link>
+              </motion.div>
+            </motion.div>
+          </Container>
+        </div>
+
+        {/* Orb content — same section, same background, no seam */}
         <div className="relative z-10 py-24 sm:py-32 lg:py-40">
           <MotionDiv
             initial={{ opacity: 0, y: 30 }}
