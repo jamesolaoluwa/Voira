@@ -431,10 +431,10 @@ export default function Landing() {
         {/* ── Feature Tabs ────────────────────────────────────────── */}
         <div className="relative z-10">
           <FeatureTabs
-            badge="Voira"
             heading="Built for moments that shape your future."
             description="Whether you're applying to college, going for a scholarship, or prepping for interviews."
             tabs={FEATURE_TABS}
+            className="pt-10 pb-20 sm:pt-14 sm:pb-28 lg:pt-16 lg:pb-32"
           />
         </div>
 

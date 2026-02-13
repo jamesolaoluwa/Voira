@@ -24,7 +24,7 @@ const itemVariants = {
  */
 export function TestimonialSection({ title, subtitle, testimonials = [] }) {
   return (
-    <section className="w-full py-20 sm:py-28">
+    <section className="w-full pt-20 pb-12 sm:pt-28 sm:pb-16">
       <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-12 text-center">
         {/* Header */}
         <motion.h2
