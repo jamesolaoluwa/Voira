@@ -10,7 +10,7 @@ import Container from '@/components/layout/Container';
 import { MotionDiv } from '@/components/ui/Motion';
 import EtherealShadow from '@/components/ui/EtherealShadow';
 import EtherealShadowFilter from '@/components/ui/EtherealShadowFilter';
-import { WavyBackground } from '@/components/ui/WavyBackground';
+import Orb from '@/components/ui/Orb';
 import { TextLoop } from '@/components/ui/TextLoop';
 import { FeatureTabs } from '@/components/ui/FeatureTabs';
 import { TestimonialSection } from '@/components/ui/TestimonialSection';
@@ -32,37 +32,37 @@ const itemUp = {
   transition: { duration: 0.7, ease: SMOOTH },
 };
 
-/* ─── Deep purple palette — seamless backgrounds ─────────────────────── */
-const PURPLE_DARK = '#0A0515';
+/* ─── Dark palette — black base for hero and scenes ──────────────────── */
+const PURPLE_DARK = '#000000';
 const PURPLE_MID = '#110C24';
 
 /* ─── Feature scenes — full-viewport background with text overlay ────── */
 const FEATURE_SCENES = [
   {
     id: 'college',
-    headline: 'From brainstorm to\npersonal statement',
-    description: 'Speak about your experiences naturally — Voira removes the fillers, sharpens your voice, and helps admissions hear the real you.',
+    headline: 'Personal statements\nfrom what you say',
+    description: 'Talk about your experience out loud. Voira removes filler words and turns it into a clear personal statement.',
     cta: 'Try Now',
     bgImage: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1920&q=80',
   },
   {
     id: 'scholarships',
-    headline: 'Scholarship essays\nthat stand out',
-    description: 'Capture your motivation in your own words, then refine without losing authenticity. Rough draft to submission-ready in minutes.',
+    headline: 'Scholarship essays\nfrom your voice',
+    description: 'Explain why you need support in your own words. Voira turns that into a clear draft you can edit.',
     cta: 'Try Now',
     bgImage: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1920&q=80',
   },
   {
     id: 'interviews',
-    headline: 'Walk into interviews\nwith confidence',
-    description: 'Practice answers out loud, get a polished version in seconds. Prepare for behavioral and situational questions with clarity.',
+    headline: 'Practice interview answers\nby speaking',
+    description: 'Practice common questions by speaking. Voira writes a clean version you can review and adjust.',
     cta: 'Try Now',
     bgImage: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=1920&q=80',
   },
   {
     id: 'career',
-    headline: 'Career prep, refined\nby your voice',
-    description: 'Whether it\'s a cover letter or an elevator pitch — speak your truth and let Voira shape it into something hiring managers remember.',
+    headline: 'Cover letters and pitches\nfrom your voice',
+    description: 'Record a short cover letter or pitch. Voira turns it into a simple, direct message for recruiters.',
     cta: 'Try Now',
     bgImage: 'https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=1920&q=80',
   },
@@ -76,8 +76,8 @@ const FEATURE_TABS = [
     label: 'Applications',
     content: {
       badge: 'College & Graduate',
-      title: 'Craft personal statements that sound like you.',
-      description: 'Voira takes your spoken ideas and transforms them into compelling essays. No more staring at a blank page — just speak, refine, and submit with confidence.',
+      title: 'Personal statements in your own voice.',
+      description: 'Talk through your story. Voira writes a first draft for your application essay so you are not starting from a blank page.',
       icon: <GraduationCap className="h-16 w-16 text-accent/30" />,
     },
   },
@@ -87,8 +87,8 @@ const FEATURE_TABS = [
     label: 'Scholarships',
     content: {
       badge: 'Financial Aid',
-      title: 'Stand out in scholarship essays.',
-      description: 'From rough motivation to polished narrative. Capture what drives you in your own words, and let Voira handle the refinement — keeping every ounce of authenticity.',
+      title: 'Simpler scholarship essays.',
+      description: 'Explain your goals out loud. Voira turns that into a clear, short essay you can adjust.',
       icon: <Award className="h-16 w-16 text-accent/30" />,
     },
   },
@@ -98,8 +98,8 @@ const FEATURE_TABS = [
     label: 'Interviews',
     content: {
       badge: 'Prep & Practice',
-      title: 'Prepare answers that land.',
-      description: 'Practice behavioral and situational questions out loud. Voira gives you a polished version in seconds so you walk into every interview with clarity and poise.',
+      title: 'Prepare clear interview answers.',
+      description: 'Practice questions by speaking. Voira gives you a written answer you can refine before you use it.',
       icon: <Mic className="h-16 w-16 text-accent/30" />,
     },
   },
@@ -109,8 +109,8 @@ const FEATURE_TABS = [
     label: 'Career Prep',
     content: {
       badge: 'Professional Growth',
-      title: 'Elevator pitches & cover letters, refined.',
-      description: 'Whether you\'re networking or applying — speak your truth and let Voira shape it into something hiring managers and recruiters remember.',
+      title: 'Cover letters and pitches from speech.',
+      description: 'Record what you want to say. Voira turns it into a clear note you can send to recruiters or contacts.',
       icon: <Sparkles className="h-16 w-16 text-accent/30" />,
     },
   },
@@ -120,28 +120,28 @@ const FEATURE_TABS = [
 const TESTIMONIALS = [
   {
     id: 1,
-    quote: 'Voira helped me turn a rambling voice note into a personal statement that got me into my dream school. It kept my voice — just made it better.',
+    quote: 'Voira turned a messy voice note into a personal statement that worked. It still sounded like me.',
     name: 'Sarah M.',
     role: 'College Freshman',
     imageSrc: 'https://images.unsplash.com/photo-1581403341630-a6e0b9d2d257?auto=format&fit=crop&w=900&q=80',
   },
   {
     id: 2,
-    quote: 'I used to freeze when writing scholarship essays. Now I just talk through my ideas and Voira does the heavy lifting. Absolute game-changer.',
+    quote: 'I used to stall when writing scholarship essays. Now I talk through my ideas and Voira gives me a draft to edit.',
     name: 'Marcus J.',
     role: 'Scholarship Recipient',
     imageSrc: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=900&q=80',
   },
   {
     id: 3,
-    quote: 'Interview prep went from stressful to smooth. I practiced out loud, got polished answers back, and walked in with real confidence.',
+    quote: 'Interview prep felt stressful before. Practicing out loud with Voira gave me clear answers I could take into the room.',
     name: 'Priya K.',
     role: 'Software Intern',
     imageSrc: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=900&q=80',
   },
   {
     id: 4,
-    quote: 'I spoke my cover letter into Voira in 3 minutes and it came back cleaner than anything I\'d spent hours typing. This is the future of writing.',
+    quote: 'Speaking for three minutes gave me a cleaner cover letter than anything I had typed on my own.',
     name: 'David L.',
     role: 'Job Seeker',
     imageSrc: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=80',
@@ -279,30 +279,16 @@ export default function Landing() {
           </div>
         </header>
 
-        {/* Wavy canvas — pinned to the hero viewport area only */}
-        <div className="absolute inset-x-0 top-0 h-screen z-0 overflow-hidden">
-          <WavyBackground
-            containerClassName="absolute inset-0 w-full h-full"
-            className="w-full h-full"
-            colors={['#5B5CF6', '#7c7df8', '#9d9efa']}
-            backgroundFill={PURPLE_DARK}
-            blur={12}
-            speed="slow"
-            waveOpacity={0.38}
-            waveWidth={48}
-            waveCenterY={0.49}
-          >
-            <div className="sr-only" />
-          </WavyBackground>
+        {/* Orb background — pinned to the hero viewport area */}
+        <div className="absolute inset-x-0 top-0 h-screen z-0 overflow-hidden bg-black">
+          <Orb
+            hoverIntensity={0.52}
+            rotateOnHover
+            hue={0}
+            forceHoverState={false}
+            backgroundColor="#000000"
+          />
         </div>
-        {/* Ethereal effects — span the full section seamlessly */}
-        <EtherealShadowFilter
-          color="rgba(193, 53, 135, 0.5)"
-          animation={{ scale: 80, speed: 70 }}
-          sizing="fill"
-          enabled
-        />
-        <EtherealShadow variant="absolute" opacity="hero" className="inset-0 z-0" />
 
         {/* Hero content — floats up on scroll for depth */}
         <div className="relative z-10 flex min-h-screen flex-col items-center justify-center py-24 px-4 sm:px-6 lg:px-8">
@@ -324,14 +310,14 @@ export default function Landing() {
                 variants={itemUp}
                 className="font-heading text-lg sm:text-xl lg:text-2xl font-medium tracking-tight mb-3 text-white"
               >
-                Speak your truth. Voira refines it.
+                Say it out loud. Voira turns it into clear writing.
               </motion.p>
               <motion.div variants={itemUp} className="mb-10 h-8 flex items-center justify-center">
                 <TextLoop interval={3} className="text-sm sm:text-base text-white/50">
-                  <span>Turn your spoken words into polished essays.</span>
-                  <span>Voira knows you and learns from you.</span>
-                  <span>From rough ideas to submission-ready answers.</span>
-                  <span>Your voice, refined — never replaced.</span>
+                  <span>Talk through your answer. Voira writes it up.</span>
+                  <span>Keeps your tone and fixes the wording.</span>
+                  <span>Good for essays, prompts, and short answers.</span>
+                  <span>Made for students and early professionals.</span>
                 </TextLoop>
               </motion.div>
               <motion.div variants={itemUp} className="flex flex-wrap gap-4 justify-center">
@@ -392,11 +378,11 @@ export default function Landing() {
               </div>
             </motion.div>
             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-5 text-white">
-              Speak. Refine. Shine.
+              Talk first. Edit later.
             </h2>
             <p className="text-lg max-w-xl text-white/50 leading-relaxed">
-              Voira turns your raw spoken words into clear, confident copy — without changing your voice.
-              Less filler, more impact.
+              You speak normally. Voira turns it into a clear draft for essays, forms, and emails.
+              It keeps your style and cuts out filler words.
             </p>
           </MotionDiv>
         </div>
@@ -407,23 +393,27 @@ export default function Landing() {
         <CinematicScene key={scene.id} scene={scene} />
       ))}
 
-      {/* ═══ 4–6. TESTIMONIALS → FEATURE TABS → CTA → FOOTER
-           Shared ethereal background for consistent color throughout ═══ */}
+      {/* ═══ 4–6. TESTIMONIALS → FEATURE TABS → CTA → FOOTER ═══ */}
       <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
-        {/* Shared ethereal effects — match hero wave color */}
+        {/* Shared ethereal effects — darker, black-focused background */}
         <EtherealShadowFilter
-          color="rgba(193, 53, 135, 0.35)"
+          color="rgba(0, 0, 0, 0.6)"
           animation={{ scale: 60, speed: 50 }}
           sizing="fill"
           enabled
         />
-        <EtherealShadow variant="absolute" opacity="hero" className="inset-0 z-0" color="rgba(193, 53, 135, 0.4)" />
+        <EtherealShadow
+          variant="absolute"
+          opacity="hero"
+          className="inset-0 z-0"
+          color="rgba(0, 0, 0, 0.7)"
+        />
 
         {/* ── Testimonials ────────────────────────────────────────── */}
         <div className="relative z-10">
           <TestimonialSection
             title="Hear from students like you"
-            subtitle="Real stories from real people who used Voira to find their voice."
+            subtitle="Stories from students and early professionals using Voira."
             testimonials={TESTIMONIALS}
           />
         </div>
@@ -431,8 +421,8 @@ export default function Landing() {
         {/* ── Feature Tabs ────────────────────────────────────────── */}
         <div className="relative z-10">
           <FeatureTabs
-            heading="Built for moments that shape your future."
-            description="Whether you're applying to college, going for a scholarship, or prepping for interviews."
+            heading="Built for essays, prompts, and interviews."
+            description="Use Voira for college applications, scholarships, interviews, and early career steps."
             tabs={FEATURE_TABS}
             className="pt-10 pb-20 sm:pt-14 sm:pb-28 lg:pt-16 lg:pb-32"
           />
@@ -448,13 +438,13 @@ export default function Landing() {
             className="text-center"
           >
             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-snug">
-              Ready to complete your
+              Ready to work on your
             </h2>
             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-snug mt-2">
               next application?
             </h2>
             <p className="mt-6 text-xl sm:text-2xl font-medium text-accent">
-              Voira's got you.
+              Use Voira to talk first, then edit the draft.
             </p>
           </MotionDiv>
           <MotionDiv
