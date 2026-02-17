@@ -56,7 +56,7 @@ export function FeatureTabs({
             ))}
           </TabsList>
 
-          <div className="mx-auto mt-8 max-w-screen-xl rounded-2xl border border-border bg-card/70 p-6 lg:p-14">
+          <div className="mx-auto mt-8 max-w-screen-xl">
             {tabs.map((tab) => (
               <TabsContent
                 key={tab.value}

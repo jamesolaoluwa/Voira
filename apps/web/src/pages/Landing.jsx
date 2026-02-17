@@ -14,6 +14,8 @@ import Orb from '@/components/ui/Orb';
 import { TextLoop } from '@/components/ui/TextLoop';
 import { FeatureTabs } from '@/components/ui/FeatureTabs';
 import { TestimonialSection } from '@/components/ui/TestimonialSection';
+import { ArcGalleryHero } from '@/components/ui/ArcGalleryHero';
+import { ScrollExpandMedia } from '@/components/ui/ScrollExpandMedia';
 import {
   ArrowRight,
   GraduationCap,
@@ -147,6 +149,43 @@ const TESTIMONIALS = [
     imageSrc: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=80',
   },
 ];
+
+const APPLICATION_IMAGES = [
+  'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1513258496099-48168024aec0?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1526498460520-4c246339dccb?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1545239351-1141bd82e8a6?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=800&q=80',
+  'https://images.unsplash.com/photo-1553877522-43269d4ea984?auto=format&fit=crop&w=800&q=80',
+];
+
+const STUDENT_SECTION = {
+  mediaType: 'image',
+  mediaSrc:
+    'https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?auto=format&fit=crop&w=1600&q=80',
+  background:
+    'https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?auto=format&fit=crop&w=1920&q=80',
+  title: 'Voira for students',
+  date: 'Essays, prompts, and applications',
+  scrollToExpand: 'Scroll to see how Voira helps with school work.',
+};
+
+const PROFESSIONAL_SECTION = {
+  mediaType: 'image',
+  mediaSrc:
+    'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1600&q=80',
+  background:
+    'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1920&q=80',
+  title: 'Voira for early professionals',
+  date: 'Interviews, emails, and pitches',
+  scrollToExpand: 'Scroll to see how Voira helps at work.',
+};
 
 /* ─── Full-viewport cinematic feature scene with strong parallax ──────── */
 function CinematicScene({ scene }) {
@@ -388,10 +427,50 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ═══ 3. CINEMATIC FEATURE SCENES — each full viewport ═════════ */}
-      {FEATURE_SCENES.map((scene) => (
-        <CinematicScene key={scene.id} scene={scene} />
-      ))}
+      {/* ═══ 3. FEATURE SECTIONS — scroll expansion for use cases ═══════ */}
+      <ScrollExpandMedia
+        mediaType={STUDENT_SECTION.mediaType}
+        mediaSrc={STUDENT_SECTION.mediaSrc}
+        bgImageSrc={STUDENT_SECTION.background}
+        title={STUDENT_SECTION.title}
+        date={STUDENT_SECTION.date}
+        scrollToExpand={STUDENT_SECTION.scrollToExpand}
+        textBlend
+        className="pb-12"
+      >
+        <div className="max-w-3xl mx-auto text-left space-y-4 text-white/80">
+          <p className="text-lg">
+            Speak through your answers for personal statements, short responses, and forms.
+          </p>
+          <ul className="list-disc list-inside space-y-2 text-base">
+            <li>Record ideas for application essays instead of typing from scratch.</li>
+            <li>Use Voira to draft scholarship responses in your own words.</li>
+            <li>Turn rough notes into cleaner study summaries and reflections.</li>
+          </ul>
+        </div>
+      </ScrollExpandMedia>
+
+      <ScrollExpandMedia
+        mediaType={PROFESSIONAL_SECTION.mediaType}
+        mediaSrc={PROFESSIONAL_SECTION.mediaSrc}
+        bgImageSrc={PROFESSIONAL_SECTION.background}
+        title={PROFESSIONAL_SECTION.title}
+        date={PROFESSIONAL_SECTION.date}
+        scrollToExpand={PROFESSIONAL_SECTION.scrollToExpand}
+        textBlend
+        className="pt-12 pb-28"
+      >
+        <div className="max-w-3xl mx-auto text-left space-y-4 text-white/80">
+          <p className="text-lg">
+            Use your voice to draft messages for work and job search.
+          </p>
+          <ul className="list-disc list-inside space-y-2 text-base">
+            <li>Practice interview answers and get them back as clear bullet points.</li>
+            <li>Draft outreach emails and LinkedIn messages by speaking first.</li>
+            <li>Shape short pitches and intros without staring at a blank page.</li>
+          </ul>
+        </div>
+      </ScrollExpandMedia>
 
       {/* ═══ 4–6. TESTIMONIALS → FEATURE TABS → CTA → FOOTER ═══ */}
       <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
@@ -424,18 +503,19 @@ export default function Landing() {
             heading="Built for essays, prompts, and interviews."
             description="Use Voira for college applications, scholarships, interviews, and early career steps."
             tabs={FEATURE_TABS}
-            className="pt-10 pb-20 sm:pt-14 sm:pb-28 lg:pt-16 lg:pb-32"
+            className="pt-10 pb-12 sm:pt-14 sm:pb-20 lg:pt-16 lg:pb-24"
           />
         </div>
 
-        {/* ── Final CTA ───────────────────────────────────────────── */}
-        <div className="relative z-10 mx-auto max-w-3xl px-5 sm:px-8 lg:px-12 py-28 sm:py-36 lg:py-48">
+        {/* ── Final CTA with arc gallery ─────────────────────────── */}
+        <div className="relative z-10 mx-auto max-w-5xl px-5 sm:px-8 lg:px-12 pt-16 pb-24 sm:pt-20 sm:pb-28 lg:pt-24 lg:pb-32">
+          <ArcGalleryHero images={APPLICATION_IMAGES} className="mb-4 sm:mb-2 lg:mb-0" />
           <MotionDiv
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, amount: 0.3 }}
             transition={{ duration: 0.9, ease: SMOOTH }}
-            className="text-center"
+            className="text-center -mt-10 sm:-mt-14 lg:-mt-16 transform sm:translate-x-4 lg:translate-x-6"
           >
             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-snug">
               Ready to work on your
