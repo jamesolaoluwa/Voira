@@ -438,11 +438,14 @@ export default function Landing() {
         textBlend
         className="pb-12"
       >
-        <div className="max-w-3xl mx-auto text-left space-y-4 text-white/80">
-          <p className="text-lg">
-            Speak through your answers for personal statements, short responses, and forms.
+        <div className="max-w-3xl mx-auto text-left space-y-6">
+          <h3 className="text-2xl sm:text-3xl font-bold text-white">
+            How Voira helps students
+          </h3>
+          <p className="text-lg sm:text-xl text-white/90 leading-relaxed">
+            Speak through your answers for personal statements, short responses, and forms. Voira turns your spoken words into clear drafts you can edit.
           </p>
-          <ul className="list-disc list-inside space-y-2 text-base">
+          <ul className="list-disc list-inside space-y-3 text-base sm:text-lg text-white/80">
             <li>Record ideas for application essays instead of typing from scratch.</li>
             <li>Use Voira to draft scholarship responses in your own words.</li>
             <li>Turn rough notes into cleaner study summaries and reflections.</li>
@@ -460,11 +463,14 @@ export default function Landing() {
         textBlend
         className="pt-12 pb-28"
       >
-        <div className="max-w-3xl mx-auto text-left space-y-4 text-white/80">
-          <p className="text-lg">
-            Use your voice to draft messages for work and job search.
+        <div className="max-w-3xl mx-auto text-left space-y-6">
+          <h3 className="text-2xl sm:text-3xl font-bold text-white">
+            How Voira helps early professionals
+          </h3>
+          <p className="text-lg sm:text-xl text-white/90 leading-relaxed">
+            Use your voice to draft messages for work and job search. Voira turns what you say into clear, professional text.
           </p>
-          <ul className="list-disc list-inside space-y-2 text-base">
+          <ul className="list-disc list-inside space-y-3 text-base sm:text-lg text-white/80">
             <li>Practice interview answers and get them back as clear bullet points.</li>
             <li>Draft outreach emails and LinkedIn messages by speaking first.</li>
             <li>Shape short pitches and intros without staring at a blank page.</li>
@@ -491,7 +497,7 @@ export default function Landing() {
         {/* ── Testimonials ────────────────────────────────────────── */}
         <div className="relative z-10">
           <TestimonialSection
-            title="Hear from students like you"
+            title="Join the Founding 1000"
             subtitle="Stories from students and early professionals using Voira."
             testimonials={TESTIMONIALS}
           />
@@ -500,7 +506,13 @@ export default function Landing() {
         {/* ── Feature Tabs ────────────────────────────────────────── */}
         <div className="relative z-10">
           <FeatureTabs
-            heading="Built for essays, prompts, and interviews."
+            heading={
+              <span>
+                Built for essays, prompts,
+                <br className="hidden sm:block" />
+                <span className="block mt-2 sm:mt-3">and interviews.</span>
+              </span>
+            }
             description="Use Voira for college applications, scholarships, interviews, and early career steps."
             tabs={FEATURE_TABS}
             className="pt-10 pb-12 sm:pt-14 sm:pb-20 lg:pt-16 lg:pb-24"

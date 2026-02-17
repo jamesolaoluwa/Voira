@@ -36,10 +36,11 @@ export function ScrollExpandMedia({
       const vh = viewportHeight;
 
       // We want:
-      // - progress = 0 when media center is around the middle / lower-middle
+      // - progress = 0 when media center is higher up (closing starts earlier)
       // - progress = 1 when media center is nearer the top
-      const closedY = vh * 0.55; // image center at or below this => fully closed
-      const openY = vh * 0.30;   // image center at or above this => fully open
+      // Higher closedY = closing starts earlier when scrolling up
+      const closedY = vh * 0.75; // image center at or below this => fully closed (was 0.65)
+      const openY = vh * 0.20;   // image center at or above this => fully open
 
       let target;
       if (mediaCenter >= closedY) {
@@ -51,10 +52,10 @@ export function ScrollExpandMedia({
       }
 
       // Smooth interpolation:
-      // - opening (target > prev) is slower
-      // - closing (target < prev) is faster, so it finishes before leaving view
+      // - opening (target > prev) is much slower for prolonged easing
+      // - closing (target < prev) is faster and more responsive, so it finishes earlier
       setScrollProgress((prev) => {
-        const speed = target < prev ? 0.45 : 0.18;
+        const speed = target < prev ? 0.55 : 0.12; // Faster closing (was 0.45)
         return prev + (target - prev) * speed;
       });
       setShowContent(target >= 0.9);
@@ -74,8 +75,8 @@ export function ScrollExpandMedia({
       // Get current progress to decide if we should slow scroll
       const mediaRect = mediaRef.current.getBoundingClientRect();
       const mediaCenter = (mediaRect.top + mediaRect.bottom) / 2;
-      const closedY = vh * 0.55;
-      const openY = vh * 0.30;
+      const closedY = vh * 0.75; // Match the threshold in updateProgressFromScroll
+      const openY = vh * 0.20;
 
       let currentTarget;
       if (mediaCenter >= closedY) {
@@ -91,9 +92,9 @@ export function ScrollExpandMedia({
         return; // Normal scroll
       }
 
-      // Slow down scroll while animating (about 30% of normal speed)
+      // Slow down scroll while animating (about 15% of normal speed for more prolonged easing)
       e.preventDefault();
-      const scrollDelta = e.deltaY * 0.3;
+      const scrollDelta = e.deltaY * 0.15;
       window.scrollBy(0, scrollDelta);
 
       // Update progress after scroll
@@ -257,7 +258,7 @@ export function ScrollExpandMedia({
             </div>
 
             <motion.section
-              className="flex flex-col w-full px-8 py-10 md:px-16 lg:py-20"
+              className="flex flex-col w-full px-8 py-12 md:px-16 md:py-16 lg:px-20 lg:py-24 bg-black/30 backdrop-blur-sm"
               initial={{ opacity: 0 }}
               animate={{ opacity: showContent ? 1 : 0 }}
               transition={{ duration: 0.7 }}
