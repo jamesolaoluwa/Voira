@@ -20,6 +20,8 @@ export function ScrollExpandMedia({
 
   const sectionRef = useRef(null);
   const mediaRef = useRef(null);
+  const videoRef = useRef(null);
+  const wasExpandedRef = useRef(false);
 
   useEffect(() => {
     setScrollProgress(0);
@@ -39,8 +41,8 @@ export function ScrollExpandMedia({
       // We want:
       // - progress = 0 when media center is higher up (closing starts earlier)
       // - progress = 1 when media center is nearer the top
-      // Higher closedY = closing starts earlier when scrolling up
-      const closedY = vh * 0.75; // image center at or below this => fully closed (was 0.65)
+      // Higher closedY = expansion starts later when scrolling down
+      const closedY = vh * 0.88; // image center at or below this => fully closed
       const openY = vh * 0.20;   // image center at or above this => fully open
 
       let target;
@@ -76,7 +78,7 @@ export function ScrollExpandMedia({
       // Get current progress to decide if we should slow scroll
       const mediaRect = mediaRef.current.getBoundingClientRect();
       const mediaCenter = (mediaRect.top + mediaRect.bottom) / 2;
-      const closedY = vh * 0.75; // Match the threshold in updateProgressFromScroll
+      const closedY = vh * 0.88; // Match the threshold in updateProgressFromScroll
       const openY = vh * 0.20;
 
       let currentTarget;
@@ -125,9 +127,36 @@ export function ScrollExpandMedia({
     return () => window.removeEventListener('resize', checkIfMobile);
   }, []);
 
+  // Control video playback based on scroll progress
+  useEffect(() => {
+    if (mediaType === 'video' && videoRef.current) {
+      const isExpanded = scrollProgress >= 0.3;
+      
+      if (isExpanded) {
+        // Reset to beginning when transitioning from closed to expanded
+        if (!wasExpandedRef.current) {
+          videoRef.current.currentTime = 0;
+        }
+        // Start playing when expanded
+        videoRef.current.play().catch(() => {
+          // Ignore autoplay errors
+        });
+        wasExpandedRef.current = true;
+      } else {
+        // Pause when closed
+        videoRef.current.pause();
+        videoRef.current.currentTime = 0; // Reset to beginning
+        wasExpandedRef.current = false;
+      }
+    }
+  }, [scrollProgress, mediaType]);
+
   const mediaWidth = 300 + scrollProgress * (isMobileState ? 650 : 1250);
   const mediaHeight = 400 + scrollProgress * (isMobileState ? 200 : 400);
-  const textTranslateX = scrollProgress * (isMobileState ? 180 : 150);
+  // Text animation curve - higher exponent (4.0) means slower start, faster acceleration
+  const textProgress = Math.pow(scrollProgress, 4.0);
+  // Mobile: 180vw, Desktop: 370vw (maintains ~2:1 ratio for proportional movement)
+  const textTranslateX = textProgress * (isMobileState ? 180 : 370); 
 
   const firstWord = title ? title.split(' ')[0] : '';
   const restOfTitle = title ? title.split(' ').slice(1).join(' ') : '';
@@ -180,16 +209,34 @@ export function ScrollExpandMedia({
               >
                 {mediaType === 'video' ? (
                   <div className="relative w-full h-full pointer-events-none">
-                    <video
+                    {/* Show avatar image when closed (scrollProgress < 0.3) */}
+                    {posterSrc && (
+                      <motion.img
+                        src={posterSrc}
+                        alt={title || 'Media content'}
+                        className="absolute inset-0 w-full h-full object-cover rounded-xl"
+                        initial={{ opacity: 1 }}
+                        animate={{ opacity: scrollProgress < 0.3 ? 1 : 0 }}
+                        transition={{ duration: 0.3 }}
+                        style={{ zIndex: scrollProgress < 0.3 ? 2 : 0 }}
+                      />
+                    )}
+                    
+                    {/* Video element - always rendered but controlled */}
+                    <motion.video
+                      ref={videoRef}
                       src={mediaSrc}
-                      poster={posterSrc}
-                      autoPlay
                       muted
                       loop
                       playsInline
                       preload="auto"
-                      className="w-full h-full object-cover rounded-xl"
+                      className="absolute inset-0 w-full h-full object-cover rounded-xl"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: scrollProgress >= 0.3 ? 1 : 0 }}
+                      transition={{ duration: 0.3 }}
+                      style={{ zIndex: scrollProgress >= 0.3 ? 1 : 0 }}
                     />
+                    
                     <div
                       className="absolute inset-0 z-10"
                       style={{ pointerEvents: 'none' }}
