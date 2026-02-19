@@ -6,6 +6,7 @@ export function ScrollExpandMedia({
   mediaSrc,
   posterSrc,
   bgImageSrc,
+  bgColor,
   title,
   date,
   scrollToExpand,
@@ -147,12 +148,21 @@ export function ScrollExpandMedia({
             animate={{ opacity: 1 - scrollProgress }}
             transition={{ duration: 0.1 }}
           >
-            <img
-              src={bgImageSrc}
-              alt="Background"
-              className="w-screen h-screen object-cover object-center"
-            />
-            <div className="absolute inset-0 bg-black/40" />
+            {bgColor ? (
+              <div
+                className="absolute inset-0 w-full h-full"
+                style={{ backgroundColor: bgColor }}
+              />
+            ) : bgImageSrc ? (
+              <>
+                <img
+                  src={bgImageSrc}
+                  alt="Background"
+                  className="w-screen h-screen object-cover object-center"
+                />
+                <div className="absolute inset-0 bg-black/40" />
+              </>
+            ) : null}
           </motion.div>
 
           <div className="container mx-auto flex flex-col items-center justify-start relative z-10">

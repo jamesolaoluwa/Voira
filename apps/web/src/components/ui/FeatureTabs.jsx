@@ -85,7 +85,7 @@ export function FeatureTabs({
                   )}
                 </div>
                 {/* Image side */}
-                <div className="relative w-full overflow-hidden rounded-xl border border-border bg-muted/30" style={{ aspectRatio: '4/3' }}>
+                <div className="relative w-full max-w-md mx-auto overflow-hidden rounded-xl border border-border bg-muted/30" style={{ aspectRatio: '4/3' }}>
                   {tab.content.imageSrc ? (
                     <img
                       src={tab.content.imageSrc}

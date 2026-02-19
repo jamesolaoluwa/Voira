@@ -81,6 +81,8 @@ const FEATURE_TABS = [
       title: 'Personal statements in your own voice.',
       description: 'Talk through your story. Voira writes a first draft for your application essay so you are not starting from a blank page.',
       icon: <GraduationCap className="h-16 w-16 text-accent/30" />,
+      imageSrc: "/assets/voira-media/Anna'sAvatar.jpg",
+      imageAlt: 'Anna',
     },
   },
   {
@@ -92,6 +94,8 @@ const FEATURE_TABS = [
       title: 'Simpler scholarship essays.',
       description: 'Explain your goals out loud. Voira turns that into a clear, short essay you can adjust.',
       icon: <Award className="h-16 w-16 text-accent/30" />,
+      imageSrc: "/assets/voira-media/AnnaScholarship.jpg",
+      imageAlt: 'Anna',
     },
   },
   {
@@ -166,11 +170,10 @@ const APPLICATION_IMAGES = [
 ];
 
 const STUDENT_SECTION = {
-  mediaType: 'image',
-  mediaSrc:
-    'https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?auto=format&fit=crop&w=1600&q=80',
-  background:
-    'https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?auto=format&fit=crop&w=1920&q=80',
+  mediaType: 'video',
+  mediaSrc: "/assets/voira-media/AnnaVideoVoira.mp4",
+  posterSrc: "/assets/voira-media/Anna'sAvatar.jpg",
+  bgColor: '#BDB7A9',
   title: 'Voira for students',
   date: 'Essays, prompts, and applications',
   scrollToExpand: 'Scroll to see how Voira helps with school work.',
@@ -431,7 +434,8 @@ export default function Landing() {
       <ScrollExpandMedia
         mediaType={STUDENT_SECTION.mediaType}
         mediaSrc={STUDENT_SECTION.mediaSrc}
-        bgImageSrc={STUDENT_SECTION.background}
+        posterSrc={STUDENT_SECTION.posterSrc}
+        bgColor={STUDENT_SECTION.bgColor}
         title={STUDENT_SECTION.title}
         date={STUDENT_SECTION.date}
         scrollToExpand={STUDENT_SECTION.scrollToExpand}
