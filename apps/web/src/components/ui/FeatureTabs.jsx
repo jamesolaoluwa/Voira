@@ -84,13 +84,13 @@ export function FeatureTabs({
                     </a>
                   )}
                 </div>
-                {/* Image side */}
+                {/* Image side — same dimensions for all tabs (max-w-md, 4/3) */}
                 <div className="relative w-full max-w-md mx-auto overflow-hidden rounded-xl border border-border bg-muted/30" style={{ aspectRatio: '4/3' }}>
                   {tab.content.imageSrc ? (
                     <img
                       src={tab.content.imageSrc}
                       alt={tab.content.imageAlt || ''}
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-cover object-center"
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center">

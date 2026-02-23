@@ -151,7 +151,8 @@ export function ScrollExpandMedia({
     }
   }, [scrollProgress, mediaType]);
 
-  const mediaWidth = 300 + scrollProgress * (isMobileState ? 650 : 1250);
+  // Start wider so avatar doesn't appear too small initially
+  const mediaWidth = (isMobileState ? 400 : 500) + scrollProgress * (isMobileState ? 550 : 1050);
   const mediaHeight = 400 + scrollProgress * (isMobileState ? 200 : 400);
   // Text animation curve - higher exponent (4.0) means slower start, faster acceleration
   const textProgress = Math.pow(scrollProgress, 4.0);
@@ -290,6 +291,7 @@ export function ScrollExpandMedia({
                 className={`flex items-center justify-center text-center gap-4 w-full relative z-10 transition-none flex-col ${
                   textBlend ? 'mix-blend-difference' : 'mix-blend-normal'
                 }`}
+                style={{ transform: 'translateY(2rem)' }}
               >
                 <motion.h2
                   className="text-4xl md:text-5xl lg:text-6xl font-bold text-blue-200 transition-none"

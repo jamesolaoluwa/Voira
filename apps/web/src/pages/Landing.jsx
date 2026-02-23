@@ -107,6 +107,8 @@ const FEATURE_TABS = [
       title: 'Prepare clear interview answers.',
       description: 'Practice questions by speaking. Voira gives you a written answer you can refine before you use it.',
       icon: <Mic className="h-16 w-16 text-accent/30" />,
+      imageSrc: "/assets/voira-media/JakeUsingVoira.jpg",
+      imageAlt: 'Jake using Voira',
     },
   },
   {
