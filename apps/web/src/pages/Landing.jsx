@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion, useScroll, useTransform } from 'framer-motion';
@@ -16,6 +16,7 @@ import { FeatureTabs } from '@/components/ui/FeatureTabs';
 import { TestimonialSection } from '@/components/ui/TestimonialSection';
 import { ArcGalleryHero } from '@/components/ui/ArcGalleryHero';
 import { ScrollExpandMedia } from '@/components/ui/ScrollExpandMedia';
+import { useScramble } from 'use-scramble';
 import {
   ArrowRight,
   GraduationCap,
@@ -191,6 +192,70 @@ const PROFESSIONAL_SECTION = {
   date: 'Interviews, emails, and pitches',
   scrollToExpand: 'Scroll to see how Voira helps at work.',
 };
+
+/* ─── Built for [scramble] heading — runs once in this order: essays, prompts, interviews, then everything applications ──────── */
+const BUILT_FOR_PHRASES = [
+  'essays',
+  'prompts',
+  'interviews',
+  'everything applications.',
+];
+
+function BuiltForScrambleHeading() {
+  const [index, setIndex] = useState(0);
+  const indexRef = useRef(0);
+  const timeoutRef = useRef(null);
+  indexRef.current = index;
+  const text = BUILT_FOR_PHRASES[index];
+
+  // Only run scramble when index >= 1 (prompts, interviews, everything applications.)
+  const isLastPhrase = index === BUILT_FOR_PHRASES.length - 1;
+  const { ref } = useScramble({
+    text: index > 0 ? text : '',
+    speed: isLastPhrase ? 0.45 : 0.25,
+    tick: isLastPhrase ? 1 : 3,
+    step: isLastPhrase ? 2 : 1,
+    scramble: isLastPhrase ? 4 : 5,
+    seed: 2,
+    chance: 0.85,
+    playOnMount: true,
+    ignore: [' '],
+    onAnimationEnd: () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      const current = indexRef.current;
+      if (current >= BUILT_FOR_PHRASES.length - 1) return;
+      timeoutRef.current = setTimeout(() => setIndex(current + 1), 1200);
+    },
+  });
+
+  // Show "essays" as static text for 2s, then advance to scramble "prompts"
+  useEffect(() => {
+    if (index !== 0) return;
+    const t = setTimeout(() => setIndex(1), 7000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  const phrase = BUILT_FOR_PHRASES[index];
+  const needsPeriod = index === 0 || !phrase.endsWith('.');
+
+  return (
+    <span>
+      Built for{' '}
+      {index === 0 ? (
+        <span>essays</span>
+      ) : (
+        <span ref={ref} />
+      )}
+      {needsPeriod ? '.' : ''}
+    </span>
+  );
+}
 
 /* ─── Full-viewport cinematic feature scene with strong parallax ──────── */
 function CinematicScene({ scene }) {
@@ -512,13 +577,7 @@ export default function Landing() {
         {/* ── Feature Tabs ────────────────────────────────────────── */}
         <div className="relative z-10">
           <FeatureTabs
-            heading={
-              <span>
-                Built for essays, prompts,
-                <br className="hidden sm:block" />
-                <span className="block mt-2 sm:mt-3">and interviews.</span>
-              </span>
-            }
+            heading={<BuiltForScrambleHeading />}
             description="Use Voira for college applications, scholarships, interviews, and early career steps."
             tabs={FEATURE_TABS}
             className="pt-10 pb-12 sm:pt-14 sm:pb-20 lg:pt-16 lg:pb-24"
