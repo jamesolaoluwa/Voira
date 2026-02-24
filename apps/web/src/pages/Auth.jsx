@@ -84,7 +84,10 @@ export default function Auth() {
           authInFlightRef.current = false;
           return;
         }
-        // If we got a session, let the useEffect redirect us
+        // Immediate session (no confirmation): reset before redirect so returning to this page doesn't block future sign-in
+        authInFlightRef.current = false;
+        setIsLoading(false);
+        // Redirect will happen via useEffect when session is set
       } else {
         console.log('[Auth] Calling signIn...');
         const result = await auth.signIn(normalizedEmail, password);
