@@ -43,7 +43,9 @@ function buildFallbackUser(session) {
     id: session.user.id,
     email: session.user.email,
     full_name: session.user.user_metadata?.full_name || 'User',
-    role: session.user.user_metadata?.role || 'free_user',
+    // Role in fallback is ALWAYS "free_user".
+    // Backend defines user_profiles.role as the only auth source; user_metadata.role is legacy.
+    role: 'free_user',
     // Default credits for fallback - will be updated when backend is available
     credits_remaining: 10,
     monthly_credit_allowance: 10,

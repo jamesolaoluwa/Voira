@@ -105,6 +105,9 @@ export default function Auth() {
               if (currentSession) {
                 console.log('[Auth] Timeout fallback: session found, navigating');
                 navigate('/home', { replace: true });
+                // Authentication succeeded; clear in-flight flag for consistency
+                authInFlightRef.current = false;
+                setIsLoading(false);
               } else {
                 console.warn('[Auth] Timeout fallback: session still not established');
                 setError('Sign-in took too long. Please try again.');
