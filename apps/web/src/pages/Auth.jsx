@@ -116,6 +116,13 @@ export default function Auth() {
               }
             }
           }, AUTH_TIMEOUT_MS);
+        } else {
+          // Edge case: signIn returned without throwing but no session present.
+          // Reset loading state so the user isn't stuck indefinitely.
+          console.warn('[Auth] signIn completed without session; resetting state');
+          setError('Sign-in did not complete. Please try again.');
+          setIsLoading(false);
+          authInFlightRef.current = false;
         }
       }
       // Don't navigate here - let useEffect handle it when session updates

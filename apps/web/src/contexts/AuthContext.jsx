@@ -122,7 +122,8 @@ export function AuthProvider({ children }) {
     let mounted = true;
 
     // Helper to process session and fetch profile
-    async function processSession(newSession) {
+    // markInitial indicates this call is from the initial getSession() bootstrap.
+    async function processSession(newSession, markInitial = false) {
       if (!mounted) return;
       
       try {
@@ -153,9 +154,13 @@ export function AuthProvider({ children }) {
           setSession(null);
         }
       } finally {
-        if (mounted) {
-          initialLoadCompleteRef.current = true;
-          setIsLoading(false);
+        if (mounted && !initialLoadCompleteRef.current) {
+          // Consider initial load complete when we either processed a real session user
+          // or explicitly came from the initial getSession() bootstrap.
+          if (newSession?.user || markInitial) {
+            initialLoadCompleteRef.current = true;
+            setIsLoading(false);
+          }
         }
       }
     }
@@ -172,7 +177,7 @@ export function AuthProvider({ children }) {
       console.debug('[AuthContext] Initial getSession:', !!initialSession);
       // Only process if we haven't already completed initial load
       if (mounted && !initialLoadCompleteRef.current) {
-        await processSession(initialSession);
+        await processSession(initialSession, true);
       }
     }).catch((e) => {
       console.error('[AuthContext] getSession failed:', e);
