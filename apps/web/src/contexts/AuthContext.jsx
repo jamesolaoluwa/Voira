@@ -70,7 +70,7 @@ function withTimeout(promise, ms, errorMsg) {
 async function fetchUserProfile(session) {
   if (!session?.access_token) {
     console.debug('[AuthContext] No access token, skipping /auth/me');
-    return null;
+    return session?.user ? buildFallbackUser(session) : null;
   }
   
   try {
@@ -133,7 +133,10 @@ export function AuthProvider({ children }) {
           if (sessionId !== lastFetchedSessionIdRef.current) {
             lastFetchedSessionIdRef.current = sessionId;
             const profile = await fetchUserProfile(newSession);
-            if (mounted) setUser(profile);
+            // Guard against races: only apply if this sessionId is still current
+            if (mounted && lastFetchedSessionIdRef.current === sessionId) {
+              setUser(profile);
+            }
           }
         } else {
           lastFetchedSessionIdRef.current = null;
