@@ -18,20 +18,14 @@ See: https://docs.python.org/3/library/unittest.mock.html#where-to-patch
 =============================================================================
 """
 import pytest
-from fastapi.testclient import TestClient
 from unittest.mock import patch, Mock
-import sys
-import os
 from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'apps', 'api'))
 from main import app
 from auth import get_active_user  # Sessions use get_active_user, not get_current_user
 
-client = TestClient(app)
 
-
-def test_create_session_requires_auth():
+def test_create_session_requires_auth(client):
     """Test that POST /sessions requires authentication."""
     response = client.post("/sessions", json={
         "title": "Test Session",
@@ -41,7 +35,7 @@ def test_create_session_requires_auth():
     assert response.status_code == 403
 
 
-def test_create_session_enforces_credits():
+def test_create_session_enforces_credits(client):
     """Test that POST /sessions enforces credits."""
     mock_user = {
         "id": "test-user-id",
@@ -67,7 +61,7 @@ def test_create_session_enforces_credits():
     app.dependency_overrides.clear()
 
 
-def test_create_session_enforces_ownership():
+def test_create_session_enforces_ownership(client):
     """Test that sessions are created with correct user_id."""
     mock_user = {
         "id": "test-user-id",
@@ -108,7 +102,7 @@ def test_create_session_enforces_ownership():
     app.dependency_overrides.clear()
 
 
-def test_list_sessions_enforces_ownership():
+def test_list_sessions_enforces_ownership(client):
     """Test that GET /sessions only returns user's own sessions."""
     mock_user = {
         "id": "test-user-id",
@@ -146,7 +140,7 @@ def test_list_sessions_enforces_ownership():
     app.dependency_overrides.clear()
 
 
-def test_admin_bypasses_credits():
+def test_admin_bypasses_credits(client):
     """Test that admins bypass credit checks."""
     mock_admin = {
         "id": "admin-id",

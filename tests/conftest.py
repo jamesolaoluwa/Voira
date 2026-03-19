@@ -33,14 +33,28 @@ import sys
 import os
 from unittest.mock import patch, AsyncMock, MagicMock
 
+# =============================================================================
+# HERMETIC TEST ENVIRONMENT (no real secrets required)
+# =============================================================================
+# The FastAPI app performs startup validation requiring certain env vars.
+# Tests should run in CI/clean machines without needing a real apps/api/.env.
+os.environ.setdefault("ENV", "test")
+os.environ.setdefault("SUPABASE_URL", "https://example.invalid")
+# Supabase client validates the API key format; use JWT-shaped placeholders.
+os.environ.setdefault(
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.test_service_role_signature",
+)
+os.environ.setdefault(
+    "SUPABASE_ANON_KEY",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.test_anon_signature",
+)
+# Keep CORS benign and explicit (some middleware validates this in prod only).
+os.environ.setdefault("CORS_ORIGINS", "http://localhost:5173")
+
 # Add apps/api to path FIRST (before any other imports)
 api_path = os.path.join(os.path.dirname(__file__), '..', 'apps', 'api')
 sys.path.insert(0, api_path)
-
-# Load environment variables from apps/api/.env BEFORE importing app
-from dotenv import load_dotenv
-env_path = os.path.join(api_path, '.env')
-load_dotenv(env_path)
 
 
 # =============================================================================
@@ -66,61 +80,18 @@ _should_mock_rate_limit = True
 _patches = []
 
 
-def pytest_configure(config):
-    """
-    Called before test collection.
-    
-    Determines if we should mock rate limiting based on which tests are running.
-    If test_rate_limit.py is being run, we SKIP mocking so it can test real behavior.
-    """
-    global _should_mock_rate_limit, _patches
-    
-    # Check if test_rate_limit.py is in the test selection
-    # This handles: pytest test_rate_limit.py, pytest tests/, pytest -k rate_limit, etc.
-    args = config.args or []
-    invocation = ' '.join(args)
-    
-    # Also check for -k expressions that might select rate limit tests
-    keyword_expr = config.getoption('-k', default='')
-    
-    is_rate_limit_test = (
-        'test_rate_limit' in invocation or
-        'rate_limit' in keyword_expr
-    )
-    
-    if is_rate_limit_test:
-        # Don't mock - let test_rate_limit.py test real behavior
-        _should_mock_rate_limit = False
-        return
-    
-    # Mock rate limiting for all other tests
-    _should_mock_rate_limit = True
-    
-    # Apply patches BEFORE any imports of main/rate_limit
-    # These patches target the rate_limit module directly
-    _patches = [
-        patch('rate_limit.rate_limit_check', _mock_rate_limit_check),
-        patch('rate_limit.initialize_rate_limiter', AsyncMock(return_value='memory')),
-        patch('rate_limit.close_redis', AsyncMock()),
-        patch('rate_limit.rate_limit_middleware', _mock_rate_limit_middleware),
-        # Also set the module state to "initialized" to prevent errors
-        patch('rate_limit._initialized', True),
-        patch('rate_limit._active_backend', 'memory'),
-    ]
-    
-    for p in _patches:
-        p.start()
+_patches = [
+    patch("rate_limit.rate_limit_check", _mock_rate_limit_check),
+    patch("rate_limit.initialize_rate_limiter", AsyncMock(return_value="memory")),
+    patch("rate_limit.close_redis", AsyncMock()),
+    patch("rate_limit.rate_limit_middleware", _mock_rate_limit_middleware),
+    # Also set the module state to "initialized" to prevent errors
+    patch("rate_limit._initialized", True),
+    patch("rate_limit._active_backend", "memory"),
+]
 
-
-def pytest_unconfigure(config):
-    """Clean up patches when pytest finishes."""
-    global _patches
-    for p in _patches:
-        try:
-            p.stop()
-        except RuntimeError:
-            pass  # Patch wasn't started
-    _patches = []
+for p in _patches:
+    p.start()
 
 
 # =============================================================================
