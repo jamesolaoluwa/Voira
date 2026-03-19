@@ -5,7 +5,6 @@ import { motion, useScroll, useTransform } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { GradientButton } from '@/components/ui/GradientButton';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
-import ThemeToggle from '@/components/theme/ThemeToggle';
 import Container from '@/components/layout/Container';
 import { MotionDiv } from '@/components/ui/Motion';
 import EtherealShadow from '@/components/ui/EtherealShadow';
@@ -22,6 +21,7 @@ import {
   GraduationCap,
   Award,
   Mic,
+  Megaphone,
   FileText,
   Sparkles,
 } from 'lucide-react';
@@ -113,14 +113,16 @@ const FEATURE_TABS = [
     },
   },
   {
-    value: 'career',
-    icon: <Sparkles className="h-auto w-4 shrink-0" />,
-    label: 'Career Prep',
+    value: 'speeches',
+    icon: <Megaphone className="h-auto w-4 shrink-0" />,
+    label: 'Speeches',
     content: {
-      badge: 'Professional Growth',
-      title: 'Cover letters and pitches from speech.',
-      description: 'Record what you want to say. Voira turns it into a clear note you can send to recruiters or contacts.',
-      icon: <Sparkles className="h-16 w-16 text-accent/30" />,
+      badge: 'Speaking',
+      title: 'Speech outlines that sound like you.',
+      description: 'Talk through your idea out loud. Voira turns your voice into a clear outline and draft you can practice and refine—whether it’s a TED-style talk, a class presentation, or a prepared speech.',
+      icon: <Megaphone className="h-16 w-16 text-accent/30" />,
+      imageSrc: '/assets/voira-media/BenGivingTalk.png',
+      imageAlt: 'Giving a speech',
     },
   },
 ];
@@ -349,6 +351,25 @@ function CinematicScene({ scene }) {
 ═══════════════════════════════════════════════════════════════════════ */
 export default function Landing() {
   const heroRef = useRef(null);
+  useEffect(() => {
+    // Force landing page to dark mode only (restore previous setting on unmount)
+    const previousTheme = localStorage.getItem('voira-theme');
+    const root = document.documentElement;
+
+    localStorage.setItem('voira-theme', 'dark');
+    root.classList.remove('light', 'dark');
+    root.classList.add('dark');
+
+    return () => {
+      if (previousTheme) {
+        localStorage.setItem('voira-theme', previousTheme);
+        root.classList.remove('light', 'dark');
+        root.classList.add(previousTheme);
+      } else {
+        localStorage.removeItem('voira-theme');
+      }
+    };
+  }, []);
   const { scrollYProgress: heroScroll } = useScroll({
     target: heroRef,
     offset: ['start start', 'end start'],
@@ -373,7 +394,6 @@ export default function Landing() {
               />
             </Link>
             <div className="flex items-center gap-3">
-              <ThemeToggle showLabel={false} />
               <Link to={createPageUrl('Auth')} className="no-underline">
                 <button className="h-10 px-6 rounded-xl text-sm font-medium text-white/90 hover:text-white backdrop-blur-md bg-white/[0.08] border border-white/[0.15] hover:bg-white/[0.14] transition-all duration-300 cursor-pointer">
                   Login
