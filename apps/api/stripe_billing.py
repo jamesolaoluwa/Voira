@@ -1,5 +1,7 @@
 """
-Stripe billing integration module.
+Stripe billing integration module. 
+Live Backend deployed at: https://voira-api.onrender.com
+Live Frontend deployed at: www.heyvoira.com and https://voira-frontend.vercel.app
 
 Handles:
 - Checkout session creation for subscriptions
