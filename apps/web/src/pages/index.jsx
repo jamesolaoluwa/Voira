@@ -142,7 +142,7 @@ function PagesContent() {
                 <Route path="/speak" element={<AuthGate><Speak /></AuthGate>} />
                 <Route path="/refinedraft" element={<AuthGate><RefineDraft /></AuthGate>} />
                 <Route path="/draft" element={<AuthGate><Draft /></AuthGate>} />
-                <Route path="/pricing" element={<AuthGate><Pricing /></AuthGate>} />
+                <Route path="/pricing" element={<Pricing />} />
                 {/* Legacy admin self-management page */}
                 <Route path="/admin-self" element={<AdminGuard><Admin /></AdminGuard>} />
             </Route>

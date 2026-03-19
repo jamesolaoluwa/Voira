@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +19,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { billing } from '@/components/services/api';
 import { STRIPE_PRICES, isStripeConfigured, DEFAULT_USER_CREDITS, PRO_USER_CREDITS } from '@/config/constants';
 import { useToast } from '@/components/ui/use-toast';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 
 export default function Pricing() {
@@ -29,6 +29,20 @@ export default function Pricing() {
   const [subscriptionStatus, setSubscriptionStatus] = useState(null);
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const { user: authUser, refreshUser, session, isLoading: authLoading } = useAuth();
+
+  // Load subscription status from backend
+  const loadSubscriptionStatus = useCallback(async () => {
+    try {
+      const status = await billing.getSubscriptionStatus();
+      setSubscriptionStatus(status);
+    } catch (error) {
+      console.error('Failed to load subscription status:', error);
+    }
+  }, []);
 
   // Check for success/canceled params from Stripe redirect
   useEffect(() => {
@@ -40,9 +54,7 @@ export default function Pricing() {
       });
       // Reload subscription status and refresh user profile to get updated credits
       loadSubscriptionStatus();
-      if (refreshUser) {
-        refreshUser();
-      }
+      refreshUser?.();
     } else if (searchParams.get('canceled') === 'true') {
       toast({
         title: 'Checkout canceled',
@@ -51,7 +63,7 @@ export default function Pricing() {
         duration: 3000,
       });
     }
-  }, [searchParams, refreshUser]);
+  }, [searchParams, toast, loadSubscriptionStatus, refreshUser]);
 
   const plans = {
     free: {
@@ -85,23 +97,11 @@ export default function Pricing() {
     },
   };
 
-  const { user: authUser, refreshUser } = useAuth();
-
-  // Load subscription status from backend
-  const loadSubscriptionStatus = async () => {
-    try {
-      const status = await billing.getSubscriptionStatus();
-      setSubscriptionStatus(status);
-    } catch (error) {
-      console.error('Failed to load subscription status:', error);
-    }
-  };
-
   useEffect(() => {
-    if (authUser) {
+    if (authUser && session && !authLoading) {
       loadSubscriptionStatus();
     }
-  }, [authUser]);
+  }, [authUser, session, authLoading, loadSubscriptionStatus]);
 
   // Determine current plan from subscription status
   const currentPlan = subscriptionStatus?.plan === 'free' || !subscriptionStatus?.plan 
@@ -121,6 +121,10 @@ export default function Pricing() {
   };
 
   const handleUpgrade = async () => {
+    if (!session) {
+      navigate('/auth', { state: { from: location }, replace: false });
+      return;
+    }
     if (!isStripeConfigured()) {
       toast({
         title: 'Billing not configured',
@@ -152,6 +156,10 @@ export default function Pricing() {
   };
 
   const handleManageSubscription = async () => {
+    if (!session) {
+      navigate('/auth', { state: { from: location }, replace: false });
+      return;
+    }
     setIsLoading(true);
     try {
       const { portal_url } = await billing.createPortalSession();
