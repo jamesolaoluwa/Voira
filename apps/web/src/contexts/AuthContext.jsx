@@ -43,7 +43,9 @@ function buildFallbackUser(session) {
     id: session.user.id,
     email: session.user.email,
     full_name: session.user.user_metadata?.full_name || 'User',
-    role: session.user.user_metadata?.role || 'free_user',
+    // Role in fallback is ALWAYS "free_user".
+    // Backend defines user_profiles.role as the only auth source; user_metadata.role is legacy.
+    role: 'free_user',
     // Default credits for fallback - will be updated when backend is available
     credits_remaining: 10,
     monthly_credit_allowance: 10,
@@ -70,7 +72,7 @@ function withTimeout(promise, ms, errorMsg) {
 async function fetchUserProfile(session) {
   if (!session?.access_token) {
     console.debug('[AuthContext] No access token, skipping /auth/me');
-    return null;
+    return session?.user ? buildFallbackUser(session) : null;
   }
   
   try {
@@ -120,7 +122,8 @@ export function AuthProvider({ children }) {
     let mounted = true;
 
     // Helper to process session and fetch profile
-    async function processSession(newSession) {
+    // markInitial indicates this call is from the initial getSession() bootstrap.
+    async function processSession(newSession, markInitial = false) {
       if (!mounted) return;
       
       try {
@@ -133,7 +136,10 @@ export function AuthProvider({ children }) {
           if (sessionId !== lastFetchedSessionIdRef.current) {
             lastFetchedSessionIdRef.current = sessionId;
             const profile = await fetchUserProfile(newSession);
-            if (mounted) setUser(profile);
+            // Guard against races: only apply if this sessionId is still current
+            if (mounted && lastFetchedSessionIdRef.current === sessionId) {
+              setUser(profile);
+            }
           }
         } else {
           lastFetchedSessionIdRef.current = null;
@@ -148,9 +154,13 @@ export function AuthProvider({ children }) {
           setSession(null);
         }
       } finally {
-        if (mounted) {
-          initialLoadCompleteRef.current = true;
-          setIsLoading(false);
+        if (mounted && !initialLoadCompleteRef.current) {
+          // Consider initial load complete when we either processed a real session user
+          // or explicitly came from the initial getSession() bootstrap.
+          if (newSession?.user || markInitial) {
+            initialLoadCompleteRef.current = true;
+            setIsLoading(false);
+          }
         }
       }
     }
@@ -167,7 +177,7 @@ export function AuthProvider({ children }) {
       console.debug('[AuthContext] Initial getSession:', !!initialSession);
       // Only process if we haven't already completed initial load
       if (mounted && !initialLoadCompleteRef.current) {
-        await processSession(initialSession);
+        await processSession(initialSession, true);
       }
     }).catch((e) => {
       console.error('[AuthContext] getSession failed:', e);

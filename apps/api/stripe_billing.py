@@ -1,5 +1,7 @@
 """
-Stripe billing integration module.
+Stripe billing integration module. 
+Live Backend deployed at: https://voira-api.onrender.com
+Live Frontend deployed at: www.heyvoira.com and https://voira-frontend.vercel.app
 
 Handles:
 - Checkout session creation for subscriptions
@@ -202,12 +204,12 @@ async def _update_user_subscription(
     """
     logger.info(f"[Stripe] _update_user_subscription called for customer {stripe_customer_id}")
     try:
-        # Determine role for backward compatibility
-        role = "free_user"
+        # Determine role for non-admin users (admin role is preserved)
+        computed_role = "free_user"
         if plan in [SubscriptionPlan.PRO_MONTHLY, SubscriptionPlan.PRO_YEARLY]:
-            role = "premium_user"
+            computed_role = "premium_user"
         elif plan in [SubscriptionPlan.PRO_PLUS_MONTHLY, SubscriptionPlan.PRO_PLUS_YEARLY]:
-            role = "premium_plus_user"
+            computed_role = "premium_plus_user"
         
         update_data = {
             "stripe_subscription_id": stripe_subscription_id,
@@ -215,20 +217,21 @@ async def _update_user_subscription(
             "subscription_plan": plan.value,
             "subscription_current_period_end": current_period_end.isoformat() if current_period_end else None,
             "monthly_credit_allowance": credit_allowance,
-            "role": role,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
         
-        logger.info(f"[Stripe] Update data: {update_data}")
-        
-        # If upgrading, also update credits_remaining
-        result = supabase.table("user_profiles").select("monthly_credit_allowance, credits_remaining").eq(
+        # If upgrading, also update credits_remaining and, for non-admins, role
+        result = supabase.table("user_profiles").select(
+            "monthly_credit_allowance, credits_remaining, role"
+        ).eq(
             "stripe_customer_id", stripe_customer_id
         ).execute()
         
         logger.info(f"[Stripe] Query result for customer {stripe_customer_id}: {result.data}")
         
+        existing_role = None
         if result.data:
+            existing_role = result.data[0].get("role")
             old_allowance = result.data[0].get("monthly_credit_allowance", 10)
             old_remaining = result.data[0].get("credits_remaining", 0)
             
@@ -239,6 +242,12 @@ async def _update_user_subscription(
                 logger.info(f"[Stripe] Upgrading user: adding {bonus_credits} bonus credits")
         else:
             logger.warning(f"[Stripe] No user found with stripe_customer_id={stripe_customer_id}")
+        
+        # Preserve admin role; only overwrite role for non-admins or when no existing record
+        if existing_role != "admin":
+            update_data["role"] = computed_role
+        
+        logger.info(f"[Stripe] Update data: {update_data}")
         
         update_result = supabase.table("user_profiles").update(update_data).eq(
             "stripe_customer_id", stripe_customer_id
@@ -309,14 +318,25 @@ async def _handle_subscription_deleted(subscription: dict):
     customer_id = subscription["customer"]
     
     try:
-        # Downgrade to free plan
-        supabase.table("user_profiles").update({
+        # Look up existing role so we don't overwrite admin users
+        result = supabase.table("user_profiles").select("role").eq(
+            "stripe_customer_id", customer_id
+        ).execute()
+        existing_role = result.data[0].get("role") if result.data else None
+        
+        # Downgrade to free plan; preserve admin role
+        update_data = {
             "subscription_status": SubscriptionStatus.CANCELED.value,
             "subscription_plan": SubscriptionPlan.FREE.value,
             "monthly_credit_allowance": settings.stripe_credits_free,
-            "role": "free_user",
             "updated_at": datetime.now(timezone.utc).isoformat()
-        }).eq("stripe_customer_id", customer_id).execute()
+        }
+        if existing_role != "admin":
+            update_data["role"] = "free_user"
+        
+        supabase.table("user_profiles").update(update_data).eq(
+            "stripe_customer_id", customer_id
+        ).execute()
         
         logger.info(f"[Stripe] Subscription canceled for customer {customer_id}, downgraded to free")
         
@@ -401,7 +421,7 @@ async def create_checkout_session(
                 "price": request.price_id,
                 "quantity": 1,
             }],
-            success_url=request.success_url + "?session_id={CHECKOUT_SESSION_ID}",
+            success_url=request.success_url + ("&" if "?" in request.success_url else "?") + "session_id={CHECKOUT_SESSION_ID}",
             cancel_url=request.cancel_url,
             metadata={
                 "user_id": user["id"],

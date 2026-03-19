@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -20,8 +20,9 @@ const AUTH_TIMEOUT_MS = 8000;
 
 export default function Auth() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { session, isLoading: authLoading } = useAuth();
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(searchParams.get('signup') === 'true');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -83,7 +84,10 @@ export default function Auth() {
           authInFlightRef.current = false;
           return;
         }
-        // If we got a session, let the useEffect redirect us
+        // Immediate session (no confirmation): reset before redirect so returning to this page doesn't block future sign-in
+        authInFlightRef.current = false;
+        setIsLoading(false);
+        // Redirect will happen via useEffect when session is set
       } else {
         console.log('[Auth] Calling signIn...');
         const result = await auth.signIn(normalizedEmail, password);
@@ -101,6 +105,9 @@ export default function Auth() {
               if (currentSession) {
                 console.log('[Auth] Timeout fallback: session found, navigating');
                 navigate('/home', { replace: true });
+                // Authentication succeeded; clear in-flight flag for consistency
+                authInFlightRef.current = false;
+                setIsLoading(false);
               } else {
                 console.warn('[Auth] Timeout fallback: session still not established');
                 setError('Sign-in took too long. Please try again.');
@@ -109,6 +116,13 @@ export default function Auth() {
               }
             }
           }, AUTH_TIMEOUT_MS);
+        } else {
+          // Edge case: signIn returned without throwing but no session present.
+          // Reset loading state so the user isn't stuck indefinitely.
+          console.warn('[Auth] signIn completed without session; resetting state');
+          setError('Sign-in did not complete. Please try again.');
+          setIsLoading(false);
+          authInFlightRef.current = false;
         }
       }
       // Don't navigate here - let useEffect handle it when session updates
@@ -222,7 +236,7 @@ export default function Auth() {
           <div className="mb-8 flex items-center justify-between">
             <Link to={createPageUrl('Landing')} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
               <img
-                src="/assets/VoiraLogoReduced.jpg"
+                src="/assets/VoiraLogoMain.png"
                 onError={(e) => { e.currentTarget.src = '/favicon.ico'; }}
                 alt="Voira logo"
                 className="w-10 h-10 object-contain"

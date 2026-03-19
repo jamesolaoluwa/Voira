@@ -1801,7 +1801,7 @@ async def get_all_feature_flags(
     
     Returns complete flag configuration.
     """
-    is_admin = await check_is_admin(user["email"])
+    is_admin = await check_is_admin(user)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     

@@ -1,37 +1,18 @@
 """Tests for /auth/me endpoint."""
-import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch, Mock, AsyncMock
-import sys
-import os
+from unittest.mock import Mock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'apps', 'api'))
-
-# Mock rate limiter before importing app
-async def _mock_rate_limit_check(identifier, path):
-    return True, {'X-RateLimit-Limit': '60', 'X-RateLimit-Remaining': '59', 'X-RateLimit-Reset': '60'}
-
-_rate_limit_patcher = patch('rate_limit.rate_limit_check', _mock_rate_limit_check)
-_rate_limit_patcher.start()
-
-# Patch main module's rate_limit_check
-_main_rate_limit_patcher = patch('main.rate_limit_check', _mock_rate_limit_check)
-_main_rate_limit_patcher.start()
-
-from main import app
 from auth import get_current_user, security
+from main import app
 
-client = TestClient(app, raise_server_exceptions=False)
 
-
-def test_auth_me_requires_auth():
+def test_auth_me_requires_auth(client):
     """Test that /auth/me requires authentication."""
     app.dependency_overrides.clear()
     response = client.get("/auth/me")
     assert response.status_code == 403  # FastAPI returns 403 for missing auth
 
 
-def test_auth_me_returns_user_info():
+def test_auth_me_returns_user_info(client):
     """Test that /auth/me returns user info when authenticated."""
     mock_user = {
         "id": "test-user-id",

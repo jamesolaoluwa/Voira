@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 export default function VoiceVisualizer({ isActive = false, amplitude = 0, size = 200 }) {
   const baseScale = 1;
   const activeScale = 1 + (amplitude * 0.3);
-  
+
   return (
     <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
       {/* Outer glow rings */}
@@ -25,7 +25,7 @@ export default function VoiceVisualizer({ isActive = false, amplitude = 0, size 
           ease: 'easeInOut',
         }}
       />
-      
+
       {/* Middle ring */}
       <motion.div
         className="absolute rounded-full"
@@ -45,7 +45,7 @@ export default function VoiceVisualizer({ isActive = false, amplitude = 0, size 
           delay: 0.2,
         }}
       />
-      
+
       {/* Inner glow */}
       <motion.div
         className="absolute rounded-full"
@@ -53,8 +53,8 @@ export default function VoiceVisualizer({ isActive = false, amplitude = 0, size 
           width: size,
           height: size,
           background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.3) 0%, rgba(20, 184, 166, 0.3) 100%)',
-          boxShadow: isActive 
-            ? '0 0 60px rgba(139, 92, 246, 0.4), 0 0 100px rgba(20, 184, 166, 0.2)' 
+          boxShadow: isActive
+            ? '0 0 60px rgba(139, 92, 246, 0.4), 0 0 100px rgba(20, 184, 166, 0.2)'
             : '0 0 40px rgba(139, 92, 246, 0.2)',
         }}
         animate={{
@@ -65,7 +65,7 @@ export default function VoiceVisualizer({ isActive = false, amplitude = 0, size 
           ease: 'easeOut',
         }}
       />
-      
+
       {/* Core circle */}
       <motion.div
         className="absolute rounded-full flex items-center justify-center"
