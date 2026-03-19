@@ -4,8 +4,8 @@ import { Zap } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function CreditsDisplay({ 
-  credits = 45, 
-  total = 60, 
+  credits = 10, 
+  total = 10, 
   compact = false,
   showWarning = true 
 }) {

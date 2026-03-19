@@ -8,75 +8,80 @@ import AuthDebug from '@/components/AuthDebug';
 export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
   const isAuthPage = currentPageName === 'Auth';
-  const { user, isLoading, isAdmin } = useAuth();
+  const auth = useAuth();
+  const user = auth?.user;
+  const isLoading = auth?.isLoading ?? true;
+  const isAdmin = auth?.isAdmin ?? false;
   const isAuthenticated = !!user && !isLoading;
   
   return (
-    <div className="min-h-screen bg-white dark:bg-[#0a0a0f] text-zinc-900 dark:text-zinc-100 transition-colors duration-300">
+    <div className="min-h-screen bg-background text-foreground transition-colors duration-normal ease-smooth">
         <style>{`
           :root {
             --background: 0 0% 100%;
-            --foreground: 240 10% 15%;
+            --foreground: 0 0% 9%;
             --card: 0 0% 100%;
-            --card-foreground: 240 10% 15%;
+            --card-foreground: 0 0% 9%;
             --popover: 0 0% 100%;
-            --popover-foreground: 240 10% 15%;
-            --primary: 263 70% 50%;
+            --popover-foreground: 0 0% 9%;
+            --primary: 239 84% 67%;
             --primary-foreground: 0 0% 100%;
-            --secondary: 174 72% 40%;
-            --secondary-foreground: 0 0% 100%;
+            --secondary: 0 0% 96%;
+            --secondary-foreground: 0 0% 9%;
             --muted: 0 0% 96%;
-            --muted-foreground: 240 5% 45%;
-            --accent: 263 70% 50%;
+            --muted-foreground: 0 0% 45%;
+            --accent: 239 84% 67%;
             --accent-foreground: 0 0% 100%;
+            --surface: 0 0% 98%;
             --destructive: 0 84% 60%;
             --destructive-foreground: 0 0% 100%;
             --border: 0 0% 90%;
             --input: 0 0% 90%;
-            --ring: 263 70% 50%;
-            --radius: 0.75rem;
+            --ring: 239 84% 67%;
+            --radius: 0.5rem;
           }
 
           .dark {
-            --background: 0 0% 4%;
-            --foreground: 240 10% 90%;
-            --card: 240 6% 8%;
-            --card-foreground: 240 10% 90%;
-            --popover: 240 6% 8%;
-            --popover-foreground: 240 10% 90%;
-            --primary: 263 70% 50%;
+            --background: 0 0% 0%;
+            --foreground: 240 6% 96%;
+            --card: 0 0% 100% / 0.03;
+            --card-foreground: 240 6% 96%;
+            --popover: 0 0% 6%;
+            --popover-foreground: 240 6% 96%;
+            --primary: 239 84% 67%;
             --primary-foreground: 0 0% 100%;
-            --secondary: 174 72% 40%;
-            --secondary-foreground: 0 0% 100%;
-            --muted: 240 6% 15%;
-            --muted-foreground: 240 5% 55%;
-            --accent: 263 70% 50%;
+            --secondary: 0 0% 12%;
+            --secondary-foreground: 240 6% 96%;
+            --muted: 0 0% 12%;
+            --muted-foreground: 0 0% 60%;
+            --accent: 239 84% 67%;
             --accent-foreground: 0 0% 100%;
-            --destructive: 0 84% 60%;
-            --destructive-foreground: 0 0% 100%;
-            --border: 240 6% 15%;
-            --input: 240 6% 15%;
-            --ring: 263 70% 50%;
-            --radius: 0.75rem;
+            --surface: 0 0% 100% / 0.03;
+            --destructive: 0 63% 31%;
+            --destructive-foreground: 0 0% 98%;
+            --border: 0 0% 100% / 0.08;
+            --input: 0 0% 100% / 0.08;
+            --ring: 239 84% 67%;
+            --radius: 0.5rem;
           }
           
           body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            transition: background-color 0.3s ease, color 0.3s ease;
+            font-family: var(--font-body);
+            transition: background-color 0.3s cubic-bezier(0.22, 1, 0.36, 1), color 0.3s cubic-bezier(0.22, 1, 0.36, 1);
           }
           
           .dark body {
-            background-color: #0a0a0f;
-            color: #e4e4e7;
+            background-color: #000000;
+            color: #F5F5F7;
           }
           
           .light body {
-            background-color: #fafafa;
-            color: #18181b;
+            background-color: #ffffff;
+            color: #171717;
           }
           
           ::selection {
-            background: rgba(139, 92, 246, 0.3);
+            background: rgba(91, 92, 246, 0.25);
           }
           
           ::-webkit-scrollbar {

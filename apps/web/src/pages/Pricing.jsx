@@ -7,30 +7,60 @@ import {
   Check, 
   Crown, 
   Sparkles, 
-  Zap,
   Calendar,
-  TrendingUp
+  TrendingUp,
+  Loader2,
+  ExternalLink,
+  AlertCircle,
+  CheckCircle
 } from 'lucide-react';
 import CreditsDisplay from '@/components/ui/CreditsDisplay';
 import { useAuth } from '@/contexts/AuthContext';
-import { credits as creditsAPI } from '@/components/services/api';
+import { billing } from '@/components/services/api';
+import { STRIPE_PRICES, isStripeConfigured, DEFAULT_USER_CREDITS, PRO_USER_CREDITS } from '@/config/constants';
+import { useToast } from '@/components/ui/use-toast';
+import { useSearchParams } from 'react-router-dom';
 
 
 export default function Pricing() {
   const [billingCycle, setBillingCycle] = useState('monthly');
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [isUpgraded, setIsUpgraded] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [subscriptionStatus, setSubscriptionStatus] = useState(null);
+  const [searchParams] = useSearchParams();
+  const { toast } = useToast();
 
-  const currentPlan = 'free'; // Would come from user context
+  // Check for success/canceled params from Stripe redirect
+  useEffect(() => {
+    if (searchParams.get('success') === 'true') {
+      toast({
+        title: 'Payment successful!',
+        description: 'Welcome to Pro! Your subscription is now active.',
+        duration: 5000,
+      });
+      // Reload subscription status and refresh user profile to get updated credits
+      loadSubscriptionStatus();
+      if (refreshUser) {
+        refreshUser();
+      }
+    } else if (searchParams.get('canceled') === 'true') {
+      toast({
+        title: 'Checkout canceled',
+        description: 'No worries! You can upgrade anytime.',
+        variant: 'default',
+        duration: 3000,
+      });
+    }
+  }, [searchParams, refreshUser]);
 
   const plans = {
     free: {
       name: 'Free',
       subtitle: 'For getting comfortable expressing yourself',
       price: { monthly: 0, yearly: 0 },
-      credits: 60,
+      credits: DEFAULT_USER_CREDITS,
       features: [
-        '60 credits per month',
+        `${DEFAULT_USER_CREDITS} credits per month`,
         'Core voice cleanup (fillers, clarity)',
         'Practice Mode (limited sessions)',
         'Library access',
@@ -39,12 +69,12 @@ export default function Pricing() {
       footnote: 'You can upgrade anytime.',
     },
     premium: {
-      name: 'Premium',
+      name: 'Pro',
       subtitle: 'For clarity, confidence, and real growth',
       price: { monthly: 9.99, yearly: 79 },
-      credits: 'Unlimited',
+      credits: PRO_USER_CREDITS,
       features: [
-        'Higher or unlimited credits',
+        `${PRO_USER_CREDITS} credits per month`,
         'Advanced confidence & emotional analysis',
         'Full Practice Mode with coaching feedback',
         'Voice Profile that learns over time',
@@ -55,48 +85,86 @@ export default function Pricing() {
     },
   };
 
-  const { user: authUser } = useAuth();
-  const [usage, setUsage] = useState({
-    creditsRemaining: authUser?.credits_remaining ?? 0,
-    totalCredits: authUser?.credits_total ?? (authUser?.role === 'premium_user' ? 200 : 60),
-    sessionsUsed: 0,
-    resetDate: authUser?.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : '—',
-  });
+  const { user: authUser, refreshUser } = useAuth();
 
-  useEffect(() => {
-    let mounted = true;
-
-    const loadCredits = async () => {
-      try {
-        if (creditsAPI && typeof creditsAPI.getCredits === 'function') {
-          const remote = await creditsAPI.getCredits();
-          if (mounted) setUsage(u => ({ ...u, creditsRemaining: remote }));
-        } else if (authUser) {
-          if (mounted) setUsage(u => ({ ...u, creditsRemaining: authUser.credits_remaining ?? u.creditsRemaining }));
-        }
-        if (authUser) {
-          if (mounted) setUsage(u => ({ ...u, totalCredits: authUser.credits_total ?? (authUser.role === 'premium_user' ? 200 : 60), resetDate: authUser.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : u.resetDate }));
-        }
-      } catch (e) {
-        console.warn('Unable to load credits for Pricing page', e);
-      }
-    };
-
-    loadCredits();
-
-    return () => { mounted = false; };
-  }, [authUser]);
-
-  const handleUpgrade = () => {
-    setShowUpgradeModal(true);
+  // Load subscription status from backend
+  const loadSubscriptionStatus = async () => {
+    try {
+      const status = await billing.getSubscriptionStatus();
+      setSubscriptionStatus(status);
+    } catch (error) {
+      console.error('Failed to load subscription status:', error);
+    }
   };
 
-  const confirmUpgrade = () => {
-    setIsUpgraded(true);
-    setTimeout(() => {
-      setShowUpgradeModal(false);
-      setIsUpgraded(false);
-    }, 2000);
+  useEffect(() => {
+    if (authUser) {
+      loadSubscriptionStatus();
+    }
+  }, [authUser]);
+
+  // Determine current plan from subscription status
+  const currentPlan = subscriptionStatus?.plan === 'free' || !subscriptionStatus?.plan 
+    ? 'free' 
+    : 'premium';
+  
+  const isProUser = subscriptionStatus?.plan?.startsWith('pro_');
+  const cancelAtPeriodEnd = subscriptionStatus?.cancel_at_period_end;
+
+  const usage = {
+    creditsRemaining: subscriptionStatus?.credits_remaining ?? authUser?.credits_remaining ?? DEFAULT_USER_CREDITS,
+    totalCredits: subscriptionStatus?.monthly_credit_allowance ?? authUser?.monthly_credit_allowance ?? DEFAULT_USER_CREDITS,
+    sessionsUsed: 0, // Could be computed from sessions API
+    resetDate: subscriptionStatus?.current_period_end 
+      ? new Date(subscriptionStatus.current_period_end).toLocaleDateString() 
+      : (authUser?.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : '—'),
+  };
+
+  const handleUpgrade = async () => {
+    if (!isStripeConfigured()) {
+      toast({
+        title: 'Billing not configured',
+        description: 'Please contact support to upgrade your plan.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const priceId = billingCycle === 'monthly' 
+        ? STRIPE_PRICES.PRO_MONTHLY 
+        : STRIPE_PRICES.PRO_YEARLY;
+      
+      const { checkout_url } = await billing.createCheckoutSession(priceId);
+      
+      // Redirect to Stripe Checkout
+      window.location.href = checkout_url;
+    } catch (error) {
+      console.error('Checkout error:', error);
+      toast({
+        title: 'Checkout failed',
+        description: error.message || 'Please try again.',
+        variant: 'destructive',
+      });
+      setIsLoading(false);
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    setIsLoading(true);
+    try {
+      const { portal_url } = await billing.createPortalSession();
+      window.location.href = portal_url;
+    } catch (error) {
+      console.error('Portal error:', error);
+      toast({
+        title: 'Failed to open billing portal',
+        description: error.message || 'Please try again.',
+        variant: 'destructive',
+      });
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -194,15 +262,23 @@ export default function Pricing() {
             transition={{ delay: 0.3 }}
             className="relative bg-gradient-to-br from-violet-500/10 to-purple-500/10 rounded-2xl border border-violet-500/30 p-8 shadow-xl shadow-violet-500/10"
           >
-            <Badge className="absolute top-4 right-4 bg-gradient-to-r from-violet-500 to-purple-500 text-white">
-              <Sparkles className="w-3 h-3 mr-1" />
-              Recommended
-            </Badge>
+            {!isProUser && (
+              <Badge className="absolute top-4 right-4 bg-gradient-to-r from-violet-500 to-purple-500 text-white">
+                <Sparkles className="w-3 h-3 mr-1" />
+                Recommended
+              </Badge>
+            )}
+            {isProUser && (
+              <Badge className="absolute top-4 right-4 bg-teal-500/20 text-teal-400 border-teal-500/30">
+                <CheckCircle className="w-3 h-3 mr-1" />
+                Active
+              </Badge>
+            )}
 
             <div className="mb-6">
               <h3 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1 flex items-center gap-2">
                 <Crown className="w-6 h-6 text-violet-600 dark:text-violet-400" />
-                Premium
+                Pro
               </h3>
               <p className="text-sm text-zinc-700 dark:text-zinc-500 mb-4">{plans.premium.subtitle}</p>
               <div className="flex items-baseline gap-2 mb-4">
@@ -213,6 +289,12 @@ export default function Pricing() {
                   / {billingCycle === 'monthly' ? 'month' : 'year'}
                 </span>
               </div>
+              {cancelAtPeriodEnd && (
+                <div className="flex items-center gap-2 text-amber-500 text-sm">
+                  <AlertCircle className="w-4 h-4" />
+                  <span>Cancels at period end</span>
+                </div>
+              )}
             </div>
 
             <ul className="space-y-3 mb-8">
@@ -224,13 +306,34 @@ export default function Pricing() {
               ))}
             </ul>
 
-            <Button
-              onClick={handleUpgrade}
-              className="w-full h-12 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white mb-3"
-            >
-              <Crown className="w-4 h-4 mr-2" />
-              Upgrade to Premium
-            </Button>
+            {isProUser ? (
+              <Button
+                onClick={handleManageSubscription}
+                disabled={isLoading}
+                variant="outline"
+                className="w-full h-12 border-violet-500/30 text-violet-400 hover:bg-violet-500/10 mb-3"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                )}
+                Manage Subscription
+              </Button>
+            ) : (
+              <Button
+                onClick={handleUpgrade}
+                disabled={isLoading}
+                className="w-full h-12 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white mb-3"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Crown className="w-4 h-4 mr-2" />
+                )}
+                Upgrade to Pro
+              </Button>
+            )}
             <p className="text-xs text-center text-zinc-600 dark:text-zinc-600">{plans.premium.footnote}</p>
           </motion.div>
         </div>
@@ -245,13 +348,7 @@ export default function Pricing() {
           <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-6">Your Usage</h3>
           <div className="grid sm:grid-cols-3 gap-6">
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Zap className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                <span className="text-sm text-zinc-600 dark:text-zinc-500">Credits Remaining</span>
-              </div>
-              <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                <CreditsDisplay credits={usage.creditsRemaining} total={usage.totalCredits} compact={false} showWarning />
-              </div>
+              <CreditsDisplay credits={usage.creditsRemaining} total={usage.totalCredits} compact={false} showWarning />
             </div>
 
             <div>
@@ -274,80 +371,6 @@ export default function Pricing() {
           </div>
         </motion.div>
       </div>
-
-      {/* Upgrade Modal */}
-      <Dialog open={showUpgradeModal} onOpenChange={setShowUpgradeModal}>
-        <DialogContent className="bg-[#1a1a24] border-white/10 max-w-md">
-          <AnimatePresence mode="wait">
-            {isUpgraded ? (
-              <motion.div
-                key="success"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                className="text-center py-8"
-              >
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', stiffness: 200, damping: 15 }}
-                  className="w-20 h-20 rounded-full bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center mx-auto mb-6"
-                >
-                  <Crown className="w-10 h-10 text-white" />
-                </motion.div>
-                <h3 className="text-2xl font-bold text-zinc-100 mb-2">Welcome to Premium!</h3>
-                <p className="text-zinc-400">Your account has been upgraded</p>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="confirm"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                <DialogHeader>
-                  <DialogTitle className="text-zinc-100 flex items-center gap-2">
-                    <Crown className="w-5 h-5 text-violet-400" />
-                    Confirm Upgrade
-                  </DialogTitle>
-                </DialogHeader>
-
-                <div className="mt-6 space-y-4">
-                  <div className="bg-[#13131a] rounded-xl p-4 border border-violet-500/20">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-zinc-400">Plan</span>
-                      <span className="font-semibold text-zinc-100">Premium</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-zinc-400">Price</span>
-                      <span className="font-semibold text-zinc-100">
-                        ${billingCycle === 'monthly' ? plans.premium.price.monthly : plans.premium.price.yearly}
-                        /{billingCycle === 'monthly' ? 'mo' : 'yr'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => setShowUpgradeModal(false)}
-                      className="flex-1 border-white/10 text-zinc-400 hover:bg-white/5"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      onClick={confirmUpgrade}
-                      className="flex-1 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
-                    >
-                      Confirm Upgrade
-                    </Button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

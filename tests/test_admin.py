@@ -430,6 +430,45 @@ class TestAdminRouteProtection:
 
 
 # =============================================================================
+# Regression: /admin/feature-flags admin gating
+# =============================================================================
+
+class TestAdminFeatureFlags:
+    def test_feature_flags_denied_to_non_admin(self):
+        mock_user = {"id": "user-id", "email": "user@test.com", "role": "free_user"}
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        from auth import security
+        mock_credentials = Mock()
+        mock_credentials.credentials = "fake-token"
+        app.dependency_overrides[security] = lambda: mock_credentials
+
+        with patch("main.check_is_admin", new_callable=AsyncMock, return_value=False):
+            response = client.get("/admin/feature-flags")
+            assert response.status_code == 403
+            assert response.json().get("detail") == "Admin access required"
+
+        app.dependency_overrides.clear()
+
+    def test_feature_flags_allowed_to_admin(self):
+        mock_admin = {"id": "admin-id", "email": "admin@test.com", "role": "admin"}
+        app.dependency_overrides[get_current_user] = lambda: mock_admin
+        from auth import security
+        mock_credentials = Mock()
+        mock_credentials.credentials = "fake-admin-token"
+        app.dependency_overrides[security] = lambda: mock_credentials
+
+        # We don't want to validate the full flag set here; just ensure endpoint works for admins.
+        with patch("main.check_is_admin", new_callable=AsyncMock, return_value=True):
+            response = client.get("/admin/feature-flags")
+            assert response.status_code == 200
+            data = response.json()
+            assert "flags" in data
+            assert "environment" in data
+
+        app.dependency_overrides.clear()
+
+
+# =============================================================================
 # Empty Database Safety Tests (GAP-003 Hardening)
 # =============================================================================
 

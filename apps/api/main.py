@@ -59,6 +59,9 @@ from health import get_all_health_checks, is_ready, get_overall_status
 # Import admin router
 from admin import router as admin_router
 
+# Import Stripe billing router
+from stripe_billing import router as billing_router, webhook_router as stripe_webhook_router
+
 app = FastAPI(
     title="Voira API",
     description="Backend API for Voira voice coaching platform",
@@ -123,22 +126,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         identifier = request.client.host if request.client else "unknown"
         
         # Check rate limit
-        allowed, headers = await rate_limit_check(
+        allowed, rate_headers = await rate_limit_check(
             identifier=identifier,
             path=request.url.path,
         )
         
         if not allowed:
+            # Must include CORS headers in 429 responses for browser compatibility
+            origin = request.headers.get("origin", "")
+            cors_headers = {}
+            if origin in settings.cors_origins_list:
+                cors_headers = {
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Credentials": "true",
+                }
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded. Please try again later."},
-                headers=headers,
+                headers={**rate_headers, **cors_headers},
             )
         
         response = await call_next(request)
         
         # Add rate limit headers to response
-        for key, value in headers.items():
+        for key, value in rate_headers.items():
             response.headers[key] = value
         
         return response
@@ -282,6 +293,16 @@ app.add_middleware(TimeoutMiddleware)
 # All admin routes use require_admin() dependency for security
 app.include_router(admin_router)
 
+# =============================================================================
+# Include Billing Router
+# =============================================================================
+# NOTE: Billing routes are isolated under /billing prefix
+# Webhook endpoint has no auth (verified via Stripe signature)
+app.include_router(billing_router)
+
+# Also mount webhook at /webhooks/stripe (matches Stripe dashboard config)
+app.include_router(stripe_webhook_router)
+
 
 # =============================================================================
 # Health Check Endpoints
@@ -363,6 +384,7 @@ async def get_me(user: dict = Depends(get_current_user)):
         full_name=user.get("full_name"),
         role=user.get("role", "free_user"),
         credits_remaining=user.get("credits_remaining", 10),
+        monthly_credit_allowance=user.get("monthly_credit_allowance", 10),
         credits_reset_at=user.get("credits_reset_at"),
     )
 
@@ -1278,10 +1300,10 @@ async def analyze_transcript_endpoint(
     
     # Check if user is admin (admins bypass credit checks)
     # ADMIN BYPASS SCOPE:
-    # - Admin is determined by email presence in `admin_emails` table (auth.py:check_is_admin)
+    # - Admin is determined ONLY by user_profiles.role = 'admin' (auth.py:check_is_admin)
     # - This is intended for internal/testing use only
     # - Admins bypass: credit checks, credit deductions, some rate limits
-    # - RISK: If admin_emails table is compromised, attacker gets unlimited free usage
+    # - The DB-level enforcement is in deduct_credit() which also checks user_profiles.role
     # - Do NOT expand admin bypass to broader roles (e.g., "premium_user") without review
     is_admin = await check_is_admin(user)
     
@@ -1779,7 +1801,7 @@ async def get_all_feature_flags(
     
     Returns complete flag configuration.
     """
-    is_admin = await check_is_admin(user["email"])
+    is_admin = await check_is_admin(user)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     

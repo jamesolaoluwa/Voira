@@ -14,7 +14,6 @@ import {
   TrendingUp, 
   Clock, 
   Target,
-  Zap,
   Library,
   CreditCard,
   Settings,
@@ -33,7 +32,7 @@ export default function Profile() {
   const email = authUser?.email || '—';
   const avatar = authUser?.avatar || null;
   const creditsRemaining = authUser?.credits_remaining ?? 0;
-  const totalCredits = authUser?.credits_total ?? 60;
+  const totalCredits = authUser?.monthly_credit_allowance ?? 10;
   const resetDate = authUser?.credits_reset_at ? new Date(authUser.credits_reset_at).toLocaleDateString() : '—';
   const plan = isAdmin ? 'Premium' : (authUser?.role === 'premium_user' ? 'Premium' : 'Free');
 
@@ -149,15 +148,7 @@ export default function Profile() {
 
           <div className="grid sm:grid-cols-3 gap-4">
             <div className="bg-violet-100/50 dark:bg-[#1a1a24]/50 rounded-xl p-4 border border-violet-200 dark:border-transparent">
-              <div className="flex items-center gap-2 mb-2">
-                <Zap className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                <span className="text-xs text-zinc-600 dark:text-zinc-500">Credits</span>
-              </div>
-              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                <span className="align-middle">
-                  <CreditsDisplay credits={creditsRemaining} total={totalCredits} compact={false} showWarning />
-                </span>
-              </p>
+              <CreditsDisplay credits={creditsRemaining} total={totalCredits} compact={false} showWarning />
             </div>
 
             <div className="bg-teal-100/50 dark:bg-[#1a1a24]/50 rounded-xl p-4 border border-teal-200 dark:border-transparent">

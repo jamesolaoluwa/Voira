@@ -64,6 +64,19 @@ class Settings(BaseSettings):
     redis_url: Optional[str] = None
     
     # ==========================================================================
+    # Stripe Billing
+    # ==========================================================================
+    stripe_secret_key: Optional[str] = None
+    stripe_webhook_secret: Optional[str] = None
+    stripe_price_id_monthly: Optional[str] = None
+    stripe_price_id_yearly: Optional[str] = None
+    
+    # Credit allowances per plan
+    stripe_credits_free: int = 10
+    stripe_credits_pro: int = 60
+    stripe_credits_pro_plus: int = 200  # Future tier
+    
+    # ==========================================================================
     # Deepgram Streaming Configuration
     # ==========================================================================
     deepgram_sample_rate: int = 48000  # Browser default sample rate

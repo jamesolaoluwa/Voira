@@ -16,13 +16,25 @@ async function getAuthToken() {
 
 /**
  * Make authenticated API request
+ * @param {string} endpoint - API endpoint
+ * @param {Object} options - Fetch options
+ * @param {boolean} options.requireAuth - If true, throws if no auth token available (default: false)
  */
 async function apiRequest(endpoint, options = {}) {
+  const { requireAuth = false, ...fetchOptions } = options;
   const token = await getAuthToken();
+  
+  // Guard: If endpoint requires auth but no token, fail fast without making request
+  if (requireAuth && !token) {
+    const error = new Error('Authentication required but no session available');
+    error.status = 401;
+    error.code = 'NO_SESSION';
+    throw error;
+  }
   
   // For FormData, let browser set Content-Type with boundary
   // For JSON, set Content-Type explicitly
-  const isFormData = options.body instanceof FormData;
+  const isFormData = fetchOptions.body instanceof FormData;
   const headers = {};
   
   if (!isFormData) {
@@ -30,7 +42,7 @@ async function apiRequest(endpoint, options = {}) {
   }
   
   // Merge any provided headers (FormData uploads can override)
-  Object.assign(headers, options.headers);
+  Object.assign(headers, fetchOptions.headers);
   
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -38,7 +50,7 @@ async function apiRequest(endpoint, options = {}) {
   
   const url = `${API_BASE_URL}${endpoint}`;
   const response = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     headers,
   });
   
@@ -53,24 +65,27 @@ async function apiRequest(endpoint, options = {}) {
 }
 
 export const apiClient = {
-  get: (endpoint) => apiRequest(endpoint, { method: 'GET' }),
-  post: (endpoint, data) => {
+  get: (endpoint, options = {}) => apiRequest(endpoint, { method: 'GET', ...options }),
+  post: (endpoint, data, options = {}) => {
     // Support both JSON and FormData
     if (data instanceof FormData) {
       return apiRequest(endpoint, {
         method: 'POST',
         body: data,
+        ...options,
       });
     }
     return apiRequest(endpoint, {
       method: 'POST',
       body: JSON.stringify(data),
+      ...options,
     });
   },
-  put: (endpoint, data) => apiRequest(endpoint, {
+  put: (endpoint, data, options = {}) => apiRequest(endpoint, {
     method: 'PUT',
     body: JSON.stringify(data),
+    ...options,
   }),
-  delete: (endpoint) => apiRequest(endpoint, { method: 'DELETE' }),
+  delete: (endpoint, options = {}) => apiRequest(endpoint, { method: 'DELETE', ...options }),
 };
 

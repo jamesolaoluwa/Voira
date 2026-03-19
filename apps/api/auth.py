@@ -66,18 +66,23 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(
             if not user_id:
                 raise HTTPException(status_code=401, detail="Invalid user data")
         
-        # Get user profile
+        # Get user profile (authoritative source for role)
         profile_response = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
         profile = profile_response.data[0] if profile_response.data else None
         
         user_metadata = user_data.get("user_metadata", {})
         
+        # Role comes from user_profiles (authoritative), NOT from JWT user_metadata
+        # user_metadata.role is legacy and should not be trusted for admin checks
+        profile_role = profile.get("role") if profile else None
+        
         return {
             "id": user_id,
             "email": user_data.get("email"),
             "full_name": user_metadata.get("full_name"),
-            "role": user_metadata.get("role", "free_user"),
+            "role": profile_role or "free_user",
             "credits_remaining": profile.get("credits_remaining") if profile else 10,
+            "monthly_credit_allowance": profile.get("monthly_credit_allowance") if profile else 10,
             "credits_reset_at": profile.get("credits_reset_at") if profile else None,
         }
     except HTTPException:
@@ -88,19 +93,24 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(
 
 async def check_is_admin(user: dict) -> bool:
     """
-    Check if user is admin by querying admin_emails table.
-    Uses service_role key (backend only).
-    Returns True only if email exists in admin_emails.
+    Check if user is admin by querying user_profiles.role.
+    
+    SINGLE SOURCE OF TRUTH: Admin status is determined ONLY by
+    public.user_profiles.role = 'admin'. Do NOT use:
+    - admin_emails table (not an authorization source at runtime)
+    - JWT user_metadata.role (not authoritative for admin)
+    
+    The DB-level enforcement point is deduct_credit(), which also
+    checks user_profiles.role = 'admin' for credit bypass.
     """
-    if not user or not user.get("email"):
+    if not user or not user.get("id"):
         return False
     
-    email = user["email"].lower().strip()
-    
     try:
-        # Query admin_emails using service_role (bypasses RLS)
-        response = supabase.table("admin_emails").select("email").eq("email", email).execute()
-        return len(response.data) > 0
+        response = supabase.table("user_profiles").select("role").eq("user_id", user["id"]).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("role") == "admin"
+        return False
     except Exception:
         return False
 
@@ -152,18 +162,22 @@ async def get_user_from_websocket_token(token: str):
             
             logger.debug(f"[WebSocket Auth] Token validated successfully for user {user_id}")
         
-        # Get user profile
+        # Get user profile (authoritative source for role)
         profile_response = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
         profile = profile_response.data[0] if profile_response.data else None
         
         user_metadata = user_data.get("user_metadata", {})
         
+        # Role comes from user_profiles (authoritative), NOT from JWT user_metadata
+        profile_role = profile.get("role") if profile else None
+        
         return {
             "id": user_id,
             "email": user_data.get("email"),
             "full_name": user_metadata.get("full_name"),
-            "role": user_metadata.get("role", "free_user"),
+            "role": profile_role or "free_user",
             "credits_remaining": profile.get("credits_remaining") if profile else 10,
+            "monthly_credit_allowance": profile.get("monthly_credit_allowance") if profile else 10,
             "credits_reset_at": profile.get("credits_reset_at") if profile else None,
         }
     except HTTPException:

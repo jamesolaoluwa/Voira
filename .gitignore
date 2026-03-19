@@ -8,8 +8,14 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.venv
+venv
 dist
 dist-ssr
+.vite
+.pytest_cache
+__pycache__
+*.py[cod]
 *.local
 
 # Editor directories and files
@@ -23,6 +29,8 @@ dist-ssr
 *.sln
 *.sw?
 
+.claude
+.cursor/settings.json
 .env
 output.md
 .env.*

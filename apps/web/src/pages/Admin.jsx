@@ -128,7 +128,7 @@ export default function Admin() {
                 <Label className="text-zinc-600 dark:text-zinc-500">Credits</Label>
                 <CreditsDisplay
                   credits={user?.credits_remaining ?? 0}
-                  total={user?.role === 'premium_user' ? 200 : 60}
+                  total={user?.monthly_credit_allowance ?? 10}
                   compact
                 />
               </div>

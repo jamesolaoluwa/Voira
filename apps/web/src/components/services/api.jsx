@@ -32,7 +32,30 @@ export const auth = {
       email,
       password,
     });
-    if (error) throw error;
+    
+    if (error) {
+      // Map common Supabase auth errors to user-friendly messages
+      const msg = error.message?.toLowerCase() || '';
+      
+      if (msg.includes('email not confirmed')) {
+        throw new Error('Please confirm your email before signing in. Check your inbox for a confirmation link.');
+      }
+      if (msg.includes('invalid login credentials') || msg.includes('invalid password')) {
+        throw new Error('Invalid email or password. Please check your credentials and try again.');
+      }
+      if (msg.includes('user not found')) {
+        throw new Error('No account found with this email. Please sign up first.');
+      }
+      if (msg.includes('too many requests') || msg.includes('rate limit')) {
+        throw new Error('Too many sign-in attempts. Please wait a moment and try again.');
+      }
+      if (msg.includes('network') || msg.includes('fetch')) {
+        throw new Error('Network error. Please check your connection and try again.');
+      }
+      
+      // Re-throw original error for unhandled cases
+      throw error;
+    }
     return data;
   },
 
@@ -55,11 +78,18 @@ export const auth = {
 
   async getMe() {
     // Try backend first, fallback to direct Supabase if backend unavailable
+    // Use requireAuth: true to fail fast if no session exists (prevents 429s during OAuth)
     try {
       const { apiClient } = await import('@/lib/apiClient');
-      return await apiClient.get('/auth/me');
+      return await apiClient.get('/auth/me', { requireAuth: true });
     } catch (error) {
-      console.warn('Backend /auth/me failed, falling back to direct Supabase:', error);
+      // If no session, return null immediately (don't try fallback)
+      if (error.code === 'NO_SESSION') {
+        console.debug('[api.getMe] No session available, returning null');
+        return null;
+      }
+      
+      console.warn('Backend /auth/me failed, falling back to direct Supabase:', error.message);
       // Fallback to direct Supabase query
       const { data: { user }, error: supabaseError } = await supabase.auth.getUser();
       if (supabaseError) throw supabaseError;
@@ -72,8 +102,9 @@ export const auth = {
         id: user.id,
         email: user.email,
         full_name: user.user_metadata?.full_name || profile?.full_name || 'User',
-        role: user.user_metadata?.role || profile?.role || 'free_user',
-        credits_remaining: profile?.credits_remaining ?? 60,
+        role: profile?.role || 'free_user',
+        credits_remaining: profile?.credits_remaining ?? 10,
+        monthly_credit_allowance: profile?.monthly_credit_allowance ?? 10,
         credits_reset_at: profile?.credits_reset_at || null,
       };
     }
@@ -90,16 +121,9 @@ export const auth = {
   }
 };
 
-// Utility to process OAuth redirect responses (useful after signInWithOAuth redirects)
-export async function processOAuthRedirect() {
-  try {
-    const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-    if (error) throw error;
-    return data.session;
-  } catch (e) {
-    return null;
-  }
-}
+// Note: processOAuthRedirect is no longer needed in Supabase v2.
+// OAuth redirects are handled automatically by the Supabase client.
+// The session is restored via onAuthStateChange when the page loads.
 
 // ============================================
 // SESSIONS
@@ -554,42 +578,96 @@ Return JSON:
 };
 
 // ============================================
-// BILLING / PLAN
+// BILLING / STRIPE
 // ============================================
 
 export const billing = {
-  async getPlan() {
-    const user = await auth.getMe();
-    if (!user) return null;
+  /**
+   * Get current subscription status from backend.
+   * Returns plan, status, credits info, etc.
+   */
+  async getSubscriptionStatus() {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      return await apiClient.get('/billing/subscription-status');
+    } catch (error) {
+      console.error('[billing.getSubscriptionStatus] Error:', error);
+      // Return free tier defaults on error
+      return {
+        plan: 'free',
+        status: 'inactive',
+        credits_remaining: 10,
+        monthly_credit_allowance: 10,
+        current_period_end: null,
+        cancel_at_period_end: false,
+      };
+    }
+  },
 
+  /**
+   * Create a Stripe Checkout session for subscription purchase.
+   * Returns the checkout URL to redirect the user to.
+   * 
+   * @param {string} priceId - Stripe Price ID (monthly or yearly)
+   * @returns {Promise<{checkout_url: string, session_id: string}>}
+   */
+  async createCheckoutSession(priceId) {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      const successUrl = `${window.location.origin}/pricing?success=true`;
+      const cancelUrl = `${window.location.origin}/pricing?canceled=true`;
+      
+      return await apiClient.post('/billing/create-checkout-session', {
+        price_id: priceId,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+      });
+    } catch (error) {
+      console.error('[billing.createCheckoutSession] Error:', error);
+      throw new Error('Failed to start checkout. Please try again.');
+    }
+  },
+
+  /**
+   * Create a Stripe Customer Portal session.
+   * Returns the portal URL where users can manage their subscription.
+   * 
+   * @returns {Promise<{portal_url: string}>}
+   */
+  async createPortalSession() {
+    try {
+      const { apiClient } = await import('@/lib/apiClient');
+      const returnUrl = `${window.location.origin}/pricing`;
+      
+      return await apiClient.post('/billing/create-portal-session', {
+        return_url: returnUrl,
+      });
+    } catch (error) {
+      console.error('[billing.createPortalSession] Error:', error);
+      throw new Error('Failed to open billing portal. Please try again.');
+    }
+  },
+
+  /**
+   * Legacy method for backward compatibility.
+   * @deprecated Use getSubscriptionStatus() instead
+   */
+  async getPlan() {
+    const status = await this.getSubscriptionStatus();
     return {
-      role: user.role,
-      credits_remaining: user.credits_remaining,
-      credits_reset_at: user.credits_reset_at,
+      role: status.plan === 'free' ? 'free_user' : 'premium_user',
+      credits_remaining: status.credits_remaining,
+      credits_reset_at: status.current_period_end,
     };
   },
 
+  /**
+   * Legacy method - no longer used.
+   * @deprecated Use createCheckoutSession() instead
+   */
   async setPlan(role) {
-    const user = await auth.getMe();
-    if (!user) throw new Error('Not authenticated');
-
-    const { error } = await supabase.auth.updateUser({
-      data: { role }
-    });
-
-    if (error) throw error;
-
-    const profiles = await base44.entities.UserProfile.filter({ user_id: user.id });
-    if (profiles.length > 0) {
-      await base44.entities.UserProfile.update(profiles[0].id, { role });
-    } else {
-      await base44.entities.UserProfile.create({
-        user_id: user.id,
-        full_name: user.full_name,
-        role,
-        credits_remaining: role === 'premium_user' ? 999 : 60,
-      });
-    }
+    console.warn('[billing.setPlan] Deprecated. Use createCheckoutSession() for upgrades.');
+    throw new Error('Direct plan changes are not supported. Please use the upgrade button.');
   },
 };
 
@@ -710,7 +788,7 @@ export const credits = {
     }
 
     const profile = profiles[0];
-    const newCredits = Math.max(0, (profile.credits_remaining || 60) - 1);
+    const newCredits = Math.max(0, (profile.credits_remaining || 10) - 1);
 
     await base44.entities.UserProfile.update(profile.id, {
       credits_remaining: newCredits,
@@ -729,7 +807,7 @@ export const credits = {
 
     if (profiles.length === 0) {
       // Create a profile with starting credits minus amount
-      const starting = Math.max(0, 60 - amount);
+      const starting = Math.max(0, 10 - amount);
       await base44.entities.UserProfile.create({
         user_id: user.id,
         full_name: user.full_name,
@@ -740,7 +818,7 @@ export const credits = {
     }
 
     const profile = profiles[0];
-    const newCredits = Math.max(0, (profile.credits_remaining || 60) - Number(amount));
+    const newCredits = Math.max(0, (profile.credits_remaining || 10) - Number(amount));
 
     await base44.entities.UserProfile.update(profile.id, {
       credits_remaining: newCredits,
@@ -755,7 +833,7 @@ export const credits = {
     return user.credits_remaining;
   },
 
-  async resetCredits(amount = 60) {
+  async resetCredits(amount = 10) {
     const user = await auth.getMe();
     if (!user) throw new Error('Not authenticated');
 

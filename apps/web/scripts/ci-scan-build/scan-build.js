@@ -30,7 +30,7 @@ const patterns = [
 // Supabase service role pattern: detect JWT-like long tokens starting with 'eyJ'.
 // To avoid false-positives on the anon key, we'll collect any anon keys present in repo .env files
 // (e.g. VITE_SUPABASE_ANON_KEY) and ignore matches equal to those values.
-const serviceRoleRe = /eyJ[A-Za-z0-9._\-]{80,}/i; // heuristic: long JWT-like token
+const serviceRoleRe = /eyJ[A-Za-z0-9._-]{80,}/i; // heuristic: long JWT-like token
 
 // Collect anon keys from .env files to whitelist them in the scan
 const anonKeys = new Set();
