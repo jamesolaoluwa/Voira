@@ -101,15 +101,27 @@ async def create_audit_log(
     
     This function MUST be called for all write operations.
     
+    Captures:
+    - Admin ID and email
+    - Action and target information
+    - Before/after state in details
+    - Request metadata (IP, user agent)
+    - Timestamp (automatic from DB)
+    
     Returns:
         The created audit log entry ID
     """
     ip_address = None
+    user_agent = None
+    
     if request:
         # Get IP from X-Forwarded-For or direct connection
         ip_address = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
         if not ip_address:
             ip_address = request.client.host if request.client else None
+        
+        # Get user agent for forensic purposes
+        user_agent = request.headers.get("User-Agent", None)
     
     try:
         result = supabase.table("admin_audit_log").insert({
@@ -120,6 +132,7 @@ async def create_audit_log(
             "target_id": target_id,
             "details": details,
             "ip_address": ip_address,
+            "user_agent": user_agent,
         }).execute()
         
         audit_id = result.data[0]["id"] if result.data else None
