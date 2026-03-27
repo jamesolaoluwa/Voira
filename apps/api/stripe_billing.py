@@ -539,6 +539,44 @@ async def get_subscription_status(user: dict = Depends(get_current_user)):
 # Webhook Endpoint (No Auth - Verified by Stripe Signature)
 # =============================================================================
 
+async def _check_webhook_idempotency(event_id: str) -> bool:
+    """
+    Check if webhook has already been processed.
+    Returns True if already processed (skip), False if first time (process).
+    
+    Reference: Claude.md - Item #1: Stripe Webhook Idempotency
+    """
+    try:
+        result = supabase.table("stripe_webhook_events").select(
+            "id"
+        ).eq("event_id", event_id).execute()
+        
+        return len(result.data) > 0  # True if found (already processed)
+    except Exception as e:
+        logger.error(f"[Stripe] Failed to check webhook idempotency for {event_id}: {e}")
+        # On error, proceed anyway (fail open to prevent losing webhooks)
+        return False
+
+
+async def _record_webhook_processed(event_id: str, event_type: str, event_payload: dict):
+    """
+    Record that a webhook was successfully processed.
+    This prevents duplicate processing if Stripe retries the webhook.
+    
+    Reference: Claude.md - Item #1: Stripe Webhook Idempotency
+    """
+    try:
+        supabase.table("stripe_webhook_events").insert({
+            "event_id": event_id,
+            "event_type": event_type,
+            "payload": event_payload
+        }).execute()
+        logger.debug(f"[Stripe] Recorded webhook {event_id} as processed")
+    except Exception as e:
+        logger.error(f"[Stripe] Failed to record webhook {event_id}: {e}")
+        # Non-critical error - webhook was processed, just record-keeping failed
+
+
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
@@ -549,6 +587,9 @@ async def stripe_webhook(
     
     SECURITY: This endpoint verifies the webhook signature to ensure
     the request came from Stripe. Never trust webhook data without verification.
+    
+    IDEMPOTENCY: Webhook events are recorded after successful processing
+    to prevent duplicate processing if Stripe retries the webhook.
     """
     if not settings.stripe_webhook_secret:
         logger.error("[Stripe] Webhook received but STRIPE_WEBHOOK_SECRET not configured")
@@ -576,7 +617,13 @@ async def stripe_webhook(
     
     # Log the event type
     event_type = event["type"]
-    logger.info(f"[Stripe] Received webhook: {event_type}")
+    event_id = event["id"]
+    logger.info(f"[Stripe] Received webhook: {event_type} (id={event_id})")
+    
+    # Check idempotency: skip if already processed
+    if await _check_webhook_idempotency(event_id):
+        logger.info(f"[Stripe] Webhook {event_id} already processed, skipping")
+        return JSONResponse(content={"status": "received"}, status_code=200)
     
     try:
         # Handle different event types
@@ -608,11 +655,19 @@ async def stripe_webhook(
             
         else:
             logger.debug(f"[Stripe] Unhandled webhook event type: {event_type}")
+        
+        # Record successful processing for idempotency
+        await _record_webhook_processed(event_id, event_type, event["data"]["object"])
     
     except Exception as e:
         import traceback
         logger.error(f"[Stripe] Error processing webhook {event_type}: {e}")
         logger.error(f"[Stripe] Traceback: {traceback.format_exc()}")
+        
+        # Send to Sentry for monitoring (Claude.md - Item #5)
+        from sentry_config import capture_exception
+        capture_exception(e)
+        
         # Return 200 anyway to prevent Stripe from retrying
         # We've logged the error for manual investigation
     

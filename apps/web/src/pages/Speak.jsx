@@ -156,7 +156,8 @@ export default function Speak() {
   const urlParams = new URLSearchParams(window.location.search);
   const type = urlParams.get('type') || 'free';
   
-  const { user: authUser, session, isLoading: authLoading, isAdmin } = useAuth();
+  const { user: authUser, session, isLoading: authLoading, isAdmin, refreshUser } = useAuth();
+  const [lastProfileRefresh, setLastProfileRefresh] = useState(0);
   
   // User settings - filler detection can be enabled in settings
   const [fillerDetectionEnabled, setFillerDetectionEnabled] = useState(false);
@@ -178,6 +179,23 @@ export default function Speak() {
     };
     loadFillerSetting();
   }, [session?.access_token]);
+
+  // Refresh user profile if > 5 minutes old (Claude.md - Item #4)
+  useEffect(() => {
+    if (!authUser || !refreshUser) return;
+
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastProfileRefresh;
+    const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+    if (lastProfileRefresh === 0 || timeSinceLastRefresh > REFRESH_INTERVAL) {
+      refreshUser().then(() => {
+        setLastProfileRefresh(now);
+      }).catch(err => {
+        console.warn('[Speak] Failed to refresh profile:', err);
+      });
+    }
+  }, [authUser, refreshUser, lastProfileRefresh]);
   
   // Use AudioRecorder with optional filler detection based on user setting
   const {
