@@ -1201,3 +1201,98 @@ async def get_audit_log_stats(
     except Exception as e:
         logger.error(f"[Admin] Failed to fetch audit log stats: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch audit log stats")
+
+
+# =============================================================================
+# Credit Management (Item #3: Monthly Credit Reset Job)
+# =============================================================================
+
+@router.post("/credits/reset-monthly")
+async def admin_reset_monthly_credits(admin: dict = Depends(require_admin)):
+    """
+    Manually trigger monthly credit reset for all Pro subscriptions.
+    
+    Normally this runs via cron job, but admins can trigger manually.
+    
+    Reference: Claude.md - Item #3: Monthly Credit Reset Job
+    
+    Returns:
+        {
+            "success": bool,
+            "reset_count": int,
+            "failed_count": int,
+            "errors": List[str]
+        }
+    """
+    try:
+        from credit_reset import reset_monthly_credits
+        
+        logger.info(f"[Admin] Manually triggering credit reset (admin: {admin['id']})")
+        
+        result = await reset_monthly_credits()
+        
+        # Log the admin action
+        await create_audit_log(
+            admin=admin,
+            action="credits_reset_monthly",
+            target_type="system",
+            target_id=None,
+            details={
+                "reset_count": result.get("reset_count"),
+                "failed_count": result.get("failed_count"),
+                "errors": result.get("errors")
+            }
+        )
+        
+        return result
+    
+    except Exception as e:
+        logger.error(f"[Admin] Failed to reset credits: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset credits")
+
+
+@router.get("/credits/verify-integrity")
+async def admin_verify_credit_integrity(admin: dict = Depends(require_admin)):
+    """
+    Verify credit system integrity and auto-fix violations.
+    
+    Checks:
+    - No user has credits > monthly_credit_allowance
+    - No user has negative credits
+    
+    Auto-fixes violations by capping/resetting credits.
+    
+    Reference: Claude.md - Item #2: Credit Overflow Protection
+    
+    Returns:
+        {
+            "integrity_ok": bool,
+            "violations": List[str],
+            "fixed_count": int
+        }
+    """
+    try:
+        from credit_reset import verify_credit_integrity
+        
+        logger.info(f"[Admin] Running credit integrity check (admin: {admin['id']})")
+        
+        result = await verify_credit_integrity()
+        
+        # Log the admin action
+        await create_audit_log(
+            admin=admin,
+            action="credits_verify_integrity",
+            target_type="system",
+            target_id=None,
+            details={
+                "integrity_ok": result.get("integrity_ok"),
+                "violation_count": len(result.get("violations", [])),
+                "fixed_count": result.get("fixed_count")
+            }
+        )
+        
+        return result
+    
+    except Exception as e:
+        logger.error(f"[Admin] Failed to verify credit integrity: {e}")
+        raise HTTPException(status_code=500, detail="Failed to verify credit integrity")
