@@ -31,7 +31,7 @@ from rate_limit import (
     initialize_rate_limiter,
     get_rate_limiter_status,
 )
-from db import supabase
+from db import supabase, log_slow_query
 from config import settings
 from transcription import (
     transcribe_audio,
@@ -43,6 +43,7 @@ from providers.deepgram_streaming import DeepgramStreamingProvider
 from providers.deepgram_webm import DeepgramWebmProvider
 from datetime import datetime
 from llm_refinement import refine_transcript, analyze_and_refine, refine_interview_response
+import time
 
 # Initialize logging FIRST (before any other imports that might log)
 from logging_config import setup_logging, get_logger, set_request_id, get_request_id
@@ -452,7 +453,10 @@ async def create_session(
         "highlights": session_data.highlights,
     }
     
+    query_start = time.time()
     response = supabase.table("recordings").insert(insert_data).execute()
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query("recordings", "INSERT", duration_ms, f"new session for user {user['id']}")
     
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to create session")
@@ -553,7 +557,10 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
     rate_limit_middleware(f"delete_all_sessions:{user['id']}")
     
     # Delete all recordings for the user (RLS ensures user can only delete their own)
+    query_start = time.time()
     response = supabase.table("recordings").delete().eq("user_id", user["id"]).execute()
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query("recordings", "DELETE", duration_ms, f"all sessions for user {user['id']}")
     
     deleted_count = len(response.data) if response.data else 0
     
