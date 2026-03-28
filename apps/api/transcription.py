@@ -53,6 +53,39 @@ class TranscriptionProviderError(TranscriptionError):
     pass
 
 
+# Lazy-loaded provider caches (initialized on first use)
+_deepgram_provider = None
+_openai_provider = None
+
+
+async def get_deepgram_provider():
+    """Lazy load Deepgram provider on first use.
+    
+    Returns:
+        Deepgram provider instance (or marker for REST API usage)
+    """
+    global _deepgram_provider
+    if _deepgram_provider is None:
+        # Mark as initialized for REST API calls
+        _deepgram_provider = {"initialized": True}
+        logger.debug("Deepgram provider initialized (lazy loaded)")
+    return _deepgram_provider
+
+
+async def get_openai_provider():
+    """Lazy load OpenAI provider on first use.
+    
+    Returns:
+        OpenAI provider instance (or marker for REST API usage)
+    """
+    global _openai_provider
+    if _openai_provider is None:
+        # Mark as initialized for REST API calls
+        _openai_provider = {"initialized": True}
+        logger.debug("OpenAI provider initialized (lazy loaded)")
+    return _openai_provider
+
+
 async def _transcribe_with_deepgram(
     audio_file: bytes,
     mime_type: str,
@@ -222,6 +255,10 @@ async def transcribe_audio(
         FileTooLargeError: If file exceeds maximum size
         TranscriptionProviderError: If all providers fail
     """
+    # Lazy load providers on first transcription request
+    await get_deepgram_provider()
+    await get_openai_provider()
+    
     # Validate file type
     if mime_type not in SUPPORTED_AUDIO_TYPES:
         raise UnsupportedFileTypeError(
