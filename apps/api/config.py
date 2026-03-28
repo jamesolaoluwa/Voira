@@ -106,7 +106,8 @@ class Settings(BaseSettings):
     # Logging
     # ==========================================================================
     # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-    log_level: str = "INFO"
+    # Default based on environment; can be overridden via LOG_LEVEL env var
+    log_level: str = ""  # Will be set below based on env
     
     # Enable JSON structured logging (recommended for production)
     log_json: bool = False
@@ -149,5 +150,34 @@ class Settings(BaseSettings):
         return self.env.lower() == "development"
 
 
+# Create settings instance
 settings = Settings()
 
+# Set environment-specific defaults after instantiation
+if not settings.log_level:
+    # Default log levels by environment
+    log_levels = {
+        "development": "DEBUG",      # Full debugging in dev
+        "staging": "INFO",           # Info + warnings in staging
+        "production": "WARNING",     # Warnings + errors only in prod
+    }
+    settings.log_level = log_levels.get(settings.env.lower(), "INFO")
+
+# Set environment-specific Sentry sampling rates (cost optimization)
+env_sampling = {
+    "development": {
+        "traces": 1.0,   # 100% transaction tracing
+        "profiles": 1.0, # 100% profiling
+    },
+    "staging": {
+        "traces": 0.5,   # 50% transaction tracing
+        "profiles": 0.5, # 50% profiling
+    },
+    "production": {
+        "traces": 0.1,   # 10% transaction tracing
+        "profiles": 0.05, # 5% profiling
+    },
+}
+sample_config = env_sampling.get(settings.env.lower(), env_sampling["production"])
+settings.sentry_traces_sample_rate = sample_config["traces"]
+settings.sentry_profiles_sample_rate = sample_config["profiles"]
