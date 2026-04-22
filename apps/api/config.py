@@ -103,6 +103,28 @@ class Settings(BaseSettings):
     max_transcript_length: int = 50000
     
     # ==========================================================================
+    # Voira v1 Model (LoRA essay adapter on Llama 3.1 8B)
+    # ==========================================================================
+    # Inference endpoint URL. Points to local mlx server in dev,
+    # HF Inference Endpoint or Replicate in production. Empty disables the model.
+    voira_model_url: str = ""
+    
+    # API key/token for the inference provider (HF, Replicate). Not needed locally.
+    voira_model_api_key: Optional[str] = None
+    
+    # Feature flag: when False, application/refine fall back to direct OpenAI path.
+    voira_model_enabled: bool = False
+    
+    # Inference timeout in seconds. 8B model generation can take 15-40s.
+    voira_model_timeout: int = 90
+    
+    # Hugging Face repo for the LoRA adapter.
+    voira_model_repo: str = "ekomobng/voira-essay-lora-v1"
+    
+    # Base model the LoRA is stacked on.
+    voira_base_model: str = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    
+    # ==========================================================================
     # Logging
     # ==========================================================================
     # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)

@@ -1576,6 +1576,126 @@ Output a polished, authentic response that sounds like the user wrote it themsel
     return '\n'.join(prompt_parts)
 
 
+# ============================================================================
+# Voira v1 Model Routing Helper
+# ============================================================================
+
+
+async def _maybe_refine_via_voira_model(
+    raw_transcript: str,
+    session_type: str,
+    desired_tone: Optional[str],
+    user_context: Optional[str],
+    reference_text: Optional[str],
+    question: Optional[str],
+    goal: Optional[str],
+    voice_profile_result: "VoiceProfileResult",
+    word_limit: Optional[int],
+) -> Optional[str]:
+    """Try to refine a transcript/draft through the Voira v1 two-stage pipeline.
+
+    Stage 1: OpenAI converts transcript/draft -> structured outline
+    Stage 2: Voira v1 LoRA model converts outline -> polished essay
+
+    Returns:
+        Essay string on success, None if the Voira pipeline is disabled or
+        failed (caller should fall back to the standard OpenAI-only path).
+
+    This function NEVER raises for "pipeline unavailable" cases; it only
+    raises for genuine programming bugs. Unavailable/failed inference just
+    returns None so the caller falls back gracefully.
+    """
+    from voira_model import (
+        is_voira_model_enabled,
+        generate_essay,
+        VoiraModelDisabledError,
+        VoiraModelUnavailableError,
+    )
+    from outline_generator import (
+        generate_outline_from_transcript,
+        extract_outline_from_draft,
+    )
+
+    if not is_voira_model_enabled():
+        return None
+
+    voice_profile_dict = (
+        voice_profile_result.profile.to_dict()
+        if voice_profile_result and voice_profile_result.profile
+        else None
+    )
+
+    try:
+        if session_type == "application":
+            logger.info("[VoiraPipeline] Routing application essay through Voira v1")
+            outline = await generate_outline_from_transcript(
+                transcript=raw_transcript,
+                question=question,
+                desired_tone=desired_tone,
+                user_context=user_context,
+                goal=goal,
+                voice_profile=voice_profile_dict,
+                word_limit=word_limit,
+                reference_text=reference_text,
+            )
+        elif session_type == "refine":
+            logger.info("[VoiraPipeline] Routing draft refinement through Voira v1")
+            # For the refine flow, raw_transcript is actually the existing draft.
+            # Refinement instructions come from user_context / goal (frontend contract).
+            refinement_instructions = user_context or goal
+            outline = await extract_outline_from_draft(
+                draft=raw_transcript,
+                question=question,
+                refinement_instructions=refinement_instructions,
+                desired_tone=desired_tone,
+                voice_profile=voice_profile_dict,
+                word_limit=word_limit,
+                reference_text=reference_text,
+            )
+        else:
+            return None
+    except Exception as e:
+        logger.warning(
+            f"[VoiraPipeline] Outline generation failed: {type(e).__name__}: {e}. "
+            f"Falling back to OpenAI-only path."
+        )
+        return None
+
+    try:
+        essay = await generate_essay(outline=outline, word_limit=word_limit)
+    except VoiraModelDisabledError:
+        return None
+    except VoiraModelUnavailableError as e:
+        logger.warning(
+            f"[VoiraPipeline] Voira model unavailable: {e}. "
+            f"Falling back to OpenAI-only path."
+        )
+        return None
+    except Exception as e:
+        logger.warning(
+            f"[VoiraPipeline] Voira generation failed: {type(e).__name__}: {e}. "
+            f"Falling back to OpenAI-only path."
+        )
+        return None
+
+    # Enforce word limit on Voira output (deterministic truncation; we don't
+    # retry inference since it's slow/expensive).
+    if word_limit and word_limit >= MIN_REASONABLE_WORD_LIMIT:
+        essay_word_count = count_words(essay)
+        if essay_word_count > word_limit:
+            logger.info(
+                f"[VoiraPipeline] Truncating Voira output "
+                f"(words={essay_word_count}, limit={word_limit})"
+            )
+            essay = truncate_to_word_limit(essay, word_limit)
+
+    logger.info(
+        f"[VoiraPipeline] Success "
+        f"(session_type={session_type}, chars={len(essay)}, words={count_words(essay)})"
+    )
+    return essay
+
+
 async def refine_transcript(
     raw_transcript: str,
     session_type: str = "free",
@@ -1636,6 +1756,29 @@ async def refine_transcript(
     # Use pre-loaded result if available, otherwise load via single path
     if voice_profile_result is None:
         voice_profile_result = get_voice_profile_for_llm(user_id, None)
+    
+    # ========================================================================
+    # Voira v1 Model Routing (two-stage pipeline for essay-style sessions)
+    # ========================================================================
+    # For application essays and draft refinement, try the fine-tuned Voira v1
+    # model first. It was trained on outline -> essay pairs, so we use OpenAI
+    # to produce a structured outline and Voira v1 to render the final essay.
+    # On any failure (disabled, endpoint down, bad output), fall through to the
+    # existing pure-OpenAI path so the user still gets a response.
+    if session_type in ("application", "refine"):
+        voira_text = await _maybe_refine_via_voira_model(
+            raw_transcript=raw_transcript,
+            session_type=session_type,
+            desired_tone=desired_tone,
+            user_context=user_context,
+            reference_text=reference_text,
+            question=question,
+            goal=goal,
+            voice_profile_result=voice_profile_result,
+            word_limit=word_limit,
+        )
+        if voira_text is not None:
+            return voira_text
     
     client = OpenAI(api_key=settings.openai_api_key)
     

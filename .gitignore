@@ -31,6 +31,8 @@ __pycache__
 
 .claude
 Claude.md
+.agents/
+claudecontext/
 .cursor/settings.json
 .env
 output.md
