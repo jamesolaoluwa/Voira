@@ -135,11 +135,17 @@ def setup_logging():
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
     
-    # Set levels for noisy libraries
-    logging.getLogger('httpx').setLevel(logging.WARNING)
-    logging.getLogger('httpcore').setLevel(logging.WARNING)
-    logging.getLogger('websockets').setLevel(logging.WARNING)
-    logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
+    # Set levels for noisy libraries (suppress in production)
+    noisy_loggers = [
+        'httpx', 'httpcore', 'websockets', 'uvicorn.access',
+        'supabase', 'urllib3', 'asyncio'
+    ]
+    
+    for logger_name in noisy_loggers:
+        # In production, suppress debug and info logs
+        # In dev/staging, allow info level
+        level = logging.WARNING if settings.is_production else logging.INFO
+        logging.getLogger(logger_name).setLevel(level)
     
     return root_logger
 

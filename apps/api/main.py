@@ -31,7 +31,7 @@ from rate_limit import (
     initialize_rate_limiter,
     get_rate_limiter_status,
 )
-from db import supabase
+from db import supabase, log_slow_query
 from config import settings
 from transcription import (
     transcribe_audio,
@@ -43,6 +43,8 @@ from providers.deepgram_streaming import DeepgramStreamingProvider
 from providers.deepgram_webm import DeepgramWebmProvider
 from datetime import datetime
 from llm_refinement import refine_transcript, analyze_and_refine, refine_interview_response
+from analytics import AnalyticsService
+import time
 
 # Initialize logging FIRST (before any other imports that might log)
 from logging_config import setup_logging, get_logger, set_request_id, get_request_id
@@ -452,7 +454,10 @@ async def create_session(
         "highlights": session_data.highlights,
     }
     
+    query_start = time.time()
     response = supabase.table("recordings").insert(insert_data).execute()
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query("recordings", "INSERT", duration_ms, f"new session for user {user['id']}")
     
     if not response.data:
         raise HTTPException(status_code=500, detail="Failed to create session")
@@ -553,7 +558,10 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
     rate_limit_middleware(f"delete_all_sessions:{user['id']}")
     
     # Delete all recordings for the user (RLS ensures user can only delete their own)
+    query_start = time.time()
     response = supabase.table("recordings").delete().eq("user_id", user["id"]).execute()
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query("recordings", "DELETE", duration_ms, f"all sessions for user {user['id']}")
     
     deleted_count = len(response.data) if response.data else 0
     
@@ -1868,3 +1876,58 @@ async def export_session(
     except Exception as e:
         logger.error(f"Failed to export session: {e}")
         raise HTTPException(status_code=500, detail="Failed to export session")
+
+
+# Analytics endpoints
+
+@app.post("/analytics/batch")
+async def batch_track_events(
+    batch: Dict[str, Any],
+    user: Optional[dict] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Track multiple analytics events in a single batch request.
+    
+    This endpoint reduces API calls by accepting batches of events.
+    Typical use: Queue 10 events or flush after 30 seconds.
+    
+    Args:
+        batch: Dict with "events" list containing event dicts
+        user: Current user (optional - for user_id context)
+    
+    Returns:
+        Confirmation with event count processed
+    """
+    try:
+        events = batch.get("events", [])
+        if not events:
+            return {"status": "ok", "count": 0}
+        
+        # Track each event
+        user_id = user.get("id") if user else None
+        processed_count = 0
+        
+        for event in events:
+            try:
+                # Track via AnalyticsService
+                success = await AnalyticsService.track(
+                    event_type=event.get("event", "unknown"),
+                    user_id=user_id or event.get("user_id"),
+                    properties=event.get("data", {}),
+                    session_id=event.get("session_id"),
+                )
+                if success:
+                    processed_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to track event: {e}")
+                continue
+        
+        logger.info(f"Batch analytics: {processed_count}/{len(events)} events processed")
+        
+        return {
+            "status": "ok",
+            "count": processed_count,
+            "total": len(events),
+        }
+    except Exception as e:
+        logger.error(f"Failed to process analytics batch: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process analytics batch")
