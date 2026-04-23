@@ -19,6 +19,7 @@ refinement.
 Reference: https://huggingface.co/ekomobng/voira-essay-lora-v1
 """
 import logging
+import re
 from typing import Optional
 import httpx
 
@@ -26,6 +27,175 @@ from config import settings
 from sentry_config import capture_message
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Essay output sanitization
+# ---------------------------------------------------------------------------
+# The v1 LoRA was trained on only ~91 outline+essay pairs. When the outline
+# OpenAI generates doesn't exactly match the training format, the model can
+# leak outline-schema artifacts into its output instead of clean prose:
+#
+#   * preambles: "Here is the polished essay:"
+#   * block markers: "--- ESSAY ---", "--- END ---"
+#   * inline field labels: "[Title:]", "[Prompt:]", "[Overall Emotional Arc:]"
+#   * inline cues: "[MOOD: reflective]", "[STRESS: ...]", "[TONAL SHIFT: ...]"
+#
+# We strip these deterministically. If what remains is too short to be a
+# usable essay, generate_essay() raises VoiraModelUnavailableError so the
+# caller (llm_refinement._maybe_refine_via_voira_model) falls back to the
+# direct OpenAI path.
+
+# Preamble phrases the model sometimes emits before the essay, possibly
+# chained (e.g. "Here's the essay: Here is the polished essay:").
+_PREAMBLE_RE = re.compile(
+    r"^\s*(?:here(?:'s|\s+is)\s+(?:the\s+)?(?:polished\s+)?essay[:.\-]?\s*)+",
+    re.IGNORECASE,
+)
+
+# Block markers on their own line (---OUTLINE---, --- ESSAY ---, --- END ---).
+_LINE_MARKER_RE = re.compile(
+    r"^[ \t]*-{2,}\s*(?:ESSAY|END|OUTLINE)\s*-{2,}[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Same markers when they appear inline (single-line outputs).
+_INLINE_MARKER_RE = re.compile(
+    r"-{2,}\s*(?:ESSAY|END|OUTLINE)\s*-{2,}",
+    re.IGNORECASE,
+)
+
+# Inline mood/stress/tonal cues from the outline schema.
+_INLINE_CUE_RE = re.compile(
+    r"\s*\[\s*(?:MOOD|STRESS|TONAL\s+SHIFT|PACING|VOICE)\s*:[^\]]*\]",
+    re.IGNORECASE,
+)
+
+# Known outline field labels. Order matters only for readability; the regex
+# is alternation-based so longest-first isn't required (all end with `]`).
+_OUTLINE_FIELDS = (
+    "Title",
+    "Prompt",
+    "Word Limit",
+    "Overall Emotional Arc",
+    "Overall Tone & Voice",
+    "Overall Tone and Voice",
+    "Introduction / Hook",
+    "Introduction/Hook",
+    "Introduction",
+    "Hook",
+    "Body",
+    "Conclusion / Summary",
+    "Conclusion/Summary",
+    "Conclusion",
+    "Summary",
+    "Key phrases",
+    "Voice/pacing",
+    "Voice / pacing",
+    "Content plan",
+)
+_FIELD_LABEL_ALT = "|".join(re.escape(f) for f in _OUTLINE_FIELDS)
+
+# Whole-line [Field:] echoes (when output is properly newline-separated).
+# Field label may have a `:`/`.`/`-` inside the brackets *or* after, e.g.
+# "[Prompt:]", "[Prompt]:", "[Prompt.]".
+_FIELD_LINE_RE = re.compile(
+    r"^[ \t]*\[\s*(?:" + _FIELD_LABEL_ALT + r")\s*[:.\-]?\s*\][:.\-]?[ \t]*.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Inline [Field:] <content> segments up to the next "[" or end of string
+# (when the model emits the whole outline on a single line).
+_FIELD_SEGMENT_RE = re.compile(
+    r"\[\s*(?:" + _FIELD_LABEL_ALT + r")\s*[:.\-]?\s*\][:.\-]?[^\[]*",
+    re.IGNORECASE,
+)
+
+# Bullet markers at line start -- `*`, `-`, `•`, or numbered `1.` / `1)`.
+# Used to detect "mostly bullets" outputs and to strip specific bullet lines.
+_BULLET_LINE_HEAD = r"^[ \t]*(?:[*\-\u2022]|\d+[.)])\s+"
+
+# Lines that start with bare outline-schema labels (no brackets), with or
+# without a leading bullet. Catches the "* MOOD: nostalgic" variant the
+# model sometimes produces instead of the bracketed "[MOOD: nostalgic]".
+_BARE_LABEL_LINE_RE = re.compile(
+    r"(?:" + _BULLET_LINE_HEAD + r")?"
+    r"(?:MOOD|STRESS|TONAL\s+SHIFT|PACING|VOICE|VOICE\s*/\s*PACING|"
+    r"CONTENT\s+PLAN|KEY\s+PHRASES)\s*[:.\-]\s+.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Bulleted lines that look like outline planning directives rather than
+# essay prose (verbs in the imperative like "Open with", "Establish",
+# "Plant the seed", "Close the intro with"). Conservative -- only applied
+# as a second pass after other stripping.
+_OUTLINE_VERB_BULLET_RE = re.compile(
+    _BULLET_LINE_HEAD + r"(?:Open\s+with|Establish|Plant\s+the\s+seed|"
+    r"Close\s+the\s+(?:intro|essay)\s+with|Introduce|Transition\s+to|"
+    r"Build\s+to|Show\s+that|Reveal\s+that|Emphasize\s+that)\b.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_BLANK_LINE_COLLAPSE_RE = re.compile(r"\n{3,}")
+
+# Outputs shorter than this after sanitization are treated as "model echoed
+# outline structure without producing an essay" and trigger fallback.
+MIN_ESSAY_WORDS = 30
+
+
+def _sanitize_essay_output(raw: str) -> str:
+    """Strip outline-schema artifacts from a raw Voira v1 essay output.
+
+    Leaves clean prose untouched. For outputs that are mostly or entirely
+    outline echoes, this can reduce the text to an empty string; callers
+    should validate the length before returning to the user.
+    """
+    if not raw:
+        return ""
+
+    text = raw.strip()
+
+    # 1. Drop preamble phrases.
+    text = _PREAMBLE_RE.sub("", text).lstrip()
+
+    # 2. Drop block markers (both on their own line and inline).
+    text = _LINE_MARKER_RE.sub("", text)
+    text = _INLINE_MARKER_RE.sub("", text)
+
+    # 3. Drop inline [MOOD:]/[STRESS:]/[TONAL SHIFT:] cues.
+    text = _INLINE_CUE_RE.sub("", text)
+
+    # 4. Drop whole-line [Field:] echoes first (cheapest), then inline
+    #    [Field:] segments for pathological single-line outputs.
+    text = _FIELD_LINE_RE.sub("", text)
+    text = _FIELD_SEGMENT_RE.sub("", text)
+
+    # 5. Drop lines that are bare outline-schema labels ("* MOOD: ...",
+    #    "STRESS: ...") and bullet lines that are clearly outline planning
+    #    directives ("* Open with...", "* Establish...").
+    text = _BARE_LABEL_LINE_RE.sub("", text)
+    text = _OUTLINE_VERB_BULLET_RE.sub("", text)
+
+    # 6. Tidy whitespace: collapse 3+ newlines to a paragraph break, trim
+    #    trailing spaces per line, and strip edges.
+    text = _BLANK_LINE_COLLAPSE_RE.sub("\n\n", text)
+    text = "\n".join(line.rstrip() for line in text.splitlines())
+    text = text.strip()
+
+    # 7. Safety net: if what's left is mostly bullet points (>= 60% of
+    #    non-empty lines start with a bullet marker), it's almost certainly
+    #    outline content, not an essay. Treat as empty so the caller falls
+    #    back to OpenAI.
+    non_empty_lines = [ln for ln in text.splitlines() if ln.strip()]
+    if non_empty_lines:
+        bullet_lines = sum(
+            1 for ln in non_empty_lines
+            if re.match(_BULLET_LINE_HEAD, ln)
+        )
+        if bullet_lines / len(non_empty_lines) >= 0.6:
+            return ""
+
+    return text
 
 
 class VoiraModelError(Exception):
@@ -146,16 +316,42 @@ async def generate_essay(
 
         data = response.json()
 
-        essay = data.get("essay") or data.get("generated_text") or data.get("output")
-        if not essay:
+        raw_essay = data.get("essay") or data.get("generated_text") or data.get("output")
+        if not raw_essay:
             raise VoiraModelUnavailableError(
                 f"Voira endpoint response missing essay/generated_text field: {data}"
             )
 
-        essay = essay.strip()
+        essay = _sanitize_essay_output(raw_essay)
+        raw_chars = len(raw_essay)
+        clean_chars = len(essay)
+        clean_words = len(essay.split())
+
+        if clean_words < MIN_ESSAY_WORDS:
+            logger.warning(
+                f"[VoiraModel] Output was mostly outline artifacts "
+                f"(raw_chars={raw_chars}, clean_chars={clean_chars}, "
+                f"clean_words={clean_words}). Treating as unavailable."
+            )
+            capture_message(
+                "Voira model output collapsed to <min_words after sanitization",
+                level="warning",
+                extra={
+                    "raw_chars": raw_chars,
+                    "clean_chars": clean_chars,
+                    "clean_words": clean_words,
+                    "min_words": MIN_ESSAY_WORDS,
+                },
+            )
+            raise VoiraModelUnavailableError(
+                f"Voira output had only {clean_words} prose words after "
+                f"stripping outline artifacts (min={MIN_ESSAY_WORDS})"
+            )
+
         logger.info(
             f"[VoiraModel] Generation succeeded "
-            f"(chars={len(essay)}, words={len(essay.split())})"
+            f"(raw_chars={raw_chars}, clean_chars={clean_chars}, "
+            f"words={clean_words})"
         )
         return essay
 
