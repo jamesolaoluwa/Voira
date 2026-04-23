@@ -17,6 +17,7 @@ dist-ssr
 __pycache__
 *.py[cod]
 *.local
+.voira-mlx-venv/
 
 # Editor directories and files
 .vscode/*

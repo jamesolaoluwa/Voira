@@ -62,6 +62,7 @@ ENDPOINTS:
 import argparse
 import logging
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -91,10 +92,18 @@ SYSTEM_PROMPT = (
 
 
 def run_setup(output_dir: Path = DEFAULT_FUSED_MODEL_DIR) -> None:
-    """One-time setup: download base model + adapter and fuse into MLX format.
+    """One-time setup: download base + adapter, merge with PEFT, convert to MLX.
 
-    Uses mlx_lm's convert+fuse utilities. This is idempotent -- if the output
-    directory already has a valid MLX model, we skip.
+    The Voira LoRA adapter is in Hugging Face PEFT format (trained with Unsloth),
+    which mlx_lm.fuse cannot consume directly. So we:
+      1. Download the PEFT adapter snapshot.
+      2. Load the fp16 HF base model (meta-llama/Meta-Llama-3.1-8B-Instruct).
+      3. merge_and_unload() the adapter into the base weights.
+      4. Save the merged HF model to a temp directory.
+      5. Run mlx_lm.convert on the merged model with 4-bit quantization.
+      6. Clean up the intermediate merged HF copy and the old base-mlx dir.
+
+    Idempotent: if the final MLX model already exists, we skip.
     """
     output_dir = Path(output_dir).expanduser()
     if (output_dir / "config.json").exists() and (output_dir / "tokenizer.json").exists():
@@ -104,7 +113,6 @@ def run_setup(output_dir: Path = DEFAULT_FUSED_MODEL_DIR) -> None:
     try:
         from huggingface_hub import snapshot_download
         from mlx_lm import convert as mlx_convert
-        from mlx_lm import fuse as mlx_fuse
     except ImportError as e:
         logger.error(
             "Missing inference dependencies. Install with:\n"
@@ -113,33 +121,83 @@ def run_setup(output_dir: Path = DEFAULT_FUSED_MODEL_DIR) -> None:
         )
         sys.exit(1)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from peft import PeftModel
+    except ImportError as e:
+        logger.error(
+            "Missing merge dependencies. Install with:\n"
+            "    pip install 'transformers>=4.44' 'peft>=0.12' "
+            "'accelerate>=0.33' 'torch>=2.3'\n"
+            f"Import error: {e}"
+        )
+        sys.exit(1)
+
+    # Ensure the parent exists, but leave output_dir itself for mlx_convert to
+    # create. mlx_lm.convert refuses to write to an existing directory.
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    if output_dir.exists():
+        # An empty or stale directory from a previous failed run.
+        if not any(output_dir.iterdir()):
+            output_dir.rmdir()
+        else:
+            logger.error(
+                f"Output dir {output_dir} already exists and is non-empty "
+                "but missing config.json/tokenizer.json. Delete it and retry."
+            )
+            sys.exit(1)
+
     adapter_dir = output_dir.parent / "adapter"
+    merged_tmp = output_dir.parent / "merged-hf-tmp"
     base_mlx_dir = output_dir.parent / "base-mlx"
 
     logger.info(f"Downloading Voira LoRA adapter from {ADAPTER_REPO}...")
     snapshot_download(repo_id=ADAPTER_REPO, local_dir=str(adapter_dir))
 
-    if not (base_mlx_dir / "config.json").exists():
-        logger.info(
-            f"Converting base model {BASE_MODEL_ID} to MLX 4-bit format "
-            f"(this downloads ~16GB and quantizes; ~5 min)..."
-        )
-        mlx_convert.convert(
-            hf_path=BASE_MODEL_ID,
-            mlx_path=str(base_mlx_dir),
-            quantize=True,
-            q_bits=4,
-        )
+    if (merged_tmp / "config.json").exists():
+        logger.info(f"Merged HF model already present at {merged_tmp}; reusing.")
     else:
-        logger.info(f"Base MLX model already converted at {base_mlx_dir}")
+        logger.info(
+            f"Loading base model {BASE_MODEL_ID} and merging Voira LoRA adapter "
+            f"(this runs on CPU in bf16; ~2-4 min)..."
+        )
+        base = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL_ID,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_ID)
 
-    logger.info(f"Fusing adapter into base model -> {output_dir}")
-    mlx_fuse.main([
-        "--model", str(base_mlx_dir),
-        "--adapter-path", str(adapter_dir),
-        "--save-path", str(output_dir),
-    ])
+        logger.info(f"Applying PEFT adapter from {adapter_dir}...")
+        peft_model = PeftModel.from_pretrained(base, str(adapter_dir))
+        merged = peft_model.merge_and_unload()
+
+        logger.info(f"Saving merged HF model to {merged_tmp}...")
+        merged.save_pretrained(str(merged_tmp), safe_serialization=True)
+        tokenizer.save_pretrained(str(merged_tmp))
+
+        # Free Python-side references so subsequent MLX conversion has headroom.
+        del merged, peft_model, base, tokenizer
+
+    logger.info(
+        f"Converting merged HF model to MLX 4-bit format -> {output_dir} "
+        f"(this quantizes; ~1-2 min)..."
+    )
+    mlx_convert(
+        hf_path=str(merged_tmp),
+        mlx_path=str(output_dir),
+        quantize=True,
+        q_bits=4,
+    )
+
+    # Cleanup: user opted into removing all intermediates after success.
+    if merged_tmp.exists():
+        logger.info(f"Cleaning up intermediate merged HF model at {merged_tmp}...")
+        shutil.rmtree(merged_tmp, ignore_errors=True)
+    if base_mlx_dir.exists():
+        logger.info(f"Cleaning up unused base-mlx directory at {base_mlx_dir}...")
+        shutil.rmtree(base_mlx_dir, ignore_errors=True)
 
     logger.info(f"Setup complete. Fused Voira v1 model saved to {output_dir}")
 

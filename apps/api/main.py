@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from auth import get_current_user, get_active_user, check_is_admin, security, get_user_from_websocket_token, get_active_user_from_websocket_token
 from models import (
     SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
