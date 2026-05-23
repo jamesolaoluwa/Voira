@@ -76,22 +76,20 @@ def _mock_rate_limit_middleware(key: str):
     pass
 
 # Track whether we should mock rate limiting
-_should_mock_rate_limit = True
-_patches = []
-
+_should_mock_rate_limit = not any('test_rate_limit' in arg for arg in sys.argv)
 
 _patches = [
     patch("rate_limit.rate_limit_check", _mock_rate_limit_check),
     patch("rate_limit.initialize_rate_limiter", AsyncMock(return_value="memory")),
     patch("rate_limit.close_redis", AsyncMock()),
     patch("rate_limit.rate_limit_middleware", _mock_rate_limit_middleware),
-    # Also set the module state to "initialized" to prevent errors
     patch("rate_limit._initialized", True),
     patch("rate_limit._active_backend", "memory"),
 ]
 
-for p in _patches:
-    p.start()
+if _should_mock_rate_limit:
+    for p in _patches:
+        p.start()
 
 
 # =============================================================================

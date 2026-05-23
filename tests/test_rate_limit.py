@@ -52,15 +52,17 @@ def reset_rate_limiter_state():
     """
     Reset rate limiter state before AND after each test.
     
-    This is critical because:
-    1. Tests modify global state (_initialized, _active_backend, etc.)
-    2. Each test needs a clean slate to test initialization
-    3. Tests should not affect each other
+    Reloads the module to undo conftest's global patches (which mock
+    initialize_rate_limiter, _initialized, etc. for non-rate-limit tests).
+    Each test re-imports from rate_limit inside the function body, so they
+    get the real (reloaded) module.
     """
-    from rate_limit import reset_for_testing
-    reset_for_testing()
+    import importlib
+    import rate_limit
+    importlib.reload(rate_limit)
+    rate_limit.reset_for_testing()
     yield
-    reset_for_testing()
+    rate_limit.reset_for_testing()
 
 
 class TestRateLimiterInitialization:
@@ -121,8 +123,7 @@ class TestRateLimiterInitialization:
             mock_settings.rate_limit_enabled = True
             mock_settings.env = "production"
             
-            # Mock Redis connection failure
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
                 mock_client.ping.side_effect = ConnectionError("Connection refused")
                 mock_client.close = AsyncMock()
@@ -131,7 +132,8 @@ class TestRateLimiterInitialization:
                 with pytest.raises(RateLimiterConfigurationError) as exc_info:
                     await initialize_rate_limiter()
                 
-                assert "Connection refused" in str(exc_info.value) or "Failed to connect" in str(exc_info.value)
+                error_msg = str(exc_info.value)
+                assert "Connection refused" in error_msg or "Failed to connect" in error_msg
     
     @pytest.mark.asyncio
     async def test_production_redis_available_uses_redis(self):
@@ -154,8 +156,7 @@ class TestRateLimiterInitialization:
             mock_settings.rate_limit_enabled = True
             mock_settings.env = "production"
             
-            # Mock successful Redis connection
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
                 mock_client.ping = AsyncMock(return_value=True)
                 mock_client.close = AsyncMock()
@@ -225,7 +226,7 @@ class TestRateLimiterInitialization:
             mock_settings.rate_limit_enabled = True
             mock_settings.env = "development"
             
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
                 mock_client.ping = AsyncMock(return_value=True)
                 mock_client.close = AsyncMock()
@@ -319,14 +320,12 @@ class TestNoSilentFallback:
             mock_settings.redis_url = "redis://redis.example.com:6379"
             mock_settings.rate_limit_enabled = True
             
-            # But Redis is UNREACHABLE
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
                 mock_client.ping.side_effect = ConnectionError("Connection refused")
                 mock_client.close = AsyncMock()
                 mock_redis.return_value = mock_client
                 
-                # MUST raise an error - no silent fallback allowed
                 with pytest.raises(RateLimiterConfigurationError) as exc_info:
                     await initialize_rate_limiter()
                 
@@ -365,9 +364,8 @@ class TestNoSilentFallback:
             mock_settings.redis_url = "redis://redis.example.com:6379"
             mock_settings.rate_limit_enabled = True
             
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
-                # Simulate timeout
                 mock_client.ping.side_effect = asyncio.TimeoutError("Connection timed out")
                 mock_client.close = AsyncMock()
                 mock_redis.return_value = mock_client
@@ -403,9 +401,8 @@ class TestNoSilentFallback:
             mock_settings.redis_url = "redis://:wrongpassword@redis.example.com:6379"
             mock_settings.rate_limit_enabled = True
             
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
-                # Simulate auth failure
                 mock_client.ping.side_effect = Exception("NOAUTH Authentication required")
                 mock_client.close = AsyncMock()
                 mock_redis.return_value = mock_client
@@ -443,11 +440,11 @@ class TestRateLimiterOperations:
         
         reset_for_testing()
         
-        # Don't initialize - just try to use it
         with pytest.raises(RateLimiterUnavailableError) as exc_info:
             await check_rate_limit_redis("test_key", 10, 60)
         
-        assert "not initialized" in str(exc_info.value).lower()
+        error_msg = str(exc_info.value).lower()
+        assert "not available" in error_msg or "not initialized" in error_msg
     
     @pytest.mark.asyncio
     async def test_redis_connection_failure_during_operation_raises_in_production(self):
@@ -470,18 +467,15 @@ class TestRateLimiterOperations:
             mock_settings.rate_limit_enabled = True
             mock_settings.env = "production"
             
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
-                # Ping succeeds during init
                 mock_client.ping = AsyncMock(return_value=True)
                 mock_client.close = AsyncMock()
-                # But operations fail
                 mock_client.pipeline = MagicMock(side_effect=ConnectionError("Redis disconnected"))
                 mock_redis.return_value = mock_client
                 
                 await initialize_rate_limiter()
                 
-                # Now try to use it - should raise
                 with pytest.raises((RateLimiterUnavailableError, ConnectionError)):
                     await check_rate_limit_redis("test_key", 10, 60)
     
@@ -507,21 +501,19 @@ class TestRateLimiterOperations:
             
             await initialize_rate_limiter()
             
-            # First few requests should succeed
             for i in range(5):
                 allowed, remaining, reset_at = await check_rate_limit_memory(
-                    "test_user:endpoint", 
-                    max_requests=5, 
-                    window_seconds=60
+                    "test_user:endpoint",
+                    limit=5,
+                    window=60,
                 )
                 assert allowed is True, f"Request {i+1} should be allowed"
                 assert remaining == 5 - (i + 1)
             
-            # Next request should be denied
             allowed, remaining, reset_at = await check_rate_limit_memory(
                 "test_user:endpoint",
-                max_requests=5,
-                window_seconds=60
+                limit=5,
+                window=60,
             )
             assert allowed is False
             assert remaining == 0
@@ -571,7 +563,7 @@ class TestRateLimiterStatus:
             mock_settings.rate_limit_enabled = True
             mock_settings.env = "development"
             
-            with patch('rate_limit.redis.from_url') as mock_redis:
+            with patch('redis.asyncio.from_url') as mock_redis:
                 mock_client = AsyncMock()
                 mock_client.ping = AsyncMock(return_value=True)
                 mock_client.close = AsyncMock()

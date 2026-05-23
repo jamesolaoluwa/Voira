@@ -820,7 +820,10 @@ class TestTradeoffsDocumented:
         """Test that EXPLICIT TRADEOFFS section exists in llm_refinement.py."""
         import os
         
-        with open('apps/api/llm_refinement.py', 'r') as f:
+        file_path = os.path.join(
+            os.path.dirname(__file__), '..', 'apps', 'api', 'llm_refinement.py'
+        )
+        with open(file_path, 'r') as f:
             content = f.read()
         
         assert "EXPLICIT TRADEOFFS (v1)" in content

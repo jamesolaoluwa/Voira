@@ -207,8 +207,10 @@ async def initialize_rate_limiter() -> str:
 
 def _mask_redis_url(url: str) -> str:
     """Mask password in Redis URL for safe logging."""
-    if not url:
+    if url is None:
         return "None"
+    if url == "":
+        return ""
     try:
         # Handle redis://user:password@host:port/db format
         if "@" in url:
