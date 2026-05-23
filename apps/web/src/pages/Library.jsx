@@ -21,6 +21,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { sessions as sessionsApi, drafts as draftsApi } from '@/components/services/api';
 import { 
   Search, 
@@ -34,7 +40,9 @@ import {
   ChevronRight,
   Trash2,
   Loader2,
-  Trash2 as TrashIcon
+  Trash2 as TrashIcon,
+  MoreHorizontal,
+  Pencil,
 } from 'lucide-react';
 
 const typeIcons = {
@@ -87,6 +95,9 @@ export default function Library() {
 
   const [deleteTarget, setDeleteTarget] = React.useState(null);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = React.useState(false);
+  const [renameTarget, setRenameTarget] = React.useState(null); // { id, isDraft, currentTitle }
+  const [renameValue, setRenameValue] = React.useState('');
+  const [isRenaming, setIsRenaming] = React.useState(false);
   
   // Fetch sessions on mount
   useEffect(() => {
@@ -109,13 +120,23 @@ export default function Library() {
             title: session.title || '',
             type: session.type || 'free',
             question: session.question || '',
+            goal: session.goal || '',
+            reference_text: session.reference_text || '',
+            referenceText: session.reference_text || '',
             transcript: transcript,
+            // CRITICAL: Keep the refined essay on the session object so that
+            // when Library passes sessionData through router state to Draft.jsx
+            // the already-generated essay re-hydrates instead of rendering blank.
+            refined_draft: session.refined_draft || '',
+            refinedDraft: session.refined_draft || '',
+            highlights: session.highlights || [],
             durationSec: durationSec,
             duration_seconds: durationSec,
             wordsCount: wordsCount,
             words_count: wordsCount,
             confidenceScore: session.confidence_score || session.clarity_score || 0,
             confidence_score: session.confidence_score || 0,
+            clarityScore: session.clarity_score || 0,
             clarity_score: session.clarity_score || 0,
             fillerCount: session.filler_count || 0,
             filler_count: session.filler_count || 0,
@@ -124,8 +145,12 @@ export default function Library() {
             createdAt: session.created_at || new Date().toISOString(),
             created_at: session.created_at || new Date().toISOString(),
             created_date: session.created_at || new Date().toISOString(),
+            updatedAt: session.updated_at || session.created_at || new Date().toISOString(),
+            updated_at: session.updated_at || session.created_at || new Date().toISOString(),
             // CRITICAL: Mark as backend-sourced to prevent invalid API calls
             source: 'backend',
+            // Discriminator for Library UI (session vs draft)
+            itemKind: 'session',
           };
         });
         
@@ -183,6 +208,8 @@ export default function Library() {
           // Mark as draft for UI differentiation
           isDraft: true,
           source: 'backend',
+          // Discriminator for Library UI (session vs draft)
+          itemKind: 'draft',
         }));
         
         setDrafts(normalizedDrafts);
@@ -281,6 +308,78 @@ export default function Library() {
   
   const handleDeleteAll = () => {
     deleteAllMutation.mutate();
+  };
+
+  const onConfirmRename = async () => {
+    if (!renameTarget?.id) return;
+    const trimmed = (renameValue || '').trim();
+    if (!trimmed) {
+      toast({
+        title: 'Name cannot be empty',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (trimmed === (renameTarget.currentTitle || '')) {
+      setRenameTarget(null);
+      setRenameValue('');
+      return;
+    }
+
+    setIsRenaming(true);
+    const { id, isDraft } = renameTarget;
+
+    if (isDraft) {
+      // Optimistic local update
+      const prevDrafts = drafts;
+      setDrafts(prev => prev.map(d => (d.id === id ? { ...d, name: trimmed, title: trimmed } : d)));
+      try {
+        await draftsApi.update(id, { name: trimmed });
+        toast({ title: 'Draft renamed' });
+      } catch (error) {
+        console.error('[Library] Failed to rename draft:', error);
+        setDrafts(prevDrafts);
+        toast({
+          title: 'Failed to rename draft',
+          description: error.message || 'Please try again',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsRenaming(false);
+        setRenameTarget(null);
+        setRenameValue('');
+      }
+      return;
+    }
+
+    // Session rename (optimistic store update + backend PUT)
+    const storeBefore = useSessionStore.getState().sessions || [];
+    const snapshot = storeBefore.find(s => s.id === id);
+    try {
+      useSessionStore.getState().updateSession(id, { title: trimmed });
+    } catch (e) {}
+
+    try {
+      await sessionsApi.renameSession(id, trimmed);
+      toast({ title: 'Session renamed' });
+    } catch (error) {
+      console.error('[Library] Failed to rename session:', error);
+      // Revert optimistic update
+      if (snapshot) {
+        try {
+          useSessionStore.getState().updateSession(id, { title: snapshot.title });
+        } catch (e) {}
+      }
+      toast({
+        title: 'Failed to rename session',
+        description: error.message || 'Please try again',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRenaming(false);
+      setRenameTarget(null);
+      setRenameValue('');
+    }
   };
   
   // undo-capable delete: remove from store immediately and show undo toast
@@ -545,19 +644,45 @@ export default function Library() {
                     
                     {/* Actions */}
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setDeleteTarget({ id: recording.id, isDraft })}
-                        disabled={deleteMutation.isPending}
-                        className="text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10"
-                      >
-                        {deleteMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="More actions"
+                            className="text-zinc-500 hover:text-violet-400 hover:bg-violet-500/10"
+                          >
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              const currentTitle = recording.title || recording.name || '';
+                              setRenameTarget({
+                                id: recording.id,
+                                isDraft,
+                                currentTitle,
+                              });
+                              setRenameValue(currentTitle);
+                            }}
+                          >
+                            <Pencil className="w-4 h-4 mr-2" />
+                            Rename
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-rose-600 focus:text-rose-600"
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              setDeleteTarget({ id: recording.id, isDraft });
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       <Link 
                         to={linkTo}
                         state={{ 
@@ -630,6 +755,72 @@ export default function Library() {
         </AlertDialogContent>
       </AlertDialog>
       
+      {/* Rename dialog */}
+      <AlertDialog
+        open={!!renameTarget}
+        onOpenChange={(open) => {
+          if (!open && !isRenaming) {
+            setRenameTarget(null);
+            setRenameValue('');
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Rename {renameTarget?.isDraft ? 'draft' : 'session'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Enter a new name for this {renameTarget?.isDraft ? 'draft' : 'session'}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!isRenaming) onConfirmRename();
+            }}
+            className="mt-2"
+          >
+            <Input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder="New name"
+              maxLength={200}
+              disabled={isRenaming}
+            />
+          </form>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                if (isRenaming) return;
+                setRenameTarget(null);
+                setRenameValue('');
+              }}
+              disabled={isRenaming}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                onConfirmRename();
+              }}
+              disabled={isRenaming || !renameValue.trim()}
+            >
+              {isRenaming ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Delete All confirmation dialog */}
       <AlertDialog open={showDeleteAllDialog} onOpenChange={(open) => { if (!open) setShowDeleteAllDialog(false); }}>
         <AlertDialogContent>

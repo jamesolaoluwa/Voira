@@ -41,10 +41,12 @@ class Settings(BaseSettings):
     sentry_dsn: Optional[str] = None
     
     # Sample rate for performance monitoring (0.0 to 1.0)
-    sentry_traces_sample_rate: float = 0.1
+    # -1.0 sentinel means "use environment-specific default" (set after instantiation)
+    sentry_traces_sample_rate: float = -1.0
     
     # Sample rate for profiling (0.0 to 1.0)
-    sentry_profiles_sample_rate: float = 0.1
+    # -1.0 sentinel means "use environment-specific default" (set after instantiation)
+    sentry_profiles_sample_rate: float = -1.0
     
     # ==========================================================================
     # CORS Configuration
@@ -185,7 +187,8 @@ if not settings.log_level:
     }
     settings.log_level = log_levels.get(settings.env.lower(), "INFO")
 
-# Set environment-specific Sentry sampling rates (cost optimization)
+# Set environment-specific Sentry sampling rates only if not explicitly overridden
+# via env vars (sentinel -1.0 means no explicit override was provided)
 env_sampling = {
     "development": {
         "traces": 1.0,   # 100% transaction tracing
@@ -201,5 +204,7 @@ env_sampling = {
     },
 }
 sample_config = env_sampling.get(settings.env.lower(), env_sampling["production"])
-settings.sentry_traces_sample_rate = sample_config["traces"]
-settings.sentry_profiles_sample_rate = sample_config["profiles"]
+if settings.sentry_traces_sample_rate < 0:
+    settings.sentry_traces_sample_rate = sample_config["traces"]
+if settings.sentry_profiles_sample_rate < 0:
+    settings.sentry_profiles_sample_rate = sample_config["profiles"]

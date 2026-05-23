@@ -305,7 +305,13 @@ ENDPOINT_LIMITS = {
     
     # Auth endpoints (prevent brute force)
     "/auth": {"limit": 20, "window": 60},
-    
+
+    # Webhook endpoints (higher limit — Stripe retries on failure, and we
+    # don't want legitimate retries to be throttled, but still cap to
+    # prevent abuse if the URL is discovered by a bad actor)
+    "/webhooks/": {"limit": 200, "window": 60},
+    "/billing/webhook": {"limit": 200, "window": 60},
+
     # Default for all other endpoints
     "default": {"limit": 60, "window": 60},
 }

@@ -114,14 +114,14 @@ export default function Layout({ children, currentPageName }) {
       {isLandingPage || isAuthPage ? (
         <main className="min-h-screen">
           {children || <Outlet />}
-          {!import.meta.env.PROD && <AuthDebug />}
+          {/* {!import.meta.env.PROD && <AuthDebug />} */}
         </main>
       ) : (
         <>
           <TopNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} isAdmin={isAdmin} />
           <main className="min-h-screen">
             {children || <Outlet />}
-            {!import.meta.env.PROD && <AuthDebug />}
+            {/* {!import.meta.env.PROD && <AuthDebug />} */}
           </main>
         </>
       )}

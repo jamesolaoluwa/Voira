@@ -77,9 +77,15 @@ _OUTLINE_FIELDS = (
     "Title",
     "Prompt",
     "Word Limit",
+    "Overall Emotional Arc & Voice Notes",
+    "Overall Emotional Arc and Voice Notes",
     "Overall Emotional Arc",
+    "Emotional Arc",
     "Overall Tone & Voice",
     "Overall Tone and Voice",
+    "Writing Voice",
+    "Voice Notes",
+    "Tone",
     "Introduction / Hook",
     "Introduction/Hook",
     "Introduction",
@@ -111,6 +117,25 @@ _FIELD_SEGMENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Generic "looks-like-an-outline-label" detector at line start. Catches
+# any line that begins with [Something] or [Something:] where the bracketed
+# contents look like a label (Title Case words or ALL CAPS, possibly with
+# `&`, `/`, or `-` separators). This covers label variants the model
+# invents that aren't in _OUTLINE_FIELDS, e.g. `[Writing Voice]`,
+# `[Overall Emotional Arc & Voice Notes:]`, `[OUTGRACE:]`.
+# Kept deliberately narrow (anchored to line start, requires the label to
+# start with an uppercase letter) so it does not touch legitimate prose
+# that happens to quote bracketed text mid-sentence.
+_GENERIC_BRACKET_LINE_RE = re.compile(
+    r"^[ \t]*\[[A-Z][A-Za-z0-9&/\- \t]{1,80}\][ \t]*[:.\-]?[ \t]*.*$",
+    re.MULTILINE,
+)
+
+# Any remaining bracketed label anywhere in the output. Used only as a
+# safety-net count after sanitization -- if multiple labels survive, the
+# model is clearly emitting outline structure rather than prose.
+_ANY_BRACKET_LABEL_RE = re.compile(r"\[[A-Z][^\]\n]{0,80}\]")
+
 # Bullet markers at line start -- `*`, `-`, `•`, or numbered `1.` / `1)`.
 # Used to detect "mostly bullets" outputs and to strip specific bullet lines.
 _BULLET_LINE_HEAD = r"^[ \t]*(?:[*\-\u2022]|\d+[.)])\s+"
@@ -130,9 +155,12 @@ _BARE_LABEL_LINE_RE = re.compile(
 # "Plant the seed", "Close the intro with"). Conservative -- only applied
 # as a second pass after other stripping.
 _OUTLINE_VERB_BULLET_RE = re.compile(
-    _BULLET_LINE_HEAD + r"(?:Open\s+with|Establish|Plant\s+the\s+seed|"
+    _BULLET_LINE_HEAD + r"(?:Open\s+with|Start\s+with|Begin\s+with|"
+    r"Establish|Plant\s+the\s+seed|"
     r"Close\s+the\s+(?:intro|essay)\s+with|Introduce|Transition\s+to|"
-    r"Build\s+to|Show\s+that|Reveal\s+that|Emphasize\s+that)\b.*$",
+    r"Move\s+into|Return\s+to|"
+    r"Build\s+to|Show\s+that|Reveal\s+that|Emphasize\s+that|"
+    r"Finally,?\s+(?:return|move|close|end))\b.*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -170,30 +198,43 @@ def _sanitize_essay_output(raw: str) -> str:
     text = _FIELD_LINE_RE.sub("", text)
     text = _FIELD_SEGMENT_RE.sub("", text)
 
-    # 5. Drop lines that are bare outline-schema labels ("* MOOD: ...",
+    # 5. Drop any remaining lines that open with a bracketed label. This
+    #    catches variants the model invents on the fly (`[Writing Voice]`,
+    #    `[Overall Emotional Arc & Voice Notes:]`, garbled tokens like
+    #    `[OUTGRACE:]`) that aren't in _OUTLINE_FIELDS.
+    text = _GENERIC_BRACKET_LINE_RE.sub("", text)
+
+    # 6. Drop lines that are bare outline-schema labels ("* MOOD: ...",
     #    "STRESS: ...") and bullet lines that are clearly outline planning
     #    directives ("* Open with...", "* Establish...").
     text = _BARE_LABEL_LINE_RE.sub("", text)
     text = _OUTLINE_VERB_BULLET_RE.sub("", text)
 
-    # 6. Tidy whitespace: collapse 3+ newlines to a paragraph break, trim
+    # 7. Tidy whitespace: collapse 3+ newlines to a paragraph break, trim
     #    trailing spaces per line, and strip edges.
     text = _BLANK_LINE_COLLAPSE_RE.sub("\n\n", text)
     text = "\n".join(line.rstrip() for line in text.splitlines())
     text = text.strip()
 
-    # 7. Safety net: if what's left is mostly bullet points (>= 60% of
-    #    non-empty lines start with a bullet marker), it's almost certainly
-    #    outline content, not an essay. Treat as empty so the caller falls
-    #    back to OpenAI.
+    # 8. Safety net A -- bullet-heavy output. If >= 50% of non-empty lines
+    #    start with a bullet marker (or numbered list prefix), it's almost
+    #    certainly outline content, not an essay.
     non_empty_lines = [ln for ln in text.splitlines() if ln.strip()]
     if non_empty_lines:
         bullet_lines = sum(
             1 for ln in non_empty_lines
             if re.match(_BULLET_LINE_HEAD, ln)
         )
-        if bullet_lines / len(non_empty_lines) >= 0.6:
+        if bullet_lines / len(non_empty_lines) >= 0.5:
             return ""
+
+    # 9. Safety net B -- residual bracketed labels. After stripping known
+    #    and generic label lines, a clean essay should have ~0 of these.
+    #    Two or more remaining `[Something]` labels means the model is
+    #    leaking outline/control tokens (or has collapsed into garbled
+    #    token output like `[OUTGRACE:]`), so reject.
+    if len(_ANY_BRACKET_LABEL_RE.findall(text)) >= 2:
+        return ""
 
     return text
 
@@ -221,23 +262,29 @@ def is_voira_model_enabled() -> bool:
     return bool(settings.voira_model_enabled and settings.voira_model_url)
 
 
-def _estimate_max_new_tokens(word_limit: Optional[int], default: int = 1500) -> int:
+def _estimate_max_new_tokens(word_limit: Optional[int], default: int = 900) -> int:
     """Convert a target word count to a safe max_new_tokens budget.
 
     Uses ~1.5 tokens/word for English prose plus a small buffer so the model
-    can finish a sentence cleanly. Capped at 4096 to avoid runaway generation.
+    can finish a sentence cleanly. Capped at 2200 tokens -- beyond that, the
+    v1 LoRA tends to exhaust its trained essay length and start emitting
+    outline-scaffolding artifacts instead of clean prose. The early-stop
+    detector in the inference server protects against this too, but keeping
+    the budget tight here is the first line of defence.
     """
     if word_limit and word_limit > 0:
-        return min(int(word_limit * 1.8) + 50, 4096)
+        # 1.6 tokens/word average for English, +60 token safety buffer to
+        # finish the last sentence, hard cap at 2200.
+        return min(int(word_limit * 1.6) + 60, 2200)
     return default
 
 
 async def generate_essay(
     outline: str,
     word_limit: Optional[int] = None,
-    temperature: float = 0.7,
+    temperature: float = 0.6,
     top_p: float = 0.9,
-    repetition_penalty: float = 1.1,
+    repetition_penalty: float = 1.15,
     max_new_tokens: Optional[int] = None,
 ) -> str:
     """Generate an essay from a Voira-format outline.

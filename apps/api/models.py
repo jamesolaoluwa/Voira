@@ -1,6 +1,6 @@
 """Pydantic models for request/response validation."""
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 from datetime import datetime
 
 
@@ -52,6 +52,23 @@ class SessionResponse(BaseModel):
     updated_at: datetime
 
 
+class SessionUpdate(BaseModel):
+    """Request model for partially updating a session.
+
+    All fields are optional; only fields set in the request are updated.
+    Accepts `highlights` as either a JSON-encoded string (the frontend already
+    stringifies on write) or a list of dicts.
+    """
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    transcript: Optional[str] = Field(None, max_length=50000)
+    refined_draft: Optional[str] = Field(None, max_length=50000)
+    highlights: Optional[Union[List[dict], str]] = None
+    clarity_score: Optional[int] = Field(None, ge=0, le=100)
+    confidence_score: Optional[int] = Field(None, ge=0, le=100)
+    filler_count: Optional[int] = Field(None, ge=0)
+    words_per_minute: Optional[int] = Field(None, ge=0)
+
+
 # ============================================
 # Auth Models
 # ============================================
@@ -97,9 +114,9 @@ class TranscribeResponse(BaseModel):
 class RefineRequest(BaseModel):
     """Request model for transcript refinement."""
     raw_transcript: str = Field(..., min_length=1, max_length=50000, description="Verbatim user speech (includes filler words)")
-    session_type: str = Field(default="free", pattern="^(free|application|interview|practice|refine)$", description="Type of session")
+    session_type: str = Field(default="free", pattern="^(free|application|interview|practice|refine|section_refine)$", description="Type of session")
     desired_tone: Optional[str] = Field(None, max_length=50, description="Desired tone (confident, concise, reflective, etc.)")
-    user_context: Optional[str] = Field(None, max_length=5000, description="Optional context from prompt input (company info, role details, etc.)")
+    user_context: Optional[str] = Field(None, max_length=20000, description="Optional context from prompt input (company info, role details, etc.). Larger cap supports section_refine, which wraps the full current essay in the prompt.")
     reference_text: Optional[str] = Field(None, max_length=10000, description="Optional example text user likes or reference material")
     reference_file_url: Optional[str] = Field(None, max_length=500, description="URL of uploaded reference file (for images, use Vision API)")
     reference_file_type: Optional[str] = Field(None, max_length=100, description="MIME type of reference file (e.g., image/jpeg, application/pdf)")

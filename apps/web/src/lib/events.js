@@ -15,6 +15,8 @@
 
 import { apiClient } from './apiClient';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 // Batching configuration
 const BATCH_SIZE = 10;
 const BATCH_TIMEOUT_MS = 30000;  // 30 seconds
@@ -96,10 +98,11 @@ if (typeof window !== 'undefined') {
     // Synchronous flush or sendBeacon for reliability
     if (analyticsQueue.length > 0) {
       try {
-        // Try fetch with keepalive flag (more reliable than sendBeacon)
-        navigator.sendBeacon('/api/analytics/batch', JSON.stringify({ 
-          events: analyticsQueue 
-        }));
+        const blob = new Blob(
+          [JSON.stringify({ events: analyticsQueue })],
+          { type: 'application/json' }
+        );
+        navigator.sendBeacon(`${API_BASE_URL}/analytics/batch`, blob);
       } catch (error) {
         console.error('Failed to send beacon on unload:', error);
       }

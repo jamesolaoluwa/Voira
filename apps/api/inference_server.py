@@ -257,19 +257,71 @@ def build_prompt(outline: str) -> str:
     )
 
 
+import re
+
+# Early-stop patterns: if any of these appear in the running output, the model
+# is regurgitating outline scaffolding (the known v1 failure mode where the
+# LoRA runs out of trained completion content and starts emitting its own
+# outline format as filler). Stop generation the moment we see them -- the
+# clean prose up to that point is still usable, the rest would be garbage.
+#
+# We check a rolling tail window (last ~400 chars) so a short mention in an
+# otherwise clean essay doesn't false-positive. The patterns are intentionally
+# specific to the known collapse markers so natural prose that happens to use
+# brackets (e.g. `[1]` citations) is not affected.
+_EARLY_STOP_PATTERNS = [
+    re.compile(r"-{2,}\s*OUTLINE\s*-{2,}", re.IGNORECASE),
+    re.compile(r"-{2,}\s*END\s*-{2,}", re.IGNORECASE),
+    re.compile(r"\[\s*Overall\s+Emotional\s+Arc", re.IGNORECASE),
+    re.compile(r"\[\s*Overall\s+Tone", re.IGNORECASE),
+    re.compile(r"\[\s*Writing\s+Voice\s*\]", re.IGNORECASE),
+    re.compile(r"\[\s*Introduction\s*/\s*Hook", re.IGNORECASE),
+    re.compile(r"\[\s*Word\s+Limit\s*[:\]]", re.IGNORECASE),
+    re.compile(r"\[\s*Prompt\s*[:\]]", re.IGNORECASE),
+    re.compile(r"\[\s*(?:MOOD|STRESS|TONAL\s+SHIFT|PACING)\s*:", re.IGNORECASE),
+    # Two or more ALL-CAPS bracketed tokens near each other (e.g.
+    # "[OUTGRACE:] and OUT [SALVISE] OUT [SPECIAL]") signal token-level
+    # collapse into garbled scaffolding.
+    re.compile(r"\[[A-Z]{3,}[^\]]{0,30}\][^\[]{0,40}\[[A-Z]{3,}"),
+]
+
+# Only start checking for collapse after we've generated at least this many
+# characters of output -- the model always emits some clean prose first, and
+# we don't want to abort an essay that legitimately starts with, say, a
+# section heading that happens to contain a bracketed word.
+_EARLY_STOP_MIN_CHARS = 400
+
+# Check the rolling tail of this many chars. Big enough to catch multi-line
+# scaffolding, small enough to not re-match stale legit content.
+_EARLY_STOP_TAIL_CHARS = 500
+
+
+def _has_collapse_signature(tail: str) -> bool:
+    """True if the tail window of recent output looks like outline collapse."""
+    return any(p.search(tail) for p in _EARLY_STOP_PATTERNS)
+
+
 def run_generation(
     outline: str,
     max_new_tokens: int = 2048,
-    temperature: float = 0.7,
+    temperature: float = 0.6,
     top_p: float = 0.9,
-    repetition_penalty: float = 1.1,
+    repetition_penalty: float = 1.15,
 ) -> dict:
-    """Generate an essay from an outline. Returns {"essay": str, "usage": {...}}."""
+    """Generate an essay from an outline. Returns {"essay": str, "usage": {...}}.
+
+    Uses streaming generation with early-stop detection: if the model starts
+    regurgitating outline scaffolding mid-output (the known v1 failure mode),
+    we abort generation immediately and return the clean prose up to that
+    point. This is the root-cause fix for the "outline leaked into essay"
+    issue -- by the time the client sees the output, the garbage is already
+    truncated away.
+    """
     if _MODEL is None or _TOKENIZER is None:
         raise RuntimeError("Model not loaded. Call load_model() first.")
 
     try:
-        from mlx_lm import generate
+        from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler, make_logits_processors
     except ImportError:
         raise RuntimeError("mlx-lm is not installed.")
@@ -280,23 +332,55 @@ def run_generation(
     t0 = time.time()
     sampler = make_sampler(temp=temperature, top_p=top_p)
     logits_processors = make_logits_processors(repetition_penalty=repetition_penalty)
-    essay = generate(
+
+    accumulated = []
+    completion_tokens = 0
+    finish_reason = "length"
+
+    for response in stream_generate(
         _MODEL,
         _TOKENIZER,
         prompt=prompt,
         max_tokens=max_new_tokens,
         sampler=sampler,
         logits_processors=logits_processors,
-        verbose=False,
-    )
-    duration = time.time() - t0
+    ):
+        if response.text:
+            accumulated.append(response.text)
+        completion_tokens = response.generation_tokens
 
-    essay = essay.strip()
-    completion_tokens = len(_TOKENIZER.encode(essay))
+        # mlx-lm sets finish_reason only on the final GenerationResponse it
+        # yields, so once it's populated we know the model stopped naturally.
+        if response.finish_reason is not None:
+            finish_reason = response.finish_reason
+            break
+
+        # Early-stop check. Only run after we have enough output to avoid
+        # aborting legitimate essays that mention brackets early on, and only
+        # check the rolling tail to keep it O(1) per token.
+        total_len = sum(len(t) for t in accumulated)
+        if total_len >= _EARLY_STOP_MIN_CHARS:
+            tail = "".join(accumulated)[-_EARLY_STOP_TAIL_CHARS:]
+            if _has_collapse_signature(tail):
+                finish_reason = "early_stop_outline_collapse"
+                logger.warning(
+                    "Detected outline-scaffolding collapse mid-generation "
+                    f"at token {completion_tokens}; stopping early."
+                )
+                break
+
+    duration = time.time() - t0
+    essay = "".join(accumulated).strip()
+
+    # If we early-stopped mid-sentence, trim back to the last sentence
+    # boundary so the client never sees a dangling fragment.
+    if finish_reason == "early_stop_outline_collapse":
+        essay = _trim_to_last_sentence(essay)
 
     logger.info(
         f"Generated essay in {duration:.1f}s "
-        f"(prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens})"
+        f"(prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}, "
+        f"finish_reason={finish_reason})"
     )
 
     return {
@@ -305,8 +389,28 @@ def run_generation(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "duration_s": round(duration, 2),
+            "finish_reason": finish_reason,
         },
     }
+
+
+def _trim_to_last_sentence(text: str) -> str:
+    """Trim text back to the last sentence-ending punctuation.
+
+    Used after early-stop so callers never see a dangling half-sentence.
+    If there's no sentence terminator (essay was pure garbage from the start),
+    returns empty string -- the caller's sanitizer/fallback will handle it.
+    """
+    text = text.rstrip()
+    if not text:
+        return ""
+    # Find the rightmost sentence terminator followed by whitespace or EOS.
+    match = None
+    for m in re.finditer(r"[.!?](?:[\"'\u201d\u2019])?(?=\s|$)", text):
+        match = m
+    if match is None:
+        return ""
+    return text[: match.end()].rstrip()
 
 
 # ============================================================================
@@ -321,10 +425,10 @@ def create_app():
 
     class GenerateRequest(BaseModel):
         outline: str = Field(..., min_length=1, max_length=20000)
-        max_new_tokens: int = Field(default=2048, ge=64, le=4096)
-        temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+        max_new_tokens: int = Field(default=900, ge=64, le=2200)
+        temperature: float = Field(default=0.6, ge=0.0, le=2.0)
         top_p: float = Field(default=0.9, ge=0.0, le=1.0)
-        repetition_penalty: float = Field(default=1.1, ge=1.0, le=2.0)
+        repetition_penalty: float = Field(default=1.15, ge=1.0, le=2.0)
 
     class GenerateResponse(BaseModel):
         essay: str

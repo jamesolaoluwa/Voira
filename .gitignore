@@ -33,6 +33,7 @@ __pycache__
 .claude
 Claude.md
 .agents/
+terse.md
 claudecontext/
 .cursor/settings.json
 .env
@@ -40,3 +41,10 @@ output.md
 .env.*
 .env.local
 .env.production
+logs/
+supabase/.temp/
+LOCAL_DEV_STARTUP.md
+
+# Stale npm artifacts
+npm
+voira-monorepo@1.0.0

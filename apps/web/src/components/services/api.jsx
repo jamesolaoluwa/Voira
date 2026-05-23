@@ -324,14 +324,23 @@ export const sessions = {
         title: session.title,
         type: session.type,
         question: session.question || '',
+        goal: session.goal || '',
+        reference_text: session.reference_text || '',
         transcript: session.transcript || '',
+        // CRITICAL: Persist the refined essay so reopening a session shows it.
+        // Dropping this here caused Draft.jsx to render an empty refined essay
+        // when a user opened a session from Library (sessionData came through
+        // without refined_draft and the PRIORITY 3 refetch never triggered).
+        refined_draft: session.refined_draft || '',
         duration_seconds: session.duration_seconds || 0,
         confidence_score: session.confidence_score || 0,
         clarity_score: session.clarity_score || 0,
         filler_count: session.filler_count || 0,
         words_per_minute: session.words_per_minute || 0,
+        highlights: session.highlights || [],
         tags: session.tags || [],
         created_at: session.created_at,
+        updated_at: session.updated_at,
       }));
     } catch (error) {
       // Fallback to direct Supabase
@@ -379,19 +388,31 @@ export const sessions = {
   async updateSession(id, patch) {
     const updateData = {
       title: patch.title,
+      transcript: patch.transcript,
       refined_draft: patch.refined_draft,
-      highlights: patch.highlights ? JSON.stringify(patch.highlights) : undefined,
-      clarity_score: patch.metrics?.clarity_score,
-      confidence_score: patch.metrics?.confidence_score,
-      filler_count: patch.metrics?.filler_count,
-      words_per_minute: patch.metrics?.words_per_minute,
+      highlights: patch.highlights
+        ? (typeof patch.highlights === 'string' ? patch.highlights : JSON.stringify(patch.highlights))
+        : undefined,
+      clarity_score: patch.metrics?.clarity_score ?? patch.clarity_score,
+      confidence_score: patch.metrics?.confidence_score ?? patch.confidence_score,
+      filler_count: patch.metrics?.filler_count ?? patch.filler_count,
+      words_per_minute: patch.metrics?.words_per_minute ?? patch.words_per_minute,
     };
 
     Object.keys(updateData).forEach(key => {
       if (updateData[key] === undefined) delete updateData[key];
     });
 
-    await base44.entities.Recording.update(id, updateData);
+    if (Object.keys(updateData).length === 0) return null;
+
+    const { apiClient } = await import('@/lib/apiClient');
+    return await apiClient.put(`/sessions/${id}`, updateData);
+  },
+
+  async renameSession(id, title) {
+    const trimmed = (title || '').trim();
+    if (!trimmed) throw new Error('Title cannot be empty');
+    return await sessions.updateSession(id, { title: trimmed });
   },
 };
 

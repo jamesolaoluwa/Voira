@@ -612,7 +612,13 @@ async def stripe_webhook(
         logger.error(f"[Stripe] Invalid webhook payload: {e}")
         raise HTTPException(status_code=400, detail="Invalid payload")
     except stripe.SignatureVerificationError as e:
-        logger.error(f"[Stripe] Invalid webhook signature: {e}")
+        sig_prefix = stripe_signature[:20] + "..." if stripe_signature else "NONE"
+        secret_prefix = settings.stripe_webhook_secret[:8] + "..." if settings.stripe_webhook_secret else "NONE"
+        logger.error(
+            f"[Stripe] Invalid webhook signature: {e} | "
+            f"body_len={len(payload)} sig_prefix={sig_prefix} "
+            f"secret_prefix={secret_prefix} path={request.url.path}"
+        )
         raise HTTPException(status_code=400, detail="Invalid signature")
     
     # Log the event type

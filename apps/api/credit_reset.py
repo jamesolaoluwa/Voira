@@ -21,7 +21,7 @@ Usage:
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 
 from db import supabase
@@ -50,7 +50,8 @@ async def reset_monthly_credits() -> Dict[str, Any]:
         }
     
     Note:
-        - Only resets if current_period_start <= now < current_period_end
+        - Only resets if subscription hasn't expired (now < period_end)
+        - Skips users already reset in the current billing period
         - Does NOT reset users on free tier or inactive subscriptions
         - Does NOT reset users with canceled subscriptions
     """
@@ -65,7 +66,7 @@ async def reset_monthly_credits() -> Dict[str, Any]:
         result = supabase.table("user_profiles").select(
             "user_id, subscription_plan, subscription_status, "
             "monthly_credit_allowance, credits_remaining, "
-            "subscription_current_period_start, subscription_current_period_end"
+            "subscription_current_period_end, last_credit_reset_at"
         ).in_("subscription_plan", ["pro_monthly", "pro_yearly"]).eq(
             "subscription_status", "active"
         ).execute()
@@ -87,25 +88,38 @@ async def reset_monthly_credits() -> Dict[str, Any]:
             user_id = user["user_id"]
             
             try:
-                # Parse period dates
-                period_start_str = user.get("subscription_current_period_start")
                 period_end_str = user.get("subscription_current_period_end")
                 
-                if not period_start_str or not period_end_str:
-                    logger.warning(f"[CreditReset] User {user_id} missing period dates")
+                if not period_end_str:
+                    logger.warning(f"[CreditReset] User {user_id} missing period end date")
                     failed_count += 1
                     continue
                 
-                period_start = datetime.fromisoformat(period_start_str.replace('Z', '+00:00'))
                 period_end = datetime.fromisoformat(period_end_str.replace('Z', '+00:00'))
                 
-                # Only reset if we're within the billing period
-                if not (period_start <= now < period_end):
+                # Skip expired subscriptions
+                if now >= period_end:
                     logger.debug(
-                        f"[CreditReset] User {user_id} not at period start. "
-                        f"Period: {period_start} to {period_end}, Now: {now}"
+                        f"[CreditReset] User {user_id} period expired "
+                        f"(end: {period_end}, now: {now})"
                     )
                     continue
+                
+                # Derive approximate period start from plan type
+                plan = user.get("subscription_plan", "")
+                period_duration = timedelta(days=366) if "yearly" in plan else timedelta(days=32)
+                period_start_approx = period_end - period_duration
+                
+                # Skip if already reset during this billing period
+                last_reset_str = user.get("last_credit_reset_at")
+                if last_reset_str:
+                    last_reset = datetime.fromisoformat(last_reset_str.replace('Z', '+00:00'))
+                    if last_reset > period_start_approx:
+                        logger.debug(
+                            f"[CreditReset] User {user_id} already reset this period "
+                            f"(last reset: {last_reset})"
+                        )
+                        continue
                 
                 # Get current allowance
                 allowance = user.get("monthly_credit_allowance", 60)
@@ -122,7 +136,8 @@ async def reset_monthly_credits() -> Dict[str, Any]:
                 # Reset credits
                 supabase.table("user_profiles").update({
                     "credits_remaining": allowance,
-                    "last_credit_reset": now.isoformat(),
+                    "credits_used_this_period": 0,
+                    "last_credit_reset_at": now.isoformat(),
                     "updated_at": now.isoformat()
                 }).eq("user_id", user_id).execute()
                 

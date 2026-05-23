@@ -16,7 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from typing import Any, Dict, List, Optional
 from auth import get_current_user, get_active_user, check_is_admin, security, get_user_from_websocket_token, get_active_user_from_websocket_token
 from models import (
-    SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
+    SessionCreate, SessionResponse, SessionUpdate, UserResponse, AdminCheckResponse,
     TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
     FileUploadResponse, AudioUploadResponse,
     InterviewRefinementRequest, InterviewRefinementResponse, FeedbackItem,
@@ -120,12 +120,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """Apply rate limiting to all requests."""
     
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for health checks
         if request.url.path.startswith("/health"):
             return await call_next(request)
         
+        # Webhook endpoints get a higher limit keyed by IP (not the default
+        # per-user bucket). This prevents Stripe retries from being throttled
+        # while still blocking abuse from unknown sources.
+        is_webhook = (
+            request.url.path.startswith("/webhooks/")
+            or request.url.path == "/billing/webhook"
+        )
+        
         # Get identifier (user ID from auth header, or IP address)
         identifier = request.client.host if request.client else "unknown"
+        if is_webhook:
+            identifier = f"webhook:{identifier}"
         
         # Check rate limit
         allowed, rate_headers = await rate_limit_check(
@@ -568,6 +577,103 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
     logger.info(f"Deleted {deleted_count} sessions for user {user['id']}")
     
     return {"deleted_count": deleted_count, "message": f"Deleted {deleted_count} session(s)"}
+
+
+@app.put("/sessions/{session_id}", response_model=SessionResponse)
+async def update_session(
+    session_id: str,
+    patch: SessionUpdate,
+    user: dict = Depends(get_active_user),
+):
+    """
+    Partially update a session (recording).
+
+    Only fields present in the request are written; `None` values are ignored so
+    partial updates can't accidentally overwrite existing data with nulls. This
+    is used by the Library rename flow and by Draft / RefineDraft persistence
+    paths that were previously silently no-ops via the Base44 stub.
+    """
+    rate_limit_middleware(f"update_session:{user['id']}")
+
+    update_dict: Dict[str, Any] = {}
+    if patch.title is not None:
+        update_dict["title"] = patch.title
+    if patch.transcript is not None:
+        update_dict["transcript"] = patch.transcript
+    if patch.refined_draft is not None:
+        update_dict["refined_draft"] = patch.refined_draft
+    if patch.highlights is not None:
+        highlights_value = patch.highlights
+        if isinstance(highlights_value, str):
+            try:
+                highlights_value = json.loads(highlights_value) if highlights_value else []
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="highlights must be valid JSON")
+        update_dict["highlights"] = highlights_value
+    if patch.clarity_score is not None:
+        update_dict["clarity_score"] = patch.clarity_score
+    if patch.confidence_score is not None:
+        update_dict["confidence_score"] = patch.confidence_score
+    if patch.filler_count is not None:
+        update_dict["filler_count"] = patch.filler_count
+    if patch.words_per_minute is not None:
+        update_dict["words_per_minute"] = patch.words_per_minute
+
+    if not update_dict:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    query_start = time.time()
+    response = (
+        supabase.table("recordings")
+        .update(update_dict)
+        .eq("id", session_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query(
+        "recordings",
+        "UPDATE",
+        duration_ms,
+        f"session {session_id} for user {user['id']}",
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    rec = response.data[0]
+    logger.info(
+        f"Updated session {session_id} for user {user['id']} "
+        f"(fields={list(update_dict.keys())})"
+    )
+
+    def _parse_dt(dt_str):
+        if dt_str.endswith("Z"):
+            return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        return datetime.fromisoformat(dt_str)
+
+    return SessionResponse(
+        id=rec["id"],
+        user_id=rec["user_id"],
+        title=rec["title"],
+        type=rec["type"],
+        question=rec.get("question"),
+        goal=rec.get("goal"),
+        reference_text=rec.get("reference_text"),
+        audio_url=rec.get("audio_url"),
+        audio_mime=rec.get("audio_mime"),
+        audio_size_bytes=rec.get("audio_size_bytes", 0),
+        duration_seconds=rec.get("duration_seconds", 0),
+        transcript=rec.get("transcript", ""),
+        refined_draft=rec.get("refined_draft", ""),
+        clarity_score=rec.get("clarity_score", 0),
+        confidence_score=rec.get("confidence_score", 0),
+        filler_count=rec.get("filler_count", 0),
+        words_per_minute=rec.get("words_per_minute", 0),
+        highlights=rec.get("highlights", []),
+        created_at=_parse_dt(rec["created_at"]),
+        updated_at=_parse_dt(rec["updated_at"]),
+    )
 
 
 # =============================================================================
