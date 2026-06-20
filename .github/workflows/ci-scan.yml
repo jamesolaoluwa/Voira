@@ -2,13 +2,16 @@ name: CI Build + Test + Security Scan
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, develop ]
+
+permissions:
+  contents: read
 
 env:
   PYTHON_VERSION: '3.11'
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
 
 jobs:
   # ==========================================================================
@@ -39,18 +42,16 @@ jobs:
 
       - name: Run tests
         env:
-          # Test environment variables
           SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://test.supabase.co' }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || 'test-key' }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'test-anon-key' }}
           ENV: test
-        run: |
-          pytest tests/ -v --tb=short || echo "Tests completed (some may have failed due to missing secrets)"
+        run: pytest ../../tests -v --tb=short
 
       - name: Check code formatting
         run: |
           pip install black
-          black --check . || echo "Code formatting check completed"
+          black --check .
 
   # ==========================================================================
   # Frontend Build + Lint
@@ -75,7 +76,7 @@ jobs:
 
       - name: Lint
         working-directory: apps/web
-        run: npm run lint || echo "Lint completed"
+        run: npm run lint
 
       - name: Build
         working-directory: apps/web
@@ -109,11 +110,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: apps/web/dist
+
       - name: Install root dependencies
         run: npm install
 
       - name: Run CI build scan
-        run: npm run ci:scan || echo "Security scan completed"
+        run: npm run ci:scan
 
   # ==========================================================================
   # Deploy (only on main branch push)
@@ -134,29 +141,7 @@ jobs:
           name: frontend-build
           path: apps/web/dist
 
-      # Uncomment and configure for your deployment platform
-      # 
-      # Option 1: Deploy to Vercel (Frontend)
-      # - name: Deploy to Vercel
-      #   uses: amondnet/vercel-action@v25
-      #   with:
-      #     vercel-token: ${{ secrets.VERCEL_TOKEN }}
-      #     vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-      #     vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-      #     working-directory: apps/web
-      #
-      # Option 2: Deploy to Render (Backend)
-      # - name: Deploy to Render
-      #   run: |
-      #     curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
-      #
-      # Option 3: Deploy to Railway
-      # - name: Deploy to Railway
-      #   uses: bervProject/railway-deploy@main
-      #   with:
-      #     railway_token: ${{ secrets.RAILWAY_TOKEN }}
-      
       - name: Deployment placeholder
         run: |
-          echo "🚀 Deployment step - configure your deployment platform"
+          echo "Deployment step — configure your deployment platform"
           echo "See PRODUCTION_SETUP.md for deployment instructions"
