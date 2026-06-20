@@ -20,6 +20,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Literal
 from enum import Enum
+from urllib.parse import urlparse
 
 import stripe
 from fastapi import APIRouter, Request, HTTPException, Depends, Header
@@ -155,6 +156,36 @@ def _validate_price_id(price_id: str) -> Dict[str, Any]:
     return mapping[price_id]
 
 
+def _validate_redirect_url(url: str, field: str) -> str:
+    """
+    Validate a client-supplied redirect URL against the configured origin
+    allowlist (CORS_ORIGINS). Prevents open-redirect / phishing via Stripe
+    success/cancel/return URLs.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+
+    allowed = set()
+    for origin in settings.cors_origins_list:
+        o = urlparse(origin)
+        if o.netloc:
+            allowed.add((o.scheme, o.netloc))
+
+    if (parsed.scheme, parsed.netloc) not in allowed:
+        logger.warning(
+            f"[Stripe] Rejected {field} with disallowed origin: "
+            f"{parsed.scheme}://{parsed.netloc}"
+        )
+        raise HTTPException(status_code=400, detail=f"{field} origin is not allowed")
+
+    return url
+
+
 async def _get_or_create_stripe_customer(user_id: str, email: str) -> str:
     """
     Get existing Stripe customer ID or create a new customer.
@@ -271,8 +302,7 @@ async def _handle_subscription_created_or_updated(subscription: dict):
     # Get price and plan details - handle nested dict structure
     items_data = subscription.get("items", {}).get("data", [])
     if not items_data:
-        logger.error(f"[Stripe] Subscription {subscription_id} has no items")
-        return
+        raise ValueError(f"Subscription {subscription_id} has no items")
     
     price_id = items_data[0]["price"]["id"]
     mapping = get_price_plan_mapping()
@@ -280,8 +310,7 @@ async def _handle_subscription_created_or_updated(subscription: dict):
     logger.info(f"[Stripe] Price ID: {price_id}, Available mappings: {list(mapping.keys())}")
     
     if price_id not in mapping:
-        logger.error(f"[Stripe] Unknown price_id in subscription: {price_id}")
-        return
+        raise ValueError(f"Unknown price_id in subscription: {price_id}")
     
     plan_info = mapping[price_id]
     
@@ -359,6 +388,49 @@ async def _handle_invoice_payment_failed(invoice: dict):
         
     except Exception as e:
         logger.error(f"[Stripe] Failed to handle payment failure for customer {customer_id}: {e}")
+        raise
+
+
+async def _handle_invoice_payment_succeeded(invoice: dict):
+    """
+    Renew monthly credits at the start of each billing cycle.
+
+    Stripe sends invoice.payment_succeeded both for the first invoice and for
+    each subsequent renewal. We only reset credits on recurring cycles
+    (billing_reason == 'subscription_cycle'); the initial purchase credits are
+    granted by the subscription.created handler.
+    """
+    customer_id = invoice.get("customer")
+    billing_reason = invoice.get("billing_reason")
+    logger.info(
+        f"[Stripe] Payment succeeded for invoice {invoice.get('id')} "
+        f"(customer={customer_id}, reason={billing_reason})"
+    )
+
+    if not customer_id:
+        raise ValueError("invoice.payment_succeeded missing customer_id")
+
+    # Only renew on recurring billing cycles (not proration/plan-change invoices).
+    if billing_reason != "subscription_cycle":
+        return
+
+    try:
+        result = supabase.table("user_profiles").select("user_id").eq(
+            "stripe_customer_id", customer_id
+        ).execute()
+        if not result.data:
+            raise ValueError(f"invoice.payment_succeeded: no user for customer {customer_id}")
+
+        user_id = result.data[0]["user_id"]
+        # reset_user_credits sets credits_remaining = monthly_credit_allowance
+        # and zeroes credits_used_this_period (service-role RPC).
+        supabase.rpc("reset_user_credits", {"p_user_id": user_id}).execute()
+        logger.info(f"[Stripe] Renewed monthly credits for user {user_id}")
+    except Exception as e:
+        logger.error(
+            f"[Stripe] Failed to renew credits for customer {customer_id}: {e}"
+        )
+        raise
 
 
 async def _handle_checkout_session_completed(session: dict):
@@ -372,8 +444,7 @@ async def _handle_checkout_session_completed(session: dict):
     user_id = metadata.get("user_id") if metadata else None
     
     if not user_id:
-        logger.error(f"[Stripe] Checkout session {session['id']} missing user_id in metadata")
-        return
+        raise ValueError(f"Checkout session {session['id']} missing user_id in metadata")
     
     try:
         # Ensure customer ID is stored (might already be from create-checkout)
@@ -407,6 +478,10 @@ async def create_checkout_session(
     
     # Validate price ID
     plan_info = _validate_price_id(request.price_id)
+    
+    # Validate redirect URLs against the origin allowlist (open-redirect guard)
+    _validate_redirect_url(request.success_url, "success_url")
+    _validate_redirect_url(request.cancel_url, "cancel_url")
     
     # Get or create Stripe customer
     customer_id = await _get_or_create_stripe_customer(user["id"], user["email"])
@@ -463,6 +538,9 @@ async def create_portal_session(
     - Update billing info
     """
     _ensure_stripe_configured()
+    
+    # Validate redirect URL against the origin allowlist (open-redirect guard)
+    _validate_redirect_url(request.return_url, "return_url")
     
     # Get user's Stripe customer ID
     result = supabase.table("user_profiles").select("stripe_customer_id").eq("user_id", user["id"]).execute()
@@ -539,42 +617,110 @@ async def get_subscription_status(user: dict = Depends(get_current_user)):
 # Webhook Endpoint (No Auth - Verified by Stripe Signature)
 # =============================================================================
 
-async def _check_webhook_idempotency(event_id: str) -> bool:
-    """
-    Check if webhook has already been processed.
-    Returns True if already processed (skip), False if first time (process).
-    
-    Reference: Claude.md - Item #1: Stripe Webhook Idempotency
-    """
+# Webhook claim outcomes
+_CLAIM_CLAIMED = "claimed"      # we own this event, must process it
+_CLAIM_DUPLICATE = "duplicate"  # already claimed/processed elsewhere, skip
+_CLAIM_DEGRADED = "degraded"    # idempotency table missing, process without dedupe
+_STALE_CLAIM_SECONDS = 600      # reclaim processing claims older than 10 minutes
+
+
+def _is_stale_claim(received_at: str) -> bool:
+    """Return True if a processing claim is old enough to be reclaimed."""
     try:
-        result = supabase.table("stripe_webhook_events").select(
-            "id"
-        ).eq("event_id", event_id).execute()
-        
-        return len(result.data) > 0  # True if found (already processed)
-    except Exception as e:
-        logger.error(f"[Stripe] Failed to check webhook idempotency for {event_id}: {e}")
-        # On error, proceed anyway (fail open to prevent losing webhooks)
-        return False
+        received = datetime.fromisoformat(received_at.replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - received).total_seconds()
+        return age > _STALE_CLAIM_SECONDS
+    except (ValueError, TypeError):
+        return True
 
 
-async def _record_webhook_processed(event_id: str, event_type: str, event_payload: dict):
+def _claim_webhook_event(event_id: str, event_type: str) -> str:
     """
-    Record that a webhook was successfully processed.
-    This prevents duplicate processing if Stripe retries the webhook.
-    
-    Reference: Claude.md - Item #1: Stripe Webhook Idempotency
+    Atomically claim a webhook event for processing.
+
+    The INSERT itself is the claim: the primary-key uniqueness on event_id means
+    only one concurrent delivery can win. Returns one of _CLAIM_*.
+
+    Raises on unexpected DB errors so the caller returns 500 and Stripe retries
+    (fail CLOSED) rather than silently double-processing.
     """
     try:
         supabase.table("stripe_webhook_events").insert({
             "event_id": event_id,
             "event_type": event_type,
-            "payload": event_payload
+            "status": "processing",
         }).execute()
-        logger.debug(f"[Stripe] Recorded webhook {event_id} as processed")
+        return _CLAIM_CLAIMED
     except Exception as e:
-        logger.error(f"[Stripe] Failed to record webhook {event_id}: {e}")
-        # Non-critical error - webhook was processed, just record-keeping failed
+        msg = str(e).lower()
+        if "duplicate" in msg or "23505" in msg or "already exists" in msg:
+            try:
+                existing = (
+                    supabase.table("stripe_webhook_events")
+                    .select("status, received_at")
+                    .eq("event_id", event_id)
+                    .execute()
+                )
+                if existing.data:
+                    row = existing.data[0]
+                    if row.get("status") == "completed":
+                        return _CLAIM_DUPLICATE
+                    if row.get("status") == "processing" and _is_stale_claim(row.get("received_at")):
+                        logger.warning(
+                            f"[Stripe] Reclaiming stale processing claim for {event_id}"
+                        )
+                        supabase.table("stripe_webhook_events").delete().eq(
+                            "event_id", event_id
+                        ).execute()
+                        supabase.table("stripe_webhook_events").insert({
+                            "event_id": event_id,
+                            "event_type": event_type,
+                            "status": "processing",
+                        }).execute()
+                        return _CLAIM_CLAIMED
+            except Exception as reclaim_err:
+                logger.error(
+                    f"[Stripe] Failed to inspect/reclaim webhook claim {event_id}: {reclaim_err}"
+                )
+                raise
+            return _CLAIM_DUPLICATE
+        if "does not exist" in msg or "42p01" in msg or "could not find the table" in msg:
+            if settings.is_production:
+                logger.error(
+                    f"[Stripe] stripe_webhook_events table missing in production; "
+                    f"refusing webhook {event_id}"
+                )
+                raise RuntimeError("stripe_webhook_events table is not provisioned")
+            logger.error(
+                f"[Stripe] stripe_webhook_events table missing; processing "
+                f"{event_id} WITHOUT idempotency protection"
+            )
+            return _CLAIM_DEGRADED
+        # Unknown DB failure -> fail closed so Stripe retries.
+        logger.error(f"[Stripe] Failed to claim webhook {event_id}: {e}")
+        raise
+
+
+def _mark_webhook_completed(event_id: str):
+    """Mark a claimed webhook as fully processed."""
+    try:
+        supabase.table("stripe_webhook_events").update({
+            "status": "completed",
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("event_id", event_id).execute()
+    except Exception as e:
+        logger.error(f"[Stripe] Failed to mark webhook {event_id} completed: {e}")
+        raise
+
+
+def _release_webhook_claim(event_id: str):
+    """
+    Release a claim after a processing failure so Stripe's retry can re-process.
+    """
+    try:
+        supabase.table("stripe_webhook_events").delete().eq("event_id", event_id).execute()
+    except Exception as e:
+        logger.error(f"[Stripe] Failed to release webhook claim {event_id}: {e}")
 
 
 @router.post("/webhook")
@@ -612,12 +758,10 @@ async def stripe_webhook(
         logger.error(f"[Stripe] Invalid webhook payload: {e}")
         raise HTTPException(status_code=400, detail="Invalid payload")
     except stripe.SignatureVerificationError as e:
-        sig_prefix = stripe_signature[:20] + "..." if stripe_signature else "NONE"
-        secret_prefix = settings.stripe_webhook_secret[:8] + "..." if settings.stripe_webhook_secret else "NONE"
+        # Never log any portion of the webhook secret.
         logger.error(
             f"[Stripe] Invalid webhook signature: {e} | "
-            f"body_len={len(payload)} sig_prefix={sig_prefix} "
-            f"secret_prefix={secret_prefix} path={request.url.path}"
+            f"body_len={len(payload)} path={request.url.path}"
         )
         raise HTTPException(status_code=400, detail="Invalid signature")
     
@@ -626,11 +770,14 @@ async def stripe_webhook(
     event_id = event["id"]
     logger.info(f"[Stripe] Received webhook: {event_type} (id={event_id})")
     
-    # Check idempotency: skip if already processed
-    if await _check_webhook_idempotency(event_id):
-        logger.info(f"[Stripe] Webhook {event_id} already processed, skipping")
+    # Atomically claim the event. Duplicates are skipped; unexpected DB errors
+    # raise (-> 500) so Stripe retries instead of us double-processing.
+    claim = _claim_webhook_event(event_id, event_type)
+    if claim == _CLAIM_DUPLICATE:
+        logger.info(f"[Stripe] Webhook {event_id} already claimed/processed, skipping")
         return JSONResponse(content={"status": "received"}, status_code=200)
     
+    handler_succeeded = False
     try:
         # Handle different event types
         if event_type == "checkout.session.completed":
@@ -650,10 +797,8 @@ async def stripe_webhook(
             await _handle_subscription_deleted(subscription)
             
         elif event_type == "invoice.payment_succeeded":
-            # Payment succeeded - subscription should already be updated
-            # Could use this for sending receipts/emails
             invoice = event["data"]["object"]
-            logger.info(f"[Stripe] Payment succeeded for invoice {invoice['id']}")
+            await _handle_invoice_payment_succeeded(invoice)
             
         elif event_type == "invoice.payment_failed":
             invoice = event["data"]["object"]
@@ -662,8 +807,10 @@ async def stripe_webhook(
         else:
             logger.debug(f"[Stripe] Unhandled webhook event type: {event_type}")
         
-        # Record successful processing for idempotency
-        await _record_webhook_processed(event_id, event_type, event["data"]["object"])
+        handler_succeeded = True
+        # Mark claim completed (no-op in degraded mode where no row was inserted).
+        if claim == _CLAIM_CLAIMED:
+            _mark_webhook_completed(event_id)
     
     except Exception as e:
         import traceback
@@ -674,10 +821,19 @@ async def stripe_webhook(
         from sentry_config import capture_exception
         capture_exception(e)
         
-        # Return 200 anyway to prevent Stripe from retrying
-        # We've logged the error for manual investigation
+        # Release the claim only if handler work did not finish — otherwise a
+        # post-success failure (e.g. marking completed) would double-process on retry.
+        if claim == _CLAIM_CLAIMED and not handler_succeeded:
+            _release_webhook_claim(event_id)
+        elif claim == _CLAIM_CLAIMED and handler_succeeded:
+            logger.error(
+                f"[Stripe] Handler succeeded for {event_id} but post-processing failed; "
+                "claim retained to prevent duplicate side effects"
+            )
+        
+        # Return 500 so Stripe retries the delivery (fail closed).
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
     
-    # Always return 200 to acknowledge receipt
     return JSONResponse(content={"status": "received"}, status_code=200)
 
 

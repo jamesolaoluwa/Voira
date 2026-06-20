@@ -21,7 +21,11 @@ class TestStripeCheckoutSession:
         _override_active_user()
 
         # Avoid hitting Supabase; just return a customer id from helper.
-        with patch("stripe_billing.settings.stripe_secret_key", "sk_test_dummy"):
+        # Allowlist the test redirect origin (open-redirect guard).
+        with patch(
+            "stripe_billing.settings.cors_origins",
+            "https://app.test",
+        ), patch("stripe_billing.settings.stripe_secret_key", "sk_test_dummy"):
             with patch(
                 "stripe_billing._get_or_create_stripe_customer",
                 new_callable=AsyncMock,
