@@ -420,8 +420,31 @@ def _trim_to_last_sentence(text: str) -> str:
 
 def create_app():
     """Build the FastAPI app. Imported lazily so --setup doesn't need fastapi."""
-    from fastapi import FastAPI, HTTPException
+    import asyncio
+    from fastapi import FastAPI, HTTPException, Header, Depends
     from pydantic import BaseModel, Field
+
+    # Optional shared-secret auth. If VOIRA_INFERENCE_TOKEN is set, /generate
+    # requires `Authorization: Bearer <token>`. The main backend sends its
+    # VOIRA_MODEL_API_KEY. Even though this server binds to localhost by
+    # default, requiring a token prevents other local processes from driving it.
+    expected_token = os.environ.get("VOIRA_INFERENCE_TOKEN") or ""
+
+    async def require_token(authorization: Optional[str] = Header(None)):
+        if not expected_token:
+            return  # Auth disabled (no token configured)
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing bearer token")
+        provided = authorization.split(" ", 1)[1].strip()
+        # Constant-time comparison to avoid timing leaks.
+        import hmac
+        if not hmac.compare_digest(provided, expected_token):
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Single in-flight generation. The 8B MLX model cannot serve concurrent
+    # requests without OOM/contention, so serialize them. Created at startup so
+    # it binds to the running event loop.
+    gen_lock: "Optional[asyncio.Semaphore]" = None
 
     class GenerateRequest(BaseModel):
         outline: str = Field(..., min_length=1, max_length=20000)
@@ -438,8 +461,12 @@ def create_app():
 
     @app.on_event("startup")
     async def _startup():
+        nonlocal gen_lock
+        gen_lock = asyncio.Semaphore(1)
         model_dir = Path(os.environ.get("VOIRA_MODEL_PATH", DEFAULT_FUSED_MODEL_DIR)).expanduser()
-        load_model(model_dir)
+        # Offload the blocking model load so the event loop stays responsive
+        # (health checks can answer "loading" while this runs).
+        await asyncio.to_thread(load_model, model_dir)
 
     @app.get("/health")
     async def health():
@@ -449,20 +476,30 @@ def create_app():
             "model_path": str(_MODEL_PATH) if _MODEL_PATH else None,
         }
 
-    @app.post("/generate", response_model=GenerateResponse)
+    @app.post("/generate", response_model=GenerateResponse, dependencies=[Depends(require_token)])
     async def generate_endpoint(req: GenerateRequest):
+        if _MODEL is None:
+            raise HTTPException(status_code=503, detail="Model still loading")
         try:
-            result = run_generation(
-                outline=req.outline,
-                max_new_tokens=req.max_new_tokens,
-                temperature=req.temperature,
-                top_p=req.top_p,
-                repetition_penalty=req.repetition_penalty,
-            )
+            # Serialize generations and run the blocking MLX call off the event
+            # loop so a long generation doesn't stall health checks/cancellation.
+            assert gen_lock is not None
+            async with gen_lock:
+                result = await asyncio.to_thread(
+                    run_generation,
+                    req.outline,
+                    req.max_new_tokens,
+                    req.temperature,
+                    req.top_p,
+                    req.repetition_penalty,
+                )
             return result
-        except Exception as e:
+        except HTTPException:
+            raise
+        except Exception:
             logger.exception("Generation failed")
-            raise HTTPException(status_code=500, detail=str(e))
+            # Don't leak internal error details to the caller.
+            raise HTTPException(status_code=500, detail="Generation failed")
 
     return app
 

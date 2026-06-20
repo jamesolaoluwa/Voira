@@ -61,7 +61,7 @@ class DeepgramWebmProvider:
             # Filler detection mode: disable smart_format, enable filler_words
             # This preserves fillers in transcript and tags them in word metadata
             params = {
-                "model": "nova-2",
+                "model": settings.deepgram_model,
                 "language": "en-US",
                 "smart_format": "false",  # Don't remove fillers
                 "filler_words": "true",   # Tag filler words in response
@@ -72,7 +72,7 @@ class DeepgramWebmProvider:
         else:
             # Standard mode: smart_format removes fillers for clean output
             params = {
-                "model": "nova-2",
+                "model": settings.deepgram_model,
                 "language": "en-US",
                 "smart_format": "true",   # Clean output, removes fillers
                 "interim_results": "true",

@@ -108,7 +108,7 @@ async def _transcribe_with_deepgram(
         "punctuate": "true",
         "smart_format": "true",
         "language": language,
-        "model": "nova-2",
+        "model": settings.deepgram_model,
     }
     
     async with httpx.AsyncClient(timeout=60.0) as client:
