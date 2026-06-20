@@ -88,7 +88,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+        # Log details server-side; return a generic message to the client.
+        logger.error(f"[Auth] Authentication error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
 async def check_is_admin(user: dict) -> bool:
@@ -187,7 +189,7 @@ async def get_user_from_websocket_token(token: str):
         raise HTTPException(status_code=401, detail="Authentication timeout")
     except Exception as e:
         logger.error(f"[WebSocket Auth] Unexpected error during token validation: {type(e).__name__}: {str(e)}")
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 
 async def check_user_disabled(user_id: str) -> bool:
@@ -207,8 +209,13 @@ async def check_user_disabled(user_id: str) -> bool:
         
         return result.data.get("is_disabled", False) if result.data else False
     except Exception as e:
+        # Fail CLOSED: if we cannot verify the account status, treat the user as
+        # disabled so a DB/network outage cannot grant disabled users access.
         logger.warning(f"[Auth] Failed to check disabled status for user {user_id}: {e}")
-        return False
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to verify account status. Please try again."
+        )
 
 
 async def get_active_user(credentials: HTTPAuthorizationCredentials = Security(security)):
@@ -235,6 +242,44 @@ async def get_active_user(credentials: HTTPAuthorizationCredentials = Security(s
             detail="Your account has been disabled. Please contact support."
         )
     
+    return user
+
+
+async def get_user_by_id(user_id: str) -> dict:
+    """Load user profile by ID (for WS ticket auth — no JWT round-trip)."""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    profile_response = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
+    profile = profile_response.data[0] if profile_response.data else None
+
+    return {
+        "id": user_id,
+        "email": profile.get("email") if profile else None,
+        "full_name": profile.get("full_name") if profile else None,
+        "role": (profile.get("role") if profile else None) or "free_user",
+        "credits_remaining": profile.get("credits_remaining") if profile else 10,
+        "monthly_credit_allowance": profile.get("monthly_credit_allowance") if profile else 10,
+        "credits_reset_at": profile.get("credits_reset_at") if profile else None,
+    }
+
+
+async def get_active_user_from_websocket_ticket(ticket: str):
+    """Validate short-lived WS ticket and verify user is not disabled."""
+    from ws_tickets import verify_ws_ticket
+
+    user_id = verify_ws_ticket(ticket)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired WebSocket ticket")
+
+    user = await get_user_by_id(user_id)
+    is_disabled = await check_user_disabled(user_id)
+    if is_disabled:
+        logger.warning(f"[WebSocket Auth] Disabled user attempted WebSocket connection: user_id={user_id}")
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been disabled. Please contact support.",
+        )
     return user
 
 

@@ -174,8 +174,32 @@ class Settings(BaseSettings):
         return self.env.lower() == "development"
 
 
+def validate_production_settings(settings_obj: Settings) -> None:
+    """Fail fast when production is misconfigured."""
+    if not settings_obj.is_production:
+        return
+
+    required = {
+        "DEEPGRAM_API_KEY": settings_obj.deepgram_api_key,
+        "OPENAI_API_KEY": settings_obj.openai_api_key,
+        "STRIPE_SECRET_KEY": settings_obj.stripe_secret_key,
+        "STRIPE_WEBHOOK_SECRET": settings_obj.stripe_webhook_secret,
+        "SENTRY_DSN": settings_obj.sentry_dsn,
+        "REDIS_URL": settings_obj.redis_url,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise RuntimeError(
+            f"Production startup blocked — missing required env vars: {', '.join(missing)}"
+        )
+
+    if not settings_obj.cors_origins_list:
+        raise RuntimeError("Production startup blocked — CORS_ORIGINS must be set explicitly")
+
+
 # Create settings instance
 settings = Settings()
+validate_production_settings(settings)
 
 # Set environment-specific defaults after instantiation
 if not settings.log_level:

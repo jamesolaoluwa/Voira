@@ -14,6 +14,7 @@ Features:
 """
 
 import os
+import re
 import uuid
 import logging
 from typing import Optional, Tuple, Dict, Any
@@ -22,6 +23,17 @@ from config import settings
 from db import supabase
 
 logger = logging.getLogger(__name__)
+
+# A storage path segment must be a plain identifier (UUID-like). This blocks
+# path traversal (e.g. "../other-user/...") and slash injection in object keys.
+_SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _safe_path_segment(value: str, field: str) -> str:
+    """Validate a single storage-path segment; raise ValueError if unsafe."""
+    if not value or not _SAFE_SEGMENT_RE.match(value) or value in (".", ".."):
+        raise ValueError(f"Invalid {field}")
+    return value
 
 # =============================================================================
 # Storage Buckets
@@ -160,12 +172,19 @@ class StorageService:
         Returns:
             Dict with file_url, storage_path, file_size
         """
-        # Generate unique filename
-        file_ext = os.path.splitext(filename)[1] or ".webm"
+        # Validate identifiers used to build the object key (path traversal guard)
+        _safe_path_segment(user_id, "user_id")
+        # Use only the extension from the user-supplied filename; ignore the rest.
+        file_ext = os.path.splitext(filename)[1].lower()
+        if not _SAFE_SEGMENT_RE.match(file_ext.lstrip(".") or "x") or len(file_ext) > 10:
+            file_ext = ".webm"
+        if not file_ext:
+            file_ext = ".webm"
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         
         # Organize by user and optionally session
         if session_id:
+            _safe_path_segment(session_id, "session_id")
             storage_path = f"{user_id}/{session_id}/{unique_filename}"
         else:
             # Organize by date if no session
@@ -223,8 +242,11 @@ class StorageService:
         Returns:
             Dict with file_url, storage_path, file_size
         """
-        # Generate unique filename preserving extension
-        file_ext = os.path.splitext(filename)[1] or ""
+        # Validate user_id and sanitize the extension (path traversal guard)
+        _safe_path_segment(user_id, "user_id")
+        file_ext = os.path.splitext(filename)[1].lower()
+        if not _SAFE_SEGMENT_RE.match(file_ext.lstrip(".") or "x") or len(file_ext) > 10:
+            file_ext = ""
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         storage_path = f"{user_id}/{unique_filename}"
         

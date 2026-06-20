@@ -82,8 +82,8 @@ class UserDataExport:
             if voice_profiles_result.data:
                 export_data["voice_profiles"] = voice_profiles_result.data
             
-            # Get all sessions
-            sessions_result = supabase.table("sessions")\
+            # Get all sessions (stored in the `recordings` table)
+            sessions_result = supabase.table("recordings")\
                 .select("*")\
                 .eq("user_id", user_id)\
                 .order("created_at", desc=True)\
@@ -132,8 +132,8 @@ class SessionExport:
         Returns:
             Exported data as bytes
         """
-        # Get session
-        result = supabase.table("sessions")\
+        # Get session (stored in the `recordings` table)
+        result = supabase.table("recordings")\
             .select("*")\
             .eq("id", session_id)\
             .eq("user_id", user_id)\
@@ -247,8 +247,8 @@ class UserDataDeletion:
         }
         
         try:
-            # Delete sessions
-            sessions_result = supabase.table("sessions")\
+            # Delete sessions (stored in the `recordings` table)
+            sessions_result = supabase.table("recordings")\
                 .delete()\
                 .eq("user_id", user_id)\
                 .execute()
@@ -308,7 +308,7 @@ class BulkExport:
         Returns:
             List of session data
         """
-        query = supabase.table("sessions").select("*")
+        query = supabase.table("recordings").select("*")
         
         if start_date:
             query = query.gte("created_at", start_date.isoformat())
@@ -329,7 +329,7 @@ class BulkExport:
     @staticmethod
     async def get_session_count() -> int:
         """Get total number of sessions."""
-        result = supabase.table("sessions")\
+        result = supabase.table("recordings")\
             .select("id", count="exact")\
             .execute()
         return result.count if result else 0
