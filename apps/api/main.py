@@ -14,7 +14,11 @@ from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import Any, Dict, List, Optional
-from auth import get_current_user, get_active_user, check_is_admin, security, get_user_from_websocket_token, get_active_user_from_websocket_token
+from auth import (
+    get_current_user, get_active_user, check_is_admin, security,
+    get_user_from_websocket_token, get_active_user_from_websocket_token,
+    get_active_user_from_websocket_ticket,
+)
 from models import (
     SessionCreate, SessionResponse, SessionUpdate, UserResponse, AdminCheckResponse,
     TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
@@ -23,7 +27,7 @@ from models import (
     DraftCreate, DraftUpdate, DraftResponse
 )
 from storage import storage_service, StorageService
-from credits import check_credits_available, decrement_credits, check_and_reset_credits
+from credits import check_credits_available, decrement_credits, check_and_reset_credits, refund_credits
 from rate_limit import (
     rate_limit_middleware, 
     rate_limit_check, 
@@ -45,6 +49,47 @@ from datetime import datetime
 from llm_refinement import refine_transcript, analyze_and_refine, refine_interview_response
 from analytics import AnalyticsService
 import time
+from urllib.parse import urlparse
+from ws_tickets import create_ws_ticket, extract_ws_credential, WS_INSUFFICIENT_CREDITS_CODE
+
+
+def _validate_reference_file_url(url: Optional[str]) -> None:
+    """
+    SSRF guard: a client-supplied reference_file_url is fetched by OpenAI's
+    Vision API, so it must point only at our own Supabase Storage host. Reject
+    anything else (internal endpoints, cloud metadata, file:/data:, etc.).
+    Empty/None is allowed (optional field).
+    """
+    if not url:
+        return
+    try:
+        parsed = urlparse(url)
+        supa = urlparse(settings.supabase_url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid reference file URL")
+
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid reference file URL")
+    if parsed.netloc != supa.netloc:
+        logger.warning(
+            f"[SSRF] Rejected reference_file_url with disallowed host: {parsed.netloc}"
+        )
+        raise HTTPException(status_code=400, detail="reference file URL is not allowed")
+
+
+async def _authenticate_websocket_user(
+    websocket: WebSocket,
+    query_token: Optional[str] = None,
+    query_ticket: Optional[str] = None,
+) -> dict:
+    """Authenticate a WebSocket connection via ticket (preferred) or legacy JWT."""
+    credential, kind = extract_ws_credential(websocket, query_token, query_ticket)
+    if not credential:
+        raise HTTPException(status_code=401, detail="Missing authentication credential")
+    if kind == "ticket":
+        return await get_active_user_from_websocket_ticket(credential)
+    return await get_active_user_from_websocket_token(credential)
+
 
 # Initialize logging FIRST (before any other imports that might log)
 from logging_config import setup_logging, get_logger, set_request_id, get_request_id
@@ -68,6 +113,9 @@ app = FastAPI(
     title="Voira API",
     description="Backend API for Voira voice coaching platform",
     version="1.0.0",
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
 
@@ -355,12 +403,14 @@ async def health_ready():
 
 
 @app.get("/health/dependencies")
-async def health_dependencies():
+async def health_dependencies(user: dict = Depends(get_current_user)):
     """
-    Detailed dependency health status.
-    Returns status of all external dependencies.
-    Useful for debugging and monitoring dashboards.
+    Detailed dependency health status (authenticated).
+    In production, requires a valid session to avoid exposing infra details publicly.
     """
+    if settings.is_production and not await check_is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
     checks = await get_all_health_checks()
     return {
         "status": get_overall_status(checks),
@@ -368,6 +418,17 @@ async def health_dependencies():
         "environment": settings.env,
         "version": "1.0.0",
     }
+
+
+@app.post("/ws/ticket")
+async def create_websocket_ticket(user: dict = Depends(get_active_user)):
+    """
+    Issue a short-lived WebSocket ticket for live transcription.
+    Prefer passing the ticket via Sec-WebSocket-Protocol instead of query params.
+    """
+    rate_limit_middleware(f"ws_ticket:{user['id']}")
+    ticket, expires_in = create_ws_ticket(user["id"])
+    return {"ticket": ticket, "expires_in": expires_in}
 
 
 # =============================================================================
@@ -434,13 +495,16 @@ async def create_session(
     # Check if user is admin
     is_admin = await check_is_admin(user)
     
-    # Check and enforce credits (unless admin)
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits. Please upgrade or wait for monthly reset."
-        )
+    # Reserve the credit ATOMICALLY before creating the session (prevents the
+    # check-then-act race). Refunded below if the insert fails.
+    if not is_admin:
+        try:
+            await decrement_credits(user["id"], amount=1, reason="recording_saved", is_admin=False)
+        except ValueError:
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits. Please upgrade or wait for monthly reset."
+            )
     
     # Create session
     insert_data = {
@@ -464,18 +528,22 @@ async def create_session(
     }
     
     query_start = time.time()
-    response = supabase.table("recordings").insert(insert_data).execute()
+    try:
+        response = supabase.table("recordings").insert(insert_data).execute()
+    except Exception:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="recording_saved_failed")
+        raise HTTPException(status_code=500, detail="Failed to create session")
     duration_ms = (time.time() - query_start) * 1000
     log_slow_query("recordings", "INSERT", duration_ms, f"new session for user {user['id']}")
     
     if not response.data:
+        # Refund the reserved credit since the session was not created.
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="recording_saved_failed")
         raise HTTPException(status_code=500, detail="Failed to create session")
     
     created = response.data[0]
-    
-    # Decrement credits (unless admin)
-    if not is_admin:
-        await decrement_credits(user["id"], amount=1, reason="recording_saved", is_admin=False)
     
     return SessionResponse(
         id=created["id"],
@@ -502,9 +570,13 @@ async def create_session(
 
 
 @app.get("/sessions", response_model=List[SessionResponse])
-async def list_sessions(user: dict = Depends(get_current_user)):
+async def list_sessions(
+    user: dict = Depends(get_current_user),
+    limit: int = Query(100, ge=1, le=200, description="Max sessions to return"),
+    offset: int = Query(0, ge=0, description="Number of sessions to skip"),
+):
     """
-    List all sessions for the current user.
+    List sessions for the current user (paginated).
     Ownership enforced by RLS, but we also filter server-side for extra security.
     """
     # Rate limit by user ID
@@ -512,7 +584,14 @@ async def list_sessions(user: dict = Depends(get_current_user)):
     
     # Query recordings (RLS ensures user only sees their own)
     # Note: Supabase Python client v2 uses desc as keyword argument
-    response = supabase.table("recordings").select("*").eq("user_id", user["id"]).order("created_at", desc=True).execute()
+    response = (
+        supabase.table("recordings")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
     
     sessions = []
     for rec in response.data:
@@ -577,6 +656,32 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
     logger.info(f"Deleted {deleted_count} sessions for user {user['id']}")
     
     return {"deleted_count": deleted_count, "message": f"Deleted {deleted_count} session(s)"}
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, user: dict = Depends(get_current_user)):
+    """Delete a single session owned by the current user."""
+    rate_limit_middleware(f"delete_session:{user['id']}")
+
+    if not re.match(r"^[0-9a-fA-F-]{36}$", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+
+    query_start = time.time()
+    response = (
+        supabase.table("recordings")
+        .delete()
+        .eq("id", session_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query("recordings", "DELETE", duration_ms, f"session {session_id}")
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    logger.info(f"Deleted session {session_id} for user {user['id']}")
+    return {"id": session_id, "message": "Session deleted"}
 
 
 @app.put("/sessions/{session_id}", response_model=SessionResponse)
@@ -764,14 +869,25 @@ async def create_draft(
 
 
 @app.get("/drafts", response_model=List[DraftResponse])
-async def list_drafts(user: dict = Depends(get_current_user)):
+async def list_drafts(
+    user: dict = Depends(get_current_user),
+    limit: int = Query(100, ge=1, le=200, description="Max drafts to return"),
+    offset: int = Query(0, ge=0, description="Number of drafts to skip"),
+):
     """
-    List all drafts for the current user.
+    List drafts for the current user (paginated).
     Returns drafts sorted by updated_at (most recent first).
     """
     rate_limit_middleware(f"list_drafts:{user['id']}")
     
-    response = supabase.table("drafts").select("*").eq("user_id", user["id"]).order("updated_at", desc=True).execute()
+    response = (
+        supabase.table("drafts")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("updated_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
     
     drafts = []
     for draft in response.data or []:
@@ -942,20 +1058,25 @@ async def transcribe_audio_endpoint(
     # Check if user is admin
     is_admin = await check_is_admin(user)
     
-    # Check credits BEFORE processing (unless admin)
-    # Credit is deducted AFTER successful transcription
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits for transcription."
-        )
+    # Reserve the credit ATOMICALLY before doing work (prevents the
+    # check-then-act race). Refunded below if transcription fails, preserving
+    # the "users don't pay for failures" guarantee.
+    if not is_admin:
+        try:
+            await decrement_credits(user["id"], amount=1, reason="transcription", is_admin=False)
+        except ValueError:
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits for transcription."
+            )
     
     # Read file content into memory
     try:
         file_content = await file.read()
         mime_type = file.content_type or "application/octet-stream"
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         logger.error(f"Error reading uploaded file: {str(e)}")
         raise HTTPException(
             status_code=400,
@@ -970,16 +1091,22 @@ async def transcribe_audio_endpoint(
             language=language
         )
     except UnsupportedFileTypeError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         raise HTTPException(
             status_code=400,
             detail=str(e)
         )
     except FileTooLargeError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         raise HTTPException(
             status_code=400,
             detail=str(e)
         )
     except TranscriptionProviderError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         # Don't expose internal errors to client
         logger.error(f"Transcription failed for user {user['id']}: {str(e)}")
         raise HTTPException(
@@ -987,25 +1114,14 @@ async def transcribe_audio_endpoint(
             detail="Transcription service is currently unavailable. Please try again later."
         )
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         # Catch-all for unexpected errors
         logger.error(f"Unexpected transcription error for user {user['id']}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail="An error occurred during transcription. Please try again."
         )
-    
-    # Deduct credit ONLY after successful transcription (unless admin)
-    if not is_admin:
-        try:
-            await decrement_credits(
-                user["id"],
-                amount=1,
-                reason="transcription",
-                is_admin=False
-            )
-        except Exception as e:
-            # Log but don't fail the request - transcription was successful
-            logger.error(f"Failed to deduct credits for user {user['id']} after transcription: {str(e)}")
     
     # Return transcription result
     return TranscribeResponse(
@@ -1019,7 +1135,8 @@ async def transcribe_audio_endpoint(
 @app.websocket("/ws/live-transcribe")
 async def websocket_live_transcribe(
     websocket: WebSocket,
-    token: Optional[str] = Query(None, description="JWT authentication token"),
+    token: Optional[str] = Query(None, description="Legacy JWT (prefer ticket via subprotocol)"),
+    ticket: Optional[str] = Query(None, description="Short-lived WS ticket from POST /ws/ticket"),
     language: str = Query("en", description="Language code for transcription")
 ):
     """
@@ -1041,8 +1158,8 @@ async def websocket_live_transcribe(
     - Users get immediate feedback without financial penalty
     
     Authentication:
-    - Token must be provided via query parameter: ?token=YOUR_JWT_TOKEN
-    - Example: ws://localhost:8000/ws/live-transcribe?token=xxx&language=en
+    - Preferred: POST /ws/ticket then pass ticket via Sec-WebSocket-Protocol
+    - Legacy: ?token=JWT (deprecated — leaks credentials in URLs/logs)
     
     Protocol:
     - Client sends binary audio chunks (bytes)
@@ -1055,18 +1172,11 @@ async def websocket_live_transcribe(
         "end_time": 1.23
       }
     """
-    await websocket.accept()
-    
-    # Authenticate user and check if disabled
-    if not token:
-        await websocket.close(code=1008, reason="Missing authentication token")
-        return
-    
+    # Authenticate BEFORE accepting the connection so unauthenticated clients
+    # never establish a live WebSocket (matches /ws/listen).
     try:
-        user = await get_active_user_from_websocket_token(token)
-        logger.info(f"Live transcription session started for user {user['id']}")
+        user = await _authenticate_websocket_user(websocket, token, ticket)
     except HTTPException as e:
-        # 403 = disabled user, 401 = auth failure
         reason = "Account disabled" if e.status_code == 403 else "Authentication failed"
         await websocket.close(code=1008, reason=reason)
         return
@@ -1074,6 +1184,23 @@ async def websocket_live_transcribe(
         logger.error(f"WebSocket authentication error: {e}")
         await websocket.close(code=1011, reason="Internal server error")
         return
+    
+    # Gate live transcription on credit availability (no deduction here — final
+    # /transcribe is billed). Prevents zero-credit users from using the live
+    # stream as unlimited free transcription.
+    try:
+        is_admin = await check_is_admin(user)
+        has_credits, _ = await check_credits_available(user["id"], required=1, is_admin=is_admin)
+    except Exception as e:
+        logger.error(f"WebSocket credit check error: {e}")
+        await websocket.close(code=1011, reason="Internal server error")
+        return
+    if not has_credits:
+        await websocket.close(code=WS_INSUFFICIENT_CREDITS_CODE, reason="Insufficient credits")
+        return
+    
+    await websocket.accept(subprotocol="voira")
+    logger.info(f"Live transcription session started for user {user['id']}")
     
     # Initialize transcription provider
     # Using Deepgram for now, but provider abstraction allows easy swapping
@@ -1170,7 +1297,8 @@ async def websocket_live_transcribe(
 @app.websocket("/ws/listen")
 async def websocket_listen(
     websocket: WebSocket,
-    token: Optional[str] = Query(None, description="JWT authentication token"),
+    token: Optional[str] = Query(None, description="Legacy JWT (prefer ticket via subprotocol)"),
+    ticket: Optional[str] = Query(None, description="Short-lived WS ticket from POST /ws/ticket"),
     detect_fillers: Optional[bool] = Query(None, description="Enable filler word detection (overrides user setting)")
 ):
     """
@@ -1192,8 +1320,8 @@ async def websocket_listen(
     - Practice mode should always pass detect_fillers=true
     
     Authentication:
-    - Token must be provided via query parameter: ?token=YOUR_JWT_TOKEN
-    - Example: ws://localhost:8000/ws/listen?token=xxx&detect_fillers=true
+    - Preferred: POST /ws/ticket then pass ticket via Sec-WebSocket-Protocol
+    - Legacy: ?token=JWT (deprecated — leaks credentials in URLs/logs)
     
     Protocol:
     - Client sends binary audio chunks (audio/webm)
@@ -1206,36 +1334,33 @@ async def websocket_listen(
         "total_fillers": 0        // Only when filler detection enabled
       }
     """
-    # Check authentication BEFORE accepting the connection
-    if not token:
-        logger.warning(f"[WebSocket /ws/listen] Connection rejected: Missing authentication token")
-        await websocket.accept()
-        await websocket.close(code=1008, reason="Missing authentication token")
-        return
-    
-    # Log token presence (but not the actual token for security)
-    token_preview = f"{token[:10]}..." if len(token) > 10 else token
-    logger.info(f"[WebSocket /ws/listen] Received connection with token: {token_preview} (length: {len(token)})")
-    
-    # Authenticate user and check if disabled BEFORE accepting connection
+    # Authenticate BEFORE accepting — never accept() then close on auth failure.
     try:
-        user = await get_active_user_from_websocket_token(token)
-        logger.info(f"[WebSocket /ws/listen] Authentication successful for user {user['id']} (email: {user.get('email', 'N/A')})")
+        user = await _authenticate_websocket_user(websocket, token, ticket)
+        logger.info(f"[WebSocket /ws/listen] Authentication successful for user {user['id']}")
     except HTTPException as e:
-        # 403 = disabled user, 401 = auth failure
-        reason = "Account disabled" if e.status_code == 403 else f"Authentication failed: {e.detail}"
+        reason = "Account disabled" if e.status_code == 403 else "Authentication failed"
         logger.error(f"[WebSocket /ws/listen] {reason}")
-        await websocket.accept()
         await websocket.close(code=1008, reason=reason)
         return
     except Exception as e:
         logger.error(f"[WebSocket /ws/listen] Authentication error: {type(e).__name__}: {str(e)}")
-        await websocket.accept()
         await websocket.close(code=1011, reason="Internal server error during authentication")
         return
     
-    # Only accept connection AFTER successful authentication
-    await websocket.accept()
+    # Gate on credit availability (no deduction — see /ws/live-transcribe).
+    try:
+        is_admin = await check_is_admin(user)
+        has_credits, _ = await check_credits_available(user["id"], required=1, is_admin=is_admin)
+    except Exception as e:
+        logger.error(f"[WebSocket /ws/listen] Credit check error: {e}")
+        await websocket.close(code=1011, reason="Internal server error")
+        return
+    if not has_credits:
+        await websocket.close(code=WS_INSUFFICIENT_CREDITS_CODE, reason="Insufficient credits")
+        return
+    
+    await websocket.accept(subprotocol="voira")
     logger.info(f"[WebSocket /ws/listen] Connection accepted for user {user['id']}")
     
     # Determine if filler detection should be enabled
@@ -1357,6 +1482,21 @@ async def refine_draft(
     # Rate limit by user ID
     rate_limit_middleware(f"refine:{user['id']}")
     
+    # SSRF guard on any client-supplied reference URL.
+    _validate_reference_file_url(request.reference_file_url)
+    
+    # /refine triggers paid LLM (and possibly Voira) calls, so it must consume a
+    # credit like /analyze. Reserve atomically up front; refund on failure.
+    is_admin = await check_is_admin(user)
+    if not is_admin:
+        try:
+            await decrement_credits(user["id"], amount=1, reason="refine", is_admin=False)
+        except ValueError:
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits for refinement. Please upgrade or wait for monthly reset."
+            )
+    
     try:
         refined_text = await refine_transcript(
             raw_transcript=request.raw_transcript,
@@ -1376,10 +1516,14 @@ async def refine_draft(
         return RefineResponse(refined_text=refined_text)
     
     except ValueError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="refine_failed")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="refine_failed")
         logger.error(f"Error refining transcript for user {user['id']}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to refine transcript: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to refine transcript. Please try again.")
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
@@ -1421,15 +1565,21 @@ async def analyze_transcript_endpoint(
     # - Do NOT expand admin bypass to broader roles (e.g., "premium_user") without review
     is_admin = await check_is_admin(user)
     
-    # Check credits BEFORE any LLM calls (unless admin)
-    # Credit is deducted AFTER successful analysis to avoid charging for failures
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        logger.info(f"[Analyze:CreditCheck] Insufficient credits for user {user['id']}")
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits for analysis. Please upgrade or wait for monthly reset."
-        )
+    # SSRF guard on any client-supplied reference URL.
+    _validate_reference_file_url(request.reference_file_url)
+    
+    # Reserve the credit ATOMICALLY before any LLM calls (prevents the
+    # check-then-act race). Refunded below if analysis fails, so users still
+    # aren't charged for failures.
+    if not is_admin:
+        try:
+            await decrement_credits(user["id"], amount=1, reason="analysis", is_admin=False)
+        except ValueError:
+            logger.info(f"[Analyze:CreditCheck] Insufficient credits for user {user['id']}")
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits for analysis. Please upgrade or wait for monthly reset."
+            )
     
     try:
         result = await analyze_and_refine(
@@ -1464,38 +1614,14 @@ async def analyze_transcript_endpoint(
         )
     
     except ValueError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="analysis_failed")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="analysis_failed")
         logger.error(f"Error analyzing transcript for user {user['id']}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to analyze transcript: {str(e)}")
-    
-    # Deduct credit ONLY after successful analysis (unless admin)
-    # This ensures users are not charged for failed requests
-    #
-    # CONCURRENCY: BUG-005 FIXED
-    # decrement_credits() now uses atomic_decrement_credits() Postgres function.
-    # Single UPDATE with WHERE clause prevents race conditions and negative balances.
-    #
-    # POST-SUCCESS DEDUCTION TRADEOFF:
-    # We deduct AFTER success to avoid charging users for failed requests.
-    # Exploit vector: User could intentionally trigger failures to get free retries.
-    # This is accepted because:
-    # - UX fairness: Users should not pay for our failures
-    # - Low abuse risk: Failures are logged and rate-limited
-    # - Revisit when: Abuse patterns detected (>10% failure rate per user)
-    if not is_admin:
-        try:
-            await decrement_credits(
-                user["id"],
-                amount=1,
-                reason="analysis",  # Distinct from "refine" for billing clarity
-                is_admin=False
-            )
-            logger.info(f"[Analyze:CreditDeducted] User {user['id']} charged 1 credit for analysis")
-        except Exception as e:
-            # Log but don't fail the request - analysis was successful
-            # User got value, we should not break their experience
-            logger.error(f"[Analyze:CreditError] Failed to deduct credit for user {user['id']}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to analyze transcript. Please try again.")
     
     return response
 
@@ -1543,13 +1669,16 @@ async def refine_interview_endpoint(
     # Check if user is admin
     is_admin = await check_is_admin(user)
     
-    # Check credits (interview refinement costs 1 credit)
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits for interview refinement."
-        )
+    # Reserve the credit ATOMICALLY before LLM calls (prevents check-then-act
+    # race). Refunded below if refinement fails.
+    if not is_admin:
+        try:
+            await decrement_credits(user["id"], amount=1, reason="interview_refinement", is_admin=False)
+        except ValueError:
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits for interview refinement."
+            )
     
     try:
         # Call the refinement pipeline
@@ -1561,19 +1690,6 @@ async def refine_interview_endpoint(
             transcript=request.transcript,
             user_id=user['id']
         )
-        
-        # Deduct credit ONLY after successful refinement (unless admin)
-        if not is_admin:
-            try:
-                await decrement_credits(
-                    user["id"],
-                    amount=1,
-                    reason="interview_refinement",
-                    is_admin=False
-                )
-            except Exception as e:
-                # Log but don't fail the request - refinement was successful
-                logger.error(f"Failed to deduct credits for user {user['id']} after interview refinement: {e}")
         
         # Log telemetry
         logger.info(
@@ -1609,10 +1725,14 @@ async def refine_interview_endpoint(
         )
     
     except ValueError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="interview_refinement_failed")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="interview_refinement_failed")
         logger.error(f"Error in interview refinement for user {user['id']}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to refine interview response: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to refine interview response. Please try again.")
 
 
 # ============================================
@@ -1651,7 +1771,7 @@ def validate_file_type(content_type: str, filename: str) -> bool:
 async def upload_audio_file(
     file: UploadFile = File(..., description="Audio file to upload"),
     session_id: Optional[str] = Form(None, description="Optional session ID to associate with"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)
 ):
     """
     Upload an audio recording to storage.
@@ -1699,6 +1819,10 @@ async def upload_audio_file(
             session_id=session_id
         )
         
+    except ValueError as e:
+        # Invalid identifier (e.g. session_id path-traversal attempt)
+        logger.warning(f"Rejected audio upload for user {user['id']}: {e}")
+        raise HTTPException(status_code=400, detail="Invalid upload parameters")
     except Exception as e:
         logger.error(f"Error uploading audio: {e}")
         raise HTTPException(status_code=500, detail="Failed to upload audio file")
@@ -1707,7 +1831,7 @@ async def upload_audio_file(
 @app.post("/upload-reference", response_model=FileUploadResponse)
 async def upload_reference_file(
     file: UploadFile = File(..., description="Reference file to upload (PDF, Word doc, or image)"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_active_user)
 ):
     """
     Upload a reference file (PDF, Word document, or image) for use in transcript refinement.
@@ -2003,10 +2127,19 @@ async def batch_track_events(
     Returns:
         Confirmation with event count processed
     """
+    MAX_BATCH_EVENTS = 100
     try:
         events = batch.get("events", [])
+        if not isinstance(events, list):
+            raise HTTPException(status_code=400, detail="`events` must be a list")
         if not events:
             return {"status": "ok", "count": 0}
+        # Cap batch size to prevent abuse / unbounded work.
+        if len(events) > MAX_BATCH_EVENTS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Too many events in batch (max {MAX_BATCH_EVENTS})"
+            )
         
         # Track each event
         user_id = user.get("id") if user else None
@@ -2034,6 +2167,8 @@ async def batch_track_events(
             "count": processed_count,
             "total": len(events),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to process analytics batch: {e}")
         raise HTTPException(status_code=500, detail="Failed to process analytics batch")

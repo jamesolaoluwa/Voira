@@ -47,9 +47,10 @@ def test_create_session_enforces_credits(client):
     # Override get_active_user (sessions endpoint uses this, not get_current_user)
     app.dependency_overrides[get_active_user] = lambda: mock_user
     
-    # Patch where used (main module), not where defined (auth/credits modules)
+    # Credits are now reserved atomically up front: decrement_credits raises
+    # ValueError when the user has insufficient credits.
     with patch('main.check_is_admin', return_value=False):
-        with patch('main.check_credits_available', return_value=(False, {})):
+        with patch('main.decrement_credits', side_effect=ValueError("Insufficient credits")):
             response = client.post("/sessions", json={
                 "title": "Test Session",
                 "type": "free",
@@ -116,8 +117,9 @@ def test_list_sessions_enforces_ownership(client):
     app.dependency_overrides[get_current_user] = lambda: mock_user
     
     # Patch supabase where it's used (in main)
+    # Query chain is now: table().select().eq().order().range().execute()
     with patch('main.supabase') as mock_supabase:
-        mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [
+        mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value.data = [
             {
                 "id": "session-1",
                 "user_id": "test-user-id",  # Own session
@@ -127,13 +129,13 @@ def test_list_sessions_enforces_ownership(client):
                 "updated_at": datetime.now().isoformat(),
             }
         ]
-        
+
         response = client.get("/sessions")
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1
         assert data[0]["user_id"] == "test-user-id"
-        
+
         # Verify query was filtered by user_id
         mock_supabase.table.return_value.select.return_value.eq.assert_called_with("user_id", "test-user-id")
     
