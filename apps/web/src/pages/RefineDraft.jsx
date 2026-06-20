@@ -39,7 +39,14 @@ export default function RefineDraft() {
     resumeRecording,
     stopRecording,
     uploadAndTranscribe,
+    forceCleanup,
   } = useAudioRecorder();
+  
+  useEffect(() => {
+    return () => {
+      forceCleanup();
+    };
+  }, [forceCleanup]);
   
   // Update voice notes from live transcript
   useEffect(() => {
