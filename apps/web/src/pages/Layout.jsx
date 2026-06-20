@@ -3,7 +3,6 @@ import React from 'react';
 import { Outlet } from 'react-router-dom';
 import TopNav from '@/components/navigation/TopNav';
 import { useAuth } from '@/contexts/AuthContext';
-import AuthDebug from '@/components/AuthDebug';
 
 export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';

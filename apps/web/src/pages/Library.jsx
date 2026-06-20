@@ -79,7 +79,7 @@ export default function Library() {
   }, [sessions]);
   
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Recording.delete(id),
+    mutationFn: (id) => sessionsApi.deleteSession(id),
     onSuccess: (_data, id) => {
   // also remove from our frontend store so Library (which uses the store) updates
   try { useSessionStore.getState().removeSession(id); } catch (e) {}
