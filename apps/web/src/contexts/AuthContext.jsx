@@ -36,19 +36,27 @@ function isOAuthRedirectInProgress() {
 }
 
 /**
- * Build fallback user profile from session data when backend is unavailable
+ * Build fallback user profile from session data when backend is unavailable.
+ *
+ * SECURITY: fail closed. We only trust identity fields that come straight from
+ * the verified Supabase session (id/email/name). We NEVER fabricate credits or
+ * an elevated role here — the backend is the sole source of truth for those and
+ * enforces them atomically on every paid action. Showing 0 credits + least-
+ * privilege role avoids implying entitlements the server hasn't granted.
  */
 function buildFallbackUser(session) {
   return {
     id: session.user.id,
     email: session.user.email,
     full_name: session.user.user_metadata?.full_name || 'User',
-    // Role in fallback is ALWAYS "free_user".
+    // Role in fallback is ALWAYS "free_user" (least privilege).
     // Backend defines user_profiles.role as the only auth source; user_metadata.role is legacy.
     role: 'free_user',
-    // Default credits for fallback - will be updated when backend is available
-    credits_remaining: 10,
-    monthly_credit_allowance: 10,
+    // Do NOT fabricate credits. Real balance is filled in once /auth/me succeeds.
+    credits_remaining: 0,
+    monthly_credit_allowance: 0,
+    // Signal that this profile is degraded so the UI can prompt a retry/refresh.
+    _isFallbackProfile: true,
   };
 }
 
@@ -218,6 +226,13 @@ export function AuthProvider({ children }) {
     if (!email) {
       // No email available yet; do not modify isAdmin (avoid stomping existing true value).
       return () => { mounted = false; };
+    }
+
+    // SECURITY: if the authenticated email changed (user switch), clear the
+    // admin flag immediately so a previous admin's elevated UI never leaks to a
+    // different user during the async re-check below.
+    if (lastCheckedEmailRef.current && lastCheckedEmailRef.current !== email) {
+      setIsAdmin(false);
     }
 
     (async () => {
