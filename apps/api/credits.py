@@ -41,15 +41,25 @@ async def check_and_reset_credits(user_id: str) -> dict:
     if response.data:
         return response.data[0]
     
-    # Create default profile for new users
-    # NOTE: Admin status is NOT inferred from user_metadata.
-    # Admins are designated ONLY by setting user_profiles.role = 'admin' directly.
-    # New users always start as 'free_user' with 10 credits.
-    # Premium users get higher credits via subscription (Stripe webhook updates).
+    # Create default profile for new users (free tier: 10 credits/month).
+    # monthly_credit_allowance + credits_reset_at enable calendar-month resets
+    # via check_and_reset_credits even without the phase0 migration applied.
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        credits_reset_at = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        credits_reset_at = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+
     insert_response = supabase.table("user_profiles").insert({
         "user_id": user_id,
         "role": "free_user",
         "credits_remaining": 10,
+        "monthly_credit_allowance": 10,
+        "subscription_plan": "free",
+        "subscription_status": "inactive",
+        "credits_reset_at": credits_reset_at.isoformat(),
         "reference_uploads_remaining": 1,
     }).execute()
     
@@ -136,48 +146,55 @@ async def decrement_credits(user_id: str, amount: int = 1, reason: str = "usage"
         else:
             raise ValueError("Atomic deduction returned no data")
             
+    except ValueError:
+        # Insufficient credits / user not found - propagate to caller.
+        raise
     except Exception as e:
-        # If atomic function doesn't exist yet, fall back to legacy behavior
-        # This allows gradual migration - remove this fallback after migration is applied
-        if "function" in str(e).lower() and "does not exist" in str(e).lower():
-            logger.warning(
-                f"[Credits:Fallback] atomic_decrement_credits not available, "
-                f"using legacy deduction for user={user_id}"
-            )
-            return await _legacy_decrement_credits(user_id, amount, reason)
+        # The atomic RPC is required in all environments. Do NOT silently fall
+        # back to a non-atomic path (that reintroduces the BUG-005 race).
+        logger.error(f"[Credits:AtomicDeduct] RPC error for user {user_id}: {e}")
         raise
 
 
-async def _legacy_decrement_credits(user_id: str, amount: int, reason: str) -> dict:
+async def refund_credits(user_id: str, amount: int = 1, reason: str = "refund") -> None:
     """
-    Legacy (non-atomic) credit deduction.
-    
-    WARNING: This has a race condition (BUG-005).
-    Only used as fallback if atomic_decrement_credits DB function is not available.
-    Remove this function after migration is applied to all environments.
+    Best-effort refund of previously-reserved credits when the paid operation
+    fails after the credit was deducted.
+
+    Used by the reserve-then-work pattern: we deduct atomically up front (which
+    is race-safe) and refund here if the downstream work raises. This keeps the
+    "users don't pay for failures" guarantee while preventing double-spend.
+
+    Not security critical (returns a user's own credit), so a read-modify-write
+    is acceptable here. The DB trigger caps credits at the monthly allowance.
     """
-    profile = await check_and_reset_credits(user_id)
-    current_credits = profile.get("credits_remaining", 0)
-    new_credits = max(0, current_credits - amount)
-    
-    # Update profile (NOT ATOMIC - race condition possible)
-    update_response = supabase.table("user_profiles").update({
-        "credits_remaining": new_credits,
-    }).eq("user_id", user_id).execute()
-    
-    # Log to ledger
     try:
-        supabase.table("credits_ledger").insert({
-            "user_id": user_id,
-            "amount": -amount,
-            "reason": reason,
-            "balance_after": new_credits,
-        }).execute()
-    except Exception:
-        pass  # Logging failure shouldn't break the flow
-    
-    return {
-        "success": True,
-        "credits_remaining": new_credits,
-        "legacy_fallback": True
-    }
+        result = supabase.table("user_profiles").select(
+            "credits_remaining, monthly_credit_allowance"
+        ).eq("user_id", user_id).single().execute()
+        if not result.data:
+            return
+        current = result.data.get("credits_remaining", 0) or 0
+        allowance = result.data.get("monthly_credit_allowance")
+        new_balance = current + amount
+        if allowance is not None:
+            new_balance = min(new_balance, allowance)
+
+        supabase.table("user_profiles").update(
+            {"credits_remaining": new_balance}
+        ).eq("user_id", user_id).execute()
+
+        try:
+            supabase.table("credits_ledger").insert({
+                "user_id": user_id,
+                "amount": amount,
+                "reason": reason,
+                "balance_after": new_balance,
+            }).execute()
+        except Exception:
+            pass  # Ledger logging failure shouldn't break refund.
+        logger.info(f"[Credits:Refund] Refunded {amount} credit(s) to user {user_id}")
+    except Exception as e:
+        logger.error(f"[Credits:Refund] Failed to refund credits for user {user_id}: {e}")
+
+

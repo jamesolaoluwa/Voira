@@ -21,7 +21,7 @@ Usage:
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 from db import supabase
@@ -97,7 +97,7 @@ async def reset_monthly_credits() -> Dict[str, Any]:
                 
                 period_end = datetime.fromisoformat(period_end_str.replace('Z', '+00:00'))
                 
-                # Skip expired subscriptions
+                # Skip expired subscriptions (Stripe renews these via webhook)
                 if now >= period_end:
                     logger.debug(
                         f"[CreditReset] User {user_id} period expired "
@@ -105,18 +105,15 @@ async def reset_monthly_credits() -> Dict[str, Any]:
                     )
                     continue
                 
-                # Derive approximate period start from plan type
-                plan = user.get("subscription_plan", "")
-                period_duration = timedelta(days=366) if "yearly" in plan else timedelta(days=32)
-                period_start_approx = period_end - period_duration
-                
-                # Skip if already reset during this billing period
+                # Monthly allowance refreshes EVERY calendar month for both
+                # monthly and yearly plans (yearly plans still get a monthly
+                # credit allowance). Reset once per calendar month.
                 last_reset_str = user.get("last_credit_reset_at")
                 if last_reset_str:
                     last_reset = datetime.fromisoformat(last_reset_str.replace('Z', '+00:00'))
-                    if last_reset > period_start_approx:
+                    if (last_reset.year, last_reset.month) == (now.year, now.month):
                         logger.debug(
-                            f"[CreditReset] User {user_id} already reset this period "
+                            f"[CreditReset] User {user_id} already reset this month "
                             f"(last reset: {last_reset})"
                         )
                         continue
@@ -125,15 +122,8 @@ async def reset_monthly_credits() -> Dict[str, Any]:
                 allowance = user.get("monthly_credit_allowance", 60)
                 current_credits = user.get("credits_remaining", 0)
                 
-                # Only reset if credits are lower (don't over-grant)
-                if current_credits >= allowance:
-                    logger.info(
-                        f"[CreditReset] User {user_id} already has {current_credits} "
-                        f"(allowance: {allowance}), skipping"
-                    )
-                    continue
-                
-                # Reset credits
+                # Reset credits to the full allowance at the start of each cycle
+                # (allowance is a monthly refresh, not a high-water-mark cap).
                 supabase.table("user_profiles").update({
                     "credits_remaining": allowance,
                     "credits_used_this_period": 0,

@@ -308,7 +308,7 @@ class TestCreditEnforcementViaAPI:
         app.dependency_overrides[get_active_user] = lambda: mock_user_no_credits
         
         with patch('main.check_is_admin', return_value=False):
-            with patch('main.check_credits_available', return_value=(False, {})):
+            with patch('main.decrement_credits', side_effect=ValueError("Insufficient credits")):
                 response = client.post("/sessions", json={
                     "title": "Test Session",
                     "type": "free",
@@ -418,7 +418,7 @@ class TestAnalyzeEndpointCreditConsumption:
         app.dependency_overrides[get_active_user] = lambda: mock_user
         
         with patch('main.check_is_admin', return_value=False):
-            with patch('main.check_credits_available', return_value=(False, {"credits_remaining": 0})):
+            with patch('main.decrement_credits', side_effect=ValueError("Insufficient credits")):
                 response = client.post("/analyze", json={
                     "raw_transcript": "This is a test transcript for analysis.",
                     "session_type": "free",
@@ -486,20 +486,23 @@ class TestAnalyzeEndpointCreditConsumption:
         app.dependency_overrides[get_active_user] = lambda: mock_user
         
         with patch('main.check_is_admin', return_value=False):
-            with patch('main.check_credits_available', return_value=(True, {"credits_remaining": 5})):
-                with patch('main.analyze_and_refine') as mock_analyze:
-                    # Mock analysis failure
-                    mock_analyze.side_effect = Exception("LLM API error")
-                    
-                    with patch('main.decrement_credits') as mock_decrement:
+            with patch('main.analyze_and_refine') as mock_analyze:
+                # Mock analysis failure
+                mock_analyze.side_effect = Exception("LLM API error")
+                
+                # New design: credit is RESERVED up front (decrement) then
+                # REFUNDED on failure, so the net charge is zero.
+                with patch('main.decrement_credits') as mock_decrement:
+                    with patch('main.refund_credits') as mock_refund:
                         response = client.post("/analyze", json={
                             "raw_transcript": "This is a test transcript.",
                             "session_type": "free",
                         })
                         
                         assert response.status_code == 500
-                        # Credits should NOT be decremented on failure
-                        mock_decrement.assert_not_called()
+                        # Reserved once, then refunded once -> not charged.
+                        mock_decrement.assert_called_once()
+                        mock_refund.assert_called_once()
         
         app.dependency_overrides.clear()
     
