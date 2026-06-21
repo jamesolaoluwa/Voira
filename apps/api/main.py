@@ -70,7 +70,8 @@ def _validate_reference_file_url(url: Optional[str]) -> None:
 
     if parsed.scheme != "https" or not parsed.netloc:
         raise HTTPException(status_code=400, detail="Invalid reference file URL")
-    if parsed.netloc != supa.netloc:
+    # Hostnames are case-insensitive; compare normalized netloc.
+    if parsed.netloc.lower() != supa.netloc.lower():
         logger.warning(
             f"[SSRF] Rejected reference_file_url with disallowed host: {parsed.netloc}"
         )
