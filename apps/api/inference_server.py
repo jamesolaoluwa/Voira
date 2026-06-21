@@ -59,6 +59,7 @@ ENDPOINTS:
                                     "repetition_penalty": float}
                            returns {"essay": str, "usage": {...}}
 """
+
 import argparse
 import logging
 import os
@@ -106,7 +107,9 @@ def run_setup(output_dir: Path = DEFAULT_FUSED_MODEL_DIR) -> None:
     Idempotent: if the final MLX model already exists, we skip.
     """
     output_dir = Path(output_dir).expanduser()
-    if (output_dir / "config.json").exists() and (output_dir / "tokenizer.json").exists():
+    if (output_dir / "config.json").exists() and (
+        output_dir / "tokenizer.json"
+    ).exists():
         logger.info(f"Fused MLX model already exists at {output_dir}; skipping setup.")
         return
 
@@ -438,6 +441,7 @@ def create_app():
         provided = authorization.split(" ", 1)[1].strip()
         # Constant-time comparison to avoid timing leaks.
         import hmac
+
         if not hmac.compare_digest(provided, expected_token):
             raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -463,7 +467,9 @@ def create_app():
     async def _startup():
         nonlocal gen_lock
         gen_lock = asyncio.Semaphore(1)
-        model_dir = Path(os.environ.get("VOIRA_MODEL_PATH", DEFAULT_FUSED_MODEL_DIR)).expanduser()
+        model_dir = Path(
+            os.environ.get("VOIRA_MODEL_PATH", DEFAULT_FUSED_MODEL_DIR)
+        ).expanduser()
         # Offload the blocking model load so the event loop stays responsive
         # (health checks can answer "loading" while this runs).
         await asyncio.to_thread(load_model, model_dir)
@@ -476,7 +482,11 @@ def create_app():
             "model_path": str(_MODEL_PATH) if _MODEL_PATH else None,
         }
 
-    @app.post("/generate", response_model=GenerateResponse, dependencies=[Depends(require_token)])
+    @app.post(
+        "/generate",
+        response_model=GenerateResponse,
+        dependencies=[Depends(require_token)],
+    )
     async def generate_endpoint(req: GenerateRequest):
         if _MODEL is None:
             raise HTTPException(status_code=503, detail="Model still loading")

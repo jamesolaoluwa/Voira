@@ -20,12 +20,12 @@ async def check_supabase() -> Dict[str, Any]:
     """Check Supabase database connectivity."""
     try:
         from db import supabase
-        
+
         # Simple query to verify connection - use user_profiles table
         start = datetime.now()
         result = supabase.table("user_profiles").select("user_id").limit(1).execute()
         latency_ms = (datetime.now() - start).total_seconds() * 1000
-        
+
         return {
             "status": "healthy",
             "latency_ms": round(latency_ms, 2),
@@ -42,9 +42,9 @@ async def check_redis() -> Dict[str, Any]:
     """Check Redis and rate limiter status."""
     try:
         from rate_limit import get_rate_limiter_status
-        
+
         status = await get_rate_limiter_status()
-        
+
         # Map rate limiter status to health check format
         if status["backend"] == "redis" and status["healthy"]:
             return {
@@ -57,7 +57,9 @@ async def check_redis() -> Dict[str, Any]:
                 "status": "degraded" if settings.is_production else "healthy",
                 "backend": "memory",
                 "message": status.get("reason", "Using in-memory rate limiting"),
-                "warning": "Not suitable for production" if settings.is_production else None,
+                "warning": (
+                    "Not suitable for production" if settings.is_production else None
+                ),
             }
         elif status["backend"] == "none":
             return {
@@ -90,7 +92,7 @@ async def check_deepgram() -> Dict[str, Any]:
             "status": "not_configured",
             "message": "Deepgram API key not set - transcription will not work",
         }
-    
+
     # We don't make actual API calls for health checks to avoid costs
     # Just verify the key is present and looks valid
     key = settings.deepgram_api_key
@@ -99,7 +101,7 @@ async def check_deepgram() -> Dict[str, Any]:
             "status": "unhealthy",
             "error": "Deepgram API key appears invalid (too short)",
         }
-    
+
     return {
         "status": "healthy",
         "message": "API key configured",
@@ -113,14 +115,14 @@ async def check_openai() -> Dict[str, Any]:
             "status": "not_configured",
             "message": "OpenAI API key not set - LLM refinement will not work",
         }
-    
+
     key = settings.openai_api_key
-    if not key.startswith('sk-'):
+    if not key.startswith("sk-"):
         return {
             "status": "unhealthy",
             "error": "OpenAI API key appears invalid (should start with 'sk-')",
         }
-    
+
     return {
         "status": "healthy",
         "message": "API key configured",
@@ -134,7 +136,7 @@ async def check_sentry() -> Dict[str, Any]:
             "status": "not_configured",
             "message": "Sentry DSN not set - error tracking disabled",
         }
-    
+
     return {
         "status": "healthy",
         "message": "Error tracking enabled",
@@ -144,7 +146,7 @@ async def check_sentry() -> Dict[str, Any]:
 async def get_all_health_checks() -> Dict[str, Any]:
     """
     Run all health checks in parallel.
-    
+
     Returns:
         Dictionary with status of all dependencies
     """
@@ -156,9 +158,9 @@ async def get_all_health_checks() -> Dict[str, Any]:
         check_sentry(),
         return_exceptions=True,
     )
-    
+
     check_names = ["supabase", "redis", "deepgram", "openai", "sentry"]
-    
+
     results = {}
     for name, result in zip(check_names, checks):
         if isinstance(result, Exception):
@@ -168,18 +170,18 @@ async def get_all_health_checks() -> Dict[str, Any]:
             }
         else:
             results[name] = result
-    
+
     return results
 
 
 def is_ready(checks: Dict[str, Any]) -> bool:
     """
     Determine if the application is ready to serve traffic.
-    
+
     Critical dependencies (must be healthy):
     - Supabase (database)
     - Redis (in production only - required for rate limiting)
-    
+
     Non-critical (can be degraded):
     - Redis (in development - falls back to in-memory)
     - Deepgram (transcription unavailable)
@@ -190,7 +192,7 @@ def is_ready(checks: Dict[str, Any]) -> bool:
     supabase_status = checks.get("supabase", {}).get("status")
     if supabase_status not in ("healthy",):
         return False
-    
+
     # In production, Redis is critical for rate limiting
     if settings.is_production:
         redis_status = checks.get("redis", {}).get("status")
@@ -198,14 +200,14 @@ def is_ready(checks: Dict[str, Any]) -> bool:
         # Must have Redis backend and be healthy in production
         if redis_backend != "redis" or redis_status != "healthy":
             return False
-    
+
     return True
 
 
 def get_overall_status(checks: Dict[str, Any]) -> str:
     """
     Get overall application health status.
-    
+
     Returns:
         "healthy" - All dependencies operational
         "degraded" - Non-critical dependencies unavailable
@@ -213,10 +215,10 @@ def get_overall_status(checks: Dict[str, Any]) -> str:
     """
     if not is_ready(checks):
         return "unhealthy"
-    
+
     # Check for degraded status
     for name, check in checks.items():
         if check.get("status") == "unhealthy":
             return "degraded"
-    
+
     return "healthy"

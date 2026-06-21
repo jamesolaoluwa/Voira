@@ -27,6 +27,7 @@ Both return a string wrapped with the exact markers the model expects:
 
 Reference: https://huggingface.co/ekomobng/voira-essay-lora-v1
 """
+
 import logging
 from typing import Optional, Dict, Any
 
@@ -155,7 +156,7 @@ def _format_voice_profile_block(voice_profile: Optional[Dict[str, Any]]) -> str:
     example = voice_profile.get("example_responses")
     if example:
         snippet = example.strip()[:400]
-        lines.append(f"- Style example:\n\"\"\"\n{snippet}\n\"\"\"")
+        lines.append(f'- Style example:\n"""\n{snippet}\n"""')
 
     return "\n".join(lines)
 
@@ -262,10 +263,12 @@ async def generate_outline_from_transcript(
         parts.append(voice_block)
 
     if reference_text:
-        parts.append(f"REFERENCE MATERIAL (style only, do not copy):\n\"\"\"\n{reference_text.strip()}\n\"\"\"")
+        parts.append(
+            f'REFERENCE MATERIAL (style only, do not copy):\n"""\n{reference_text.strip()}\n"""'
+        )
 
     parts.append(
-        f"RAW TRANSCRIPT (the writer talking out their ideas):\n\"\"\"\n{transcript.strip()}\n\"\"\""
+        f'RAW TRANSCRIPT (the writer talking out their ideas):\n"""\n{transcript.strip()}\n"""'
     )
 
     parts.append(
@@ -327,7 +330,9 @@ async def extract_outline_from_draft(
         parts.append(f"TARGET WORD LIMIT: {word_limit} words")
     else:
         current_words = len(draft.split())
-        parts.append(f"TARGET WORD LIMIT: {current_words} words (match existing draft length)")
+        parts.append(
+            f"TARGET WORD LIMIT: {current_words} words (match existing draft length)"
+        )
 
     if desired_tone:
         parts.append(f"DESIRED TONE: {desired_tone}")
@@ -343,10 +348,12 @@ async def extract_outline_from_draft(
         parts.append(voice_block)
 
     if reference_text:
-        parts.append(f"REFERENCE MATERIAL (style only, do not copy):\n\"\"\"\n{reference_text.strip()}\n\"\"\"")
+        parts.append(
+            f'REFERENCE MATERIAL (style only, do not copy):\n"""\n{reference_text.strip()}\n"""'
+        )
 
     parts.append(
-        f"EXISTING DRAFT (reverse-engineer the outline from this):\n\"\"\"\n{draft.strip()}\n\"\"\""
+        f'EXISTING DRAFT (reverse-engineer the outline from this):\n"""\n{draft.strip()}\n"""'
     )
 
     parts.append(

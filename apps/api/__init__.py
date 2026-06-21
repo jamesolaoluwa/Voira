@@ -1,2 +1,1 @@
 """Voira API package."""
-

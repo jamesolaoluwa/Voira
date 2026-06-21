@@ -17,7 +17,9 @@ def _override_active_user(user=None):
 
 
 class TestStripeCheckoutSession:
-    def test_success_url_appends_session_id_with_ampersand_when_query_present(self, client):
+    def test_success_url_appends_session_id_with_ampersand_when_query_present(
+        self, client
+    ):
         _override_active_user()
 
         # Avoid hitting Supabase; just return a customer id from helper.
@@ -34,10 +36,17 @@ class TestStripeCheckoutSession:
                 # Provide a minimal valid price mapping.
                 with patch(
                     "stripe_billing.get_price_plan_mapping",
-                    return_value={"price_monthly": {"plan": Mock(value="pro_monthly"), "credits": 60}},
+                    return_value={
+                        "price_monthly": {
+                            "plan": Mock(value="pro_monthly"),
+                            "credits": 60,
+                        }
+                    },
                 ):
                     with patch("stripe.checkout.Session.create") as create_session:
-                        create_session.return_value = Mock(id="cs_test", url="https://stripe.test/checkout")
+                        create_session.return_value = Mock(
+                            id="cs_test", url="https://stripe.test/checkout"
+                        )
 
                         res = client.post(
                             "/billing/create-checkout-session",
@@ -88,11 +97,17 @@ class TestStripeAdminRolePreserved:
         """
         Regression: Stripe events must never downgrade an admin user.
         """
-        from stripe_billing import _update_user_subscription, SubscriptionPlan, SubscriptionStatus
+        from stripe_billing import (
+            _update_user_subscription,
+            SubscriptionPlan,
+            SubscriptionStatus,
+        )
 
         # Mock supabase query returning existing admin role and allowance.
         select_execute = Mock()
-        select_execute.data = [{"monthly_credit_allowance": 60, "credits_remaining": 5, "role": "admin"}]
+        select_execute.data = [
+            {"monthly_credit_allowance": 60, "credits_remaining": 5, "role": "admin"}
+        ]
 
         with patch("stripe_billing.supabase") as mock_supabase:
             mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
@@ -150,7 +165,9 @@ class TestStripeAdminRolePreserved:
 
 
 class TestStripeIdempotency:
-    def test_duplicate_subscription_update_does_not_double_grant_bonus_credits(self, client):
+    def test_duplicate_subscription_update_does_not_double_grant_bonus_credits(
+        self, client
+    ):
         """
         Idempotency: repeated subscription.* events should not double-apply upgrade bonus credits.
 
@@ -158,15 +175,31 @@ class TestStripeIdempotency:
         upgrade twice. The second processing should see the new allowance already applied and
         therefore NOT add bonus credits again.
         """
-        from stripe_billing import _update_user_subscription, SubscriptionPlan, SubscriptionStatus
+        from stripe_billing import (
+            _update_user_subscription,
+            SubscriptionPlan,
+            SubscriptionStatus,
+        )
 
         # First call: user had lower allowance -> bonus credits applied
         select_execute_1 = Mock()
-        select_execute_1.data = [{"monthly_credit_allowance": 10, "credits_remaining": 5, "role": "free_user"}]
+        select_execute_1.data = [
+            {
+                "monthly_credit_allowance": 10,
+                "credits_remaining": 5,
+                "role": "free_user",
+            }
+        ]
 
         # Second call: user already at new allowance -> no bonus
         select_execute_2 = Mock()
-        select_execute_2.data = [{"monthly_credit_allowance": 60, "credits_remaining": 55, "role": "premium_user"}]
+        select_execute_2.data = [
+            {
+                "monthly_credit_allowance": 60,
+                "credits_remaining": 55,
+                "role": "premium_user",
+            }
+        ]
 
         with patch("stripe_billing.supabase") as mock_supabase:
             mock_supabase.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
@@ -192,7 +225,9 @@ class TestStripeIdempotency:
                     credit_allowance=60,
                 )
             )
-            first_update_payload = mock_supabase.table.return_value.update.call_args_list[0].args[0]
+            first_update_payload = (
+                mock_supabase.table.return_value.update.call_args_list[0].args[0]
+            )
             assert first_update_payload.get("credits_remaining") == 55  # 5 + (60-10)
 
             asyncio.run(
@@ -205,6 +240,7 @@ class TestStripeIdempotency:
                     credit_allowance=60,
                 )
             )
-            second_update_payload = mock_supabase.table.return_value.update.call_args_list[1].args[0]
+            second_update_payload = (
+                mock_supabase.table.return_value.update.call_args_list[1].args[0]
+            )
             assert "credits_remaining" not in second_update_payload
-

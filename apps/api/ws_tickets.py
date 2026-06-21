@@ -1,4 +1,5 @@
 """Short-lived WebSocket authentication tickets (avoids JWT in query strings)."""
+
 import hashlib
 import hmac
 import secrets

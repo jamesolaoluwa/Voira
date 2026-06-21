@@ -18,6 +18,7 @@ refinement.
 
 Reference: https://huggingface.co/ekomobng/voira-essay-lora-v1
 """
+
 import logging
 import re
 from typing import Optional
@@ -222,8 +223,7 @@ def _sanitize_essay_output(raw: str) -> str:
     non_empty_lines = [ln for ln in text.splitlines() if ln.strip()]
     if non_empty_lines:
         bullet_lines = sum(
-            1 for ln in non_empty_lines
-            if re.match(_BULLET_LINE_HEAD, ln)
+            1 for ln in non_empty_lines if re.match(_BULLET_LINE_HEAD, ln)
         )
         if bullet_lines / len(non_empty_lines) >= 0.5:
             return ""
@@ -241,16 +241,19 @@ def _sanitize_essay_output(raw: str) -> str:
 
 class VoiraModelError(Exception):
     """Base exception for Voira model inference errors."""
+
     pass
 
 
 class VoiraModelDisabledError(VoiraModelError):
     """Raised when the Voira model is disabled via config."""
+
     pass
 
 
 class VoiraModelUnavailableError(VoiraModelError):
     """Raised when the inference endpoint is unreachable or returns an error."""
+
     pass
 
 
@@ -363,7 +366,9 @@ async def generate_essay(
 
         data = response.json()
 
-        raw_essay = data.get("essay") or data.get("generated_text") or data.get("output")
+        raw_essay = (
+            data.get("essay") or data.get("generated_text") or data.get("output")
+        )
         if not raw_essay:
             raise VoiraModelUnavailableError(
                 f"Voira endpoint response missing essay/generated_text field: {data}"
@@ -403,7 +408,9 @@ async def generate_essay(
         return essay
 
     except httpx.TimeoutException as e:
-        logger.error(f"[VoiraModel] Inference timed out after {settings.voira_model_timeout}s: {e}")
+        logger.error(
+            f"[VoiraModel] Inference timed out after {settings.voira_model_timeout}s: {e}"
+        )
         capture_message(
             "Voira model inference timed out",
             level="warning",

@@ -10,10 +10,10 @@ Provides:
 
 Usage:
     from feature_flags import is_enabled, get_variant
-    
+
     if is_enabled("new_transcription_model", user_id=user["id"]):
         # Use new model
-    
+
     variant = get_variant("onboarding_flow", user_id=user["id"])
     if variant == "simplified":
         # Show simplified onboarding
@@ -53,7 +53,6 @@ FEATURE_FLAGS: Dict[str, Dict[str, Any]] = {
         "enabled": True,
         "environments": ["development", "staging", "production"],
     },
-    
     # ==========================================================================
     # LLM Features
     # ==========================================================================
@@ -68,7 +67,6 @@ FEATURE_FLAGS: Dict[str, Dict[str, Any]] = {
         "enabled": False,
         "environments": ["development", "staging"],
     },
-    
     # ==========================================================================
     # UI Features
     # ==========================================================================
@@ -87,7 +85,6 @@ FEATURE_FLAGS: Dict[str, Dict[str, Any]] = {
         "enabled": True,
         "environments": ["development", "staging", "production"],
     },
-    
     # ==========================================================================
     # Backend Features
     # ==========================================================================
@@ -102,7 +99,6 @@ FEATURE_FLAGS: Dict[str, Dict[str, Any]] = {
         "environments": ["development", "staging"],
         "rollout_percentage": 10,
     },
-    
     # ==========================================================================
     # Beta Features
     # ==========================================================================
@@ -125,108 +121,103 @@ FEATURE_FLAGS: Dict[str, Dict[str, Any]] = {
 # Feature Flag Functions
 # =============================================================================
 
+
 def get_flag_config(flag_name: str) -> Optional[Dict[str, Any]]:
     """Get configuration for a feature flag."""
     return FEATURE_FLAGS.get(flag_name)
 
 
 def is_enabled(
-    flag_name: str,
-    user_id: Optional[str] = None,
-    default: bool = False
+    flag_name: str, user_id: Optional[str] = None, default: bool = False
 ) -> bool:
     """
     Check if a feature flag is enabled.
-    
+
     Args:
         flag_name: Name of the feature flag
         user_id: Optional user ID for user-specific checks
         default: Default value if flag not found
-        
+
     Returns:
         True if feature is enabled
     """
     flag = FEATURE_FLAGS.get(flag_name)
-    
+
     if not flag:
         logger.warning(f"Unknown feature flag: {flag_name}")
         return default
-    
+
     # Check if globally disabled
     if not flag.get("enabled", False):
         # Check user-specific override
         if user_id and user_id in flag.get("user_ids", []):
             return True
         return False
-    
+
     # Check environment
     environments = flag.get("environments", [])
     if environments and settings.env not in environments:
         return False
-    
+
     # Check rollout percentage
     rollout = flag.get("rollout_percentage")
     if rollout is not None and rollout < 100:
         if not user_id:
             return False
         return _is_in_rollout(flag_name, user_id, rollout)
-    
+
     # Check user-specific enable/disable
     if user_id:
         enabled_users = flag.get("user_ids", [])
         if enabled_users and user_id not in enabled_users:
             return False
-    
+
     return True
 
 
-def get_variant(
-    flag_name: str,
-    user_id: str,
-    default: str = "control"
-) -> str:
+def get_variant(flag_name: str, user_id: str, default: str = "control") -> str:
     """
     Get variant for A/B test.
-    
+
     Args:
         flag_name: Name of the feature flag with variants
         user_id: User ID for consistent assignment
         default: Default variant if flag not found
-        
+
     Returns:
         Variant name
     """
     flag = FEATURE_FLAGS.get(flag_name)
-    
+
     if not flag:
         logger.warning(f"Unknown feature flag: {flag_name}")
         return default
-    
+
     # Check if flag is enabled first
     if not is_enabled(flag_name, user_id):
         return default
-    
+
     variants = flag.get("variants", {})
     if not variants:
         return default
-    
+
     # Get deterministic bucket for user
     bucket = _get_user_bucket(flag_name, user_id)
-    
+
     # Find variant based on bucket
     cumulative = 0
     for variant_name, percentage in variants.items():
         cumulative += percentage
         if bucket < cumulative:
             return variant_name
-    
+
     return default
 
 
 def _get_user_bucket(flag_name: str, user_id: str) -> int:
     """
     Get a deterministic bucket (0-99) for a user/flag combination.
-    
+
     This ensures the same user always gets the same bucket for a given flag,
     but different buckets for different flags.
     """
@@ -245,6 +236,7 @@ def _is_in_rollout(flag_name: str, user_id: str, percentage: int) -> bool:
 # Admin Functions
 # =============================================================================
 
+
 def get_all_flags() -> Dict[str, Dict[str, Any]]:
     """Get all feature flags with their configuration."""
     return {
@@ -259,10 +251,7 @@ def get_all_flags() -> Dict[str, Dict[str, Any]]:
 
 def get_user_flags(user_id: str) -> Dict[str, bool]:
     """Get all feature flag states for a specific user."""
-    return {
-        name: is_enabled(name, user_id)
-        for name in FEATURE_FLAGS.keys()
-    }
+    return {name: is_enabled(name, user_id) for name in FEATURE_FLAGS.keys()}
 
 
 def get_user_variants(user_id: str) -> Dict[str, str]:
@@ -277,6 +266,7 @@ def get_user_variants(user_id: str) -> Dict[str, str]:
 # =============================================================================
 # Runtime Flag Updates (In-Memory Only)
 # =============================================================================
+
 
 def enable_flag(flag_name: str) -> bool:
     """Enable a flag at runtime (in-memory only)."""
