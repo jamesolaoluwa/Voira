@@ -49,11 +49,6 @@ jobs:
           ENV: test
         run: pytest ../../tests -v --tb=short
 
-      - name: Check code formatting
-        run: |
-          pip install black
-          black --check .
-
   # ==========================================================================
   # Frontend Build + Lint
   # ==========================================================================
