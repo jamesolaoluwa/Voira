@@ -165,35 +165,26 @@ async def refund_credits(user_id: str, amount: int = 1, reason: str = "refund") 
     is race-safe) and refund here if the downstream work raises. This keeps the
     "users don't pay for failures" guarantee while preventing double-spend.
 
-    Not security critical (returns a user's own credit), so a read-modify-write
-    is acceptable here. The DB trigger caps credits at the monthly allowance.
+    Uses the atomic `atomic_refund_credits` RPC (single UPDATE) to avoid the
+    lost-update race of a read-modify-write under concurrency. The RPC caps the
+    balance at the monthly allowance and writes the ledger entry in one step.
     """
+    if amount <= 0:
+        return
     try:
-        result = supabase.table("user_profiles").select(
-            "credits_remaining, monthly_credit_allowance"
-        ).eq("user_id", user_id).single().execute()
-        if not result.data:
-            return
-        current = result.data.get("credits_remaining", 0) or 0
-        allowance = result.data.get("monthly_credit_allowance")
-        new_balance = current + amount
-        if allowance is not None:
-            new_balance = min(new_balance, allowance)
-
-        supabase.table("user_profiles").update(
-            {"credits_remaining": new_balance}
-        ).eq("user_id", user_id).execute()
-
-        try:
-            supabase.table("credits_ledger").insert({
-                "user_id": user_id,
-                "amount": amount,
-                "reason": reason,
-                "balance_after": new_balance,
-            }).execute()
-        except Exception:
-            pass  # Ledger logging failure shouldn't break refund.
-        logger.info(f"[Credits:Refund] Refunded {amount} credit(s) to user {user_id}")
+        result = supabase.rpc(
+            "atomic_refund_credits",
+            {"p_user_id": user_id, "p_amount": amount, "p_reason": reason},
+        ).execute()
+        if result.data and result.data.get("success"):
+            logger.info(
+                f"[Credits:Refund] Refunded {amount} credit(s) to user {user_id} "
+                f"(balance={result.data.get('credits_remaining')})"
+            )
+        else:
+            logger.warning(
+                f"[Credits:Refund] Refund RPC returned no success for user {user_id}: {result.data}"
+            )
     except Exception as e:
         logger.error(f"[Credits:Refund] Failed to refund credits for user {user_id}: {e}")
 

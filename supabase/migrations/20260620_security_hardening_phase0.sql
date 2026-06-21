@@ -263,9 +263,58 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 3b) Atomic credit refund (reserve-then-work pattern). A single UPDATE avoids
+--     the lost-update race of a read-modify-write. Caps at monthly allowance so
+--     a refund can never inflate a balance beyond entitlement.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.atomic_refund_credits(p_user_id uuid, p_amount integer DEFAULT 1, p_reason text DEFAULT 'refund'::text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_new_balance integer;
+    v_rows_affected integer;
+BEGIN
+    IF p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'atomic_refund_credits: p_amount must be a positive integer (got %)', p_amount;
+    END IF;
+
+    UPDATE public.user_profiles
+    SET credits_remaining = LEAST(
+            credits_remaining + p_amount,
+            COALESCE(monthly_credit_allowance, credits_remaining + p_amount)
+        ),
+        credits_used_this_period = GREATEST(0, COALESCE(credits_used_this_period, 0) - p_amount),
+        updated_at = now()
+    WHERE user_id = p_user_id
+    RETURNING credits_remaining
+    INTO v_new_balance;
+
+    GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+    IF v_rows_affected = 0 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'user_not_found');
+    END IF;
+
+    BEGIN
+        INSERT INTO public.credits_ledger (user_id, amount, reason, balance_after)
+        VALUES (p_user_id, p_amount, p_reason, v_new_balance);
+    EXCEPTION WHEN OTHERS THEN
+        RAISE WARNING '[atomic_refund_credits] Ledger insert failed: user_id=%, amount=%, error=%',
+            p_user_id, p_amount, SQLERRM;
+    END;
+
+    RETURN jsonb_build_object('success', true, 'credits_remaining', v_new_balance,
+        'credits_refunded', p_amount, 'reason', p_reason);
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 4) Revoke EXECUTE on privileged SECURITY DEFINER / billing RPCs from clients.
 --    The backend calls these only via the service-role key.
 -- ---------------------------------------------------------------------------
+REVOKE EXECUTE ON FUNCTION public.atomic_refund_credits(uuid, integer, text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.atomic_decrement_credits(uuid, integer, text) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.deduct_credit(uuid, integer) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.check_and_reset_credits(uuid) FROM PUBLIC, anon, authenticated;
@@ -276,6 +325,7 @@ REVOKE EXECUTE ON FUNCTION public.reset_user_credits(uuid) FROM PUBLIC, anon, au
 REVOKE EXECUTE ON FUNCTION public.update_subscription_from_stripe(text, text, text, text, timestamptz, integer) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.cancel_subscription(text) FROM PUBLIC, anon, authenticated;
 
+GRANT EXECUTE ON FUNCTION public.atomic_refund_credits(uuid, integer, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.atomic_decrement_credits(uuid, integer, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.deduct_credit(uuid, integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.check_and_reset_credits(uuid) TO service_role;
