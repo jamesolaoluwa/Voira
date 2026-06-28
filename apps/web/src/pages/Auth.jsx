@@ -72,9 +72,7 @@ export default function Auth() {
       if (!pwResult.success) throw new Error('Password must be at least 10 characters');
 
       if (isSignUp) {
-        console.log('[Auth] Calling signUp...');
         const result = await auth.signUp(normalizedEmail, password, name);
-        console.log('[Auth] signUp completed:', result);
         
         // Check if email confirmation is required
         // Supabase returns user but session is null when confirmation is required
@@ -89,9 +87,7 @@ export default function Auth() {
         setIsLoading(false);
         // Redirect will happen via useEffect when session is set
       } else {
-        console.log('[Auth] Calling signIn...');
         const result = await auth.signIn(normalizedEmail, password);
-        console.log('[Auth] signIn completed:', result);
         
         // signIn should return a session. If it succeeded but no session,
         // wait briefly for onAuthStateChange, then check explicitly
