@@ -124,7 +124,7 @@ class DeepgramWebmProvider:
                 continue
             except Exception as e:
                 logger.error(f"Error receiving transcript event: {e}")
-                yield {"type": "error", "message": str(e)}
+                yield {"type": "error", "message": "Transcription stream error"}
                 break
 
     async def _receive_messages(self) -> None:
@@ -176,7 +176,7 @@ class DeepgramWebmProvider:
                 except Exception as e:
                     logger.error(f"Error receiving Deepgram message: {e}")
                     await self._transcript_queue.put(
-                        {"type": "error", "message": f"Connection error: {str(e)}"}
+                        {"type": "error", "message": "Transcription connection error"}
                     )
                     break
 

@@ -308,6 +308,7 @@ ENDPOINT_LIMITS = {
     # Analysis endpoints (LLM calls)
     "/analyze": {"limit": 15, "window": 60},
     "/refine": {"limit": 15, "window": 60},
+    "/refine-interview": {"limit": 15, "window": 60},
     # Session endpoints
     "/sessions": {"limit": 30, "window": 60},
     # Auth endpoints (prevent brute force)
@@ -548,9 +549,53 @@ async def rate_limit_check(
     return allowed, headers
 
 
+async def enforce_rate_limit(identifier: str, path: str = "/") -> None:
+    """
+    Async, backend-aware rate-limit enforcement. Preferred over the legacy
+    synchronous rate_limit_middleware().
+
+    Why this exists: rate_limit_middleware() is synchronous and therefore can
+    only ever use the in-memory store — it never touches Redis and ignores
+    ENDPOINT_LIMITS. Under gunicorn (multiple workers) that means limits are
+    per-worker and non-distributed. This routes through rate_limit_check() so
+    that:
+      - Redis is used when configured (shared across workers/instances)
+      - per-endpoint limits (ENDPOINT_LIMITS) are applied
+      - the identifier remains keyed by the authenticated user id
+
+    Raises:
+        HTTPException: 429 if rate limited
+        HTTPException: 503 if rate limiter unavailable in production
+    """
+    _ensure_initialized()
+
+    if _active_backend == RateLimiterBackend.NONE:
+        return
+
+    try:
+        allowed, headers = await rate_limit_check(identifier, path)
+    except RateLimiterUnavailableError as e:
+        logger.error(f"[RateLimiter:Enforce] Backend unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Rate limiter temporarily unavailable. Please try again.",
+        )
+
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please try again later.",
+            headers={"Retry-After": headers.get("Retry-After", "60")},
+        )
+
+
 def rate_limit_middleware(identifier: str):
     """
     Middleware to enforce rate limiting (synchronous, for backward compatibility).
+
+    DEPRECATED: use the async enforce_rate_limit() instead. This synchronous
+    path only ever uses the in-memory store and ignores ENDPOINT_LIMITS, so it
+    is NOT distributed across workers. Retained only for backward compatibility.
 
     Raises:
         HTTPException: 429 if rate limited

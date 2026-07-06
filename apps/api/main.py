@@ -60,9 +60,11 @@ from credits import (
     decrement_credits,
     check_and_reset_credits,
     refund_credits,
+    schedule_refund,
 )
 from rate_limit import (
     rate_limit_middleware,
+    enforce_rate_limit,
     rate_limit_check,
     close_redis,
     initialize_rate_limiter,
@@ -496,7 +498,7 @@ async def create_websocket_ticket(user: dict = Depends(get_active_user)):
     Issue a short-lived WebSocket ticket for live transcription.
     Prefer passing the ticket via Sec-WebSocket-Protocol instead of query params.
     """
-    rate_limit_middleware(f"ws_ticket:{user['id']}")
+    await enforce_rate_limit(f"ws_ticket:{user['id']}", "/ws/ticket")
     ticket, expires_in = create_ws_ticket(user["id"])
     return {"ticket": ticket, "expires_in": expires_in}
 
@@ -543,7 +545,7 @@ async def check_admin(
     Never returns admin emails or other sensitive data.
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"admin_check:{user['id']}")
+    await enforce_rate_limit(f"admin_check:{user['id']}", "default")
 
     is_admin = await check_is_admin(user)
     return AdminCheckResponse(isAdmin=is_admin)
@@ -561,7 +563,7 @@ async def create_session(
     Disabled users receive 403.
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"create_session:{user['id']}")
+    await enforce_rate_limit(f"create_session:{user['id']}", "/sessions")
 
     # Check if user is admin
     is_admin = await check_is_admin(user)
@@ -655,7 +657,7 @@ async def list_sessions(
     Ownership enforced by RLS, but we also filter server-side for extra security.
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"list_sessions:{user['id']}")
+    await enforce_rate_limit(f"list_sessions:{user['id']}", "/sessions")
 
     # Query recordings (RLS ensures user only sees their own)
     # Note: Supabase Python client v2 uses desc as keyword argument
@@ -720,7 +722,7 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
     Ownership enforced by RLS, but we also filter server-side for extra security.
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"delete_all_sessions:{user['id']}")
+    await enforce_rate_limit(f"delete_all_sessions:{user['id']}", "/sessions")
 
     # Delete all recordings for the user (RLS ensures user can only delete their own)
     query_start = time.time()
@@ -743,7 +745,7 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, user: dict = Depends(get_current_user)):
     """Delete a single session owned by the current user."""
-    rate_limit_middleware(f"delete_session:{user['id']}")
+    await enforce_rate_limit(f"delete_session:{user['id']}", "/sessions")
 
     if not re.match(r"^[0-9a-fA-F-]{36}$", session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID")
@@ -780,7 +782,7 @@ async def update_session(
     is used by the Library rename flow and by Draft / RefineDraft persistence
     paths that were previously silently no-ops via the Base44 stub.
     """
-    rate_limit_middleware(f"update_session:{user['id']}")
+    await enforce_rate_limit(f"update_session:{user['id']}", "/sessions")
 
     update_dict: Dict[str, Any] = {}
     if patch.title is not None:
@@ -905,7 +907,7 @@ async def create_draft(draft_data: DraftCreate, user: dict = Depends(get_active_
 
     **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
-    rate_limit_middleware(f"create_draft:{user['id']}")
+    await enforce_rate_limit(f"create_draft:{user['id']}", "/drafts")
 
     # Generate name if not provided
     name = draft_data.name
@@ -962,7 +964,7 @@ async def list_drafts(
     List drafts for the current user (paginated).
     Returns drafts sorted by updated_at (most recent first).
     """
-    rate_limit_middleware(f"list_drafts:{user['id']}")
+    await enforce_rate_limit(f"list_drafts:{user['id']}", "/drafts")
 
     response = (
         supabase.table("drafts")
@@ -1006,7 +1008,7 @@ async def get_draft(draft_id: str, user: dict = Depends(get_current_user)):
     Get a specific draft by ID.
     RLS ensures users can only access their own drafts.
     """
-    rate_limit_middleware(f"get_draft:{user['id']}")
+    await enforce_rate_limit(f"get_draft:{user['id']}", "/drafts")
 
     response = (
         supabase.table("drafts")
@@ -1048,7 +1050,7 @@ async def update_draft(
 
     **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
-    rate_limit_middleware(f"update_draft:{user['id']}")
+    await enforce_rate_limit(f"update_draft:{user['id']}", "/drafts")
 
     # Build update dict with only provided fields
     update_dict = {}
@@ -1110,7 +1112,7 @@ async def delete_draft(draft_id: str, user: dict = Depends(get_current_user)):
     Delete a draft.
     RLS ensures users can only delete their own drafts.
     """
-    rate_limit_middleware(f"delete_draft:{user['id']}")
+    await enforce_rate_limit(f"delete_draft:{user['id']}", "/drafts")
 
     response = (
         supabase.table("drafts")
@@ -1155,7 +1157,7 @@ async def transcribe_audio_endpoint(
     - word_count: Number of words in transcript
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"transcribe:{user['id']}")
+    await enforce_rate_limit(f"transcribe:{user['id']}", "/transcribe")
 
     # Check if user is admin
     is_admin = await check_is_admin(user)
@@ -1205,6 +1207,12 @@ async def transcribe_audio_endpoint(
             status_code=503,
             detail="Transcription service is currently unavailable. Please try again later.",
         )
+    except asyncio.CancelledError:
+        # Request cancelled (e.g. 504 timeout). Refund out-of-band since the
+        # task is unwinding and cannot reliably await here.
+        if not is_admin:
+            schedule_refund(user["id"], amount=1, reason="transcription_timeout")
+        raise
     except Exception as e:
         if not is_admin:
             await refund_credits(user["id"], amount=1, reason="transcription_failed")
@@ -1349,8 +1357,30 @@ async def websocket_live_transcribe(
         # Main loop: receive audio chunks from client and forward to provider
         try:
             while True:
-                # Receive binary audio chunk from client
-                data = await websocket.receive_bytes()
+                # Receive binary audio chunk from client, bounded by an idle
+                # timeout so abandoned connections don't hold provider resources
+                # (and Deepgram billing) open indefinitely.
+                try:
+                    data = await asyncio.wait_for(
+                        websocket.receive_bytes(), timeout=settings.ws_idle_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.info(
+                        f"WebSocket idle timeout for user {user['id']} after "
+                        f"{settings.ws_idle_timeout}s"
+                    )
+                    await websocket.close(code=1000, reason="Idle timeout")
+                    break
+
+                # Reject oversized frames rather than relaying unbounded data.
+                if len(data) > settings.ws_max_chunk_bytes:
+                    logger.warning(
+                        f"Oversized WS frame ({len(data)} bytes) from user {user['id']}"
+                    )
+                    await websocket.send_json(
+                        {"type": "error", "message": "Audio chunk too large"}
+                    )
+                    continue
 
                 # Forward audio chunk to Deepgram
                 try:
@@ -1381,15 +1411,18 @@ async def websocket_live_transcribe(
             logger.info(f"Live transcription session ended for user {user['id']}")
 
     except Exception as e:
+        # Log full detail server-side; never forward raw exception text (which
+        # can include provider/config internals) to the client.
         logger.error(f"Error setting up live transcription: {e}")
-        error_msg = str(e)
-        # Never expose API keys in error messages
-        if settings.deepgram_api_key and settings.deepgram_api_key in error_msg:
-            error_msg = "Transcription service configuration error"
-
-        await websocket.send_json(
-            {"type": "error", "message": f"Failed to start transcription: {error_msg}"}
-        )
+        try:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": "Failed to start transcription. Please try again later.",
+                }
+            )
+        except Exception:
+            pass
         await websocket.close(code=1011, reason="Internal server error")
 
 
@@ -1538,8 +1571,30 @@ async def websocket_listen(
         # Main loop: receive audio chunks from client and forward to provider
         try:
             while True:
-                # Receive binary audio chunk (audio/webm) from client
-                data = await websocket.receive_bytes()
+                # Receive binary audio chunk (audio/webm) from client, bounded by
+                # an idle timeout so abandoned connections don't hold provider
+                # resources (and Deepgram billing) open indefinitely.
+                try:
+                    data = await asyncio.wait_for(
+                        websocket.receive_bytes(), timeout=settings.ws_idle_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.info(
+                        f"WebSocket idle timeout for user {user['id']} after "
+                        f"{settings.ws_idle_timeout}s"
+                    )
+                    await websocket.close(code=1000, reason="Idle timeout")
+                    break
+
+                # Reject oversized frames rather than relaying unbounded data.
+                if len(data) > settings.ws_max_chunk_bytes:
+                    logger.warning(
+                        f"Oversized WS frame ({len(data)} bytes) from user {user['id']}"
+                    )
+                    await websocket.send_json(
+                        {"type": "error", "message": "Audio chunk too large"}
+                    )
+                    continue
 
                 # Relay binary audio bytes directly to Deepgram connection
                 try:
@@ -1569,15 +1624,18 @@ async def websocket_listen(
             logger.info(f"Live transcription session ended for user {user['id']}")
 
     except Exception as e:
+        # Log full detail server-side; never forward raw exception text (which
+        # can include provider/config internals) to the client.
         logger.error(f"Error setting up live transcription: {e}")
-        error_msg = str(e)
-        # Never expose API keys in error messages
-        if settings.deepgram_api_key and settings.deepgram_api_key in error_msg:
-            error_msg = "Transcription service configuration error"
-
-        await websocket.send_json(
-            {"type": "error", "message": f"Failed to start transcription: {error_msg}"}
-        )
+        try:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": "Failed to start transcription. Please try again later.",
+                }
+            )
+        except Exception:
+            pass
         await websocket.close(code=1011, reason="Internal server error")
 
 
@@ -1601,7 +1659,7 @@ async def refine_draft(
     Disabled users receive 403.
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"refine:{user['id']}")
+    await enforce_rate_limit(f"refine:{user['id']}", "/refine")
 
     # SSRF guard on any client-supplied reference URL.
     _validate_reference_file_url(request.reference_file_url)
@@ -1638,6 +1696,10 @@ async def refine_draft(
 
         return RefineResponse(refined_text=refined_text)
 
+    except asyncio.CancelledError:
+        if not is_admin:
+            schedule_refund(user["id"], amount=1, reason="refine_timeout")
+        raise
     except ValueError as e:
         if not is_admin:
             await refund_credits(user["id"], amount=1, reason="refine_failed")
@@ -1678,7 +1740,7 @@ async def analyze_transcript_endpoint(
     **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"analyze:{user['id']}")
+    await enforce_rate_limit(f"analyze:{user['id']}", "/analyze")
 
     # Check if user is admin (admins bypass credit checks)
     # ADMIN BYPASS SCOPE:
@@ -1741,6 +1803,10 @@ async def analyze_transcript_endpoint(
             metrics=result.get("metrics"),
         )
 
+    except asyncio.CancelledError:
+        if not is_admin:
+            schedule_refund(user["id"], amount=1, reason="analysis_timeout")
+        raise
     except ValueError as e:
         if not is_admin:
             await refund_credits(user["id"], amount=1, reason="analysis_failed")
@@ -1794,7 +1860,7 @@ async def refine_interview_endpoint(
     - token_usage: Token usage for billing
     """
     # Rate limit by user ID
-    rate_limit_middleware(f"refine_interview:{user['id']}")
+    await enforce_rate_limit(f"refine_interview:{user['id']}", "/refine-interview")
 
     # Check if user is admin
     is_admin = await check_is_admin(user)
@@ -1855,6 +1921,10 @@ async def refine_interview_endpoint(
             token_usage=result.get("token_usage"),
         )
 
+    except asyncio.CancelledError:
+        if not is_admin:
+            schedule_refund(user["id"], amount=1, reason="interview_refinement_timeout")
+        raise
     except ValueError as e:
         if not is_admin:
             await refund_credits(
@@ -1921,7 +1991,7 @@ async def upload_audio_file(
     Accepts audio files (webm, mp3, wav, m4a, ogg, flac) up to 15MB.
     Returns the file URL for playback and storage path for reference.
     """
-    rate_limit_middleware(f"upload_audio:{user['id']}")
+    await enforce_rate_limit(f"upload_audio:{user['id']}", "/upload-audio")
 
     # Read file content
     try:
@@ -1981,7 +2051,7 @@ async def upload_reference_file(
     Validates file type and size, uploads to Supabase Storage, and optionally extracts text.
     Returns file URL and metadata.
     """
-    rate_limit_middleware(f"upload_reference:{user['id']}")
+    await enforce_rate_limit(f"upload_reference:{user['id']}", "/upload-reference")
 
     # Validate file type
     if not validate_file_type(file.content_type, file.filename):
@@ -2230,7 +2300,7 @@ async def export_my_data(user: dict = Depends(get_current_user)):
 
     Returns all user data including profile, sessions, and voice profiles.
     """
-    rate_limit_middleware(f"export_data:{user['id']}")
+    await enforce_rate_limit(f"export_data:{user['id']}", "default")
 
     try:
         data = await UserDataExport.export_user_data(user["id"])

@@ -35,6 +35,12 @@ from adaptive_analytics import remove_fillers_context_aware
 
 logger = logging.getLogger(__name__)
 
+# Bound OpenAI SDK calls well under the endpoint timeout (120s). The SDK default
+# is 600s, which would let a hung request tie up a worker until the middleware
+# 504s (and, before the cancellation-refund fix, leak a credit).
+OPENAI_REQUEST_TIMEOUT = 60.0  # seconds per attempt
+OPENAI_MAX_RETRIES = 1
+
 
 # Injection-safe delimiters for arbitrary user-supplied content (context,
 # reference material, question, goal, company name). Mirrors the transcript
@@ -1918,7 +1924,11 @@ async def refine_transcript(
         if voira_text is not None:
             return voira_text
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(
+        api_key=settings.openai_api_key,
+        timeout=OPENAI_REQUEST_TIMEOUT,
+        max_retries=OPENAI_MAX_RETRIES,
+    )
 
     # Build context-specific system prompt (with optional caching)
     # Voice profile is now ALWAYS passed via VoiceProfileResult
@@ -2574,7 +2584,11 @@ async def refine_interview_response(
     )
 
     # Call LLM
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(
+        api_key=settings.openai_api_key,
+        timeout=OPENAI_REQUEST_TIMEOUT,
+        max_retries=OPENAI_MAX_RETRIES,
+    )
 
     try:
         response = client.chat.completions.create(

@@ -137,7 +137,7 @@ class DeepgramStreamingProvider:
                     continue
                 except Exception as e:
                     logger.error(f"Error receiving transcript event: {e}")
-                    yield {"type": "error", "message": str(e)}
+                    yield {"type": "error", "message": "Transcription stream error"}
                     break
 
         except Exception as e:

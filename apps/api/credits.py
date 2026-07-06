@@ -15,9 +15,14 @@ This guarantees that only one concurrent request can "win" the credit.
 
 from db import supabase
 from typing import Optional
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Strong references to in-flight background refund tasks so the event loop does
+# not garbage-collect them before they finish. Discarded on completion.
+_background_refund_tasks: set = set()
 
 
 async def check_and_reset_credits(user_id: str) -> dict:
@@ -202,3 +207,29 @@ async def refund_credits(user_id: str, amount: int = 1, reason: str = "refund") 
         logger.error(
             f"[Credits:Refund] Failed to refund credits for user {user_id}: {e}"
         )
+
+
+def schedule_refund(user_id: str, amount: int = 1, reason: str = "refund") -> None:
+    """Fire-and-forget credit refund that survives request cancellation.
+
+    When a request is cancelled mid-flight (e.g. the TimeoutMiddleware aborts a
+    slow handler with a 504), an inline `await refund_credits(...)` inside an
+    `except asyncio.CancelledError` block is unreliable — the surrounding task is
+    already unwinding. This schedules the refund as an independent task on the
+    running loop and keeps a strong reference so it completes even as the request
+    task finishes cancelling. Safe to call from a cancellation handler.
+    """
+    if amount <= 0:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (should not happen inside a handler) — refund is lost
+        # but this is strictly better than raising during cancellation cleanup.
+        logger.error(
+            f"[Credits:Refund] No running loop to schedule refund for user {user_id}"
+        )
+        return
+    task = loop.create_task(refund_credits(user_id, amount, reason))
+    _background_refund_tasks.add(task)
+    task.add_done_callback(_background_refund_tasks.discard)

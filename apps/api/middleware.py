@@ -30,9 +30,12 @@ ENDPOINT_TIMEOUTS = {
     "/transcribe": 120,
     "/ws/listen": 600,  # WebSocket - long timeout
     "/ws/live-transcribe": 600,
-    # Analysis endpoints (LLM calls)
-    "/analyze": 60,
-    "/refine": 60,
+    # Analysis / refinement endpoints (LLM + optional Voira pipeline).
+    # Must exceed voira_model_timeout (90s, config.py) plus the downstream
+    # OpenAI outline call, otherwise a 504 aborts paid work mid-pipeline.
+    "/analyze": 120,
+    "/refine": 120,
+    "/refine-interview": 120,
     # File uploads
     "/upload-audio": 60,
     "/upload-reference": 60,

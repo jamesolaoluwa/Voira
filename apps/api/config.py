@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     # ==========================================================================
     ws_auth_timeout: int = 10  # seconds
     ws_idle_timeout: int = 300  # seconds
+    ws_ticket_ttl_seconds: int = 60  # short-lived WebSocket auth ticket lifetime
+    ws_max_chunk_bytes: int = 1 * 1024 * 1024  # max bytes per WS audio frame (1MB)
 
     # ==========================================================================
     # Request Limits

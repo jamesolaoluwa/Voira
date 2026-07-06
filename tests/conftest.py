@@ -18,14 +18,15 @@ SOLUTION: Globally mock rate limiting for ALL tests EXCEPT test_rate_limit.py.
 WHY THIS APPROACH:
 1. No magic markers needed - tests don't need to opt-in/out
 2. Centralized - all mocking logic is here in conftest.py
-3. Explicit - test_rate_limit.py is clearly excluded
+3. Explicit - test_rate_limit.py uses importlib.reload() to get real behavior
 4. No production code changes - pure test isolation
 
 HOW IT WORKS:
-1. pytest_configure() runs BEFORE any imports
-2. We check if test_rate_limit.py is being run
-3. If NOT, we patch rate_limit functions globally
-4. If YES, we skip patching so real behavior is tested
+1. Patches are always started at module load time (before app import)
+2. test_rate_limit.py uses importlib.reload(rate_limit) in its autouse fixture
+   to get the real, unpatched module for each test
+3. Fixtures here detect test_rate_limit.py via request.node.fspath and skip
+   the extra main-module patches for those tests
 
 =============================================================================
 """
@@ -62,7 +63,7 @@ sys.path.insert(0, api_path)
 # GLOBAL RATE LIMITER MOCKS
 # =============================================================================
 # These mocks neutralize rate limiting for tests that don't need it.
-# test_rate_limit.py explicitly opts out by being detected in pytest_configure.
+# test_rate_limit.py uses importlib.reload() to bypass these patches.
 
 
 async def _mock_rate_limit_check(identifier: str, path: str):
@@ -79,21 +80,37 @@ def _mock_rate_limit_middleware(key: str):
     pass
 
 
-# Track whether we should mock rate limiting
-_should_mock_rate_limit = not any("test_rate_limit" in arg for arg in sys.argv)
+async def _mock_enforce_rate_limit(identifier: str, path: str = "/"):
+    """Async mock for enforce_rate_limit that always allows the request."""
+    return None
 
+
+def _is_rate_limit_test(request):
+    """Check if the current test is in test_rate_limit.py using the test node path."""
+    if request is None:
+        return False
+    fspath = getattr(request.node, "fspath", None) or getattr(
+        request.node, "path", None
+    )
+    if fspath is None:
+        return False
+    return "test_rate_limit" in str(fspath)
+
+
+# Always apply patches at module load time. test_rate_limit.py uses
+# importlib.reload(rate_limit) to get a fresh, unpatched module.
 _patches = [
     patch("rate_limit.rate_limit_check", _mock_rate_limit_check),
     patch("rate_limit.initialize_rate_limiter", AsyncMock(return_value="memory")),
     patch("rate_limit.close_redis", AsyncMock()),
     patch("rate_limit.rate_limit_middleware", _mock_rate_limit_middleware),
+    patch("rate_limit.enforce_rate_limit", _mock_enforce_rate_limit),
     patch("rate_limit._initialized", True),
     patch("rate_limit._active_backend", "memory"),
 ]
 
-if _should_mock_rate_limit:
-    for p in _patches:
-        p.start()
+for p in _patches:
+    p.start()
 
 
 # =============================================================================
@@ -115,25 +132,24 @@ from main import app
 
 
 @pytest.fixture
-def client():
+def client(request):
     """
     Test client for FastAPI app with rate limiting properly handled.
 
     For non-rate-limit tests: rate limiting is already mocked globally.
     For rate limit tests: this fixture still works, real behavior is used.
     """
-    global _should_mock_rate_limit
-
-    if _should_mock_rate_limit:
+    if _is_rate_limit_test(request):
+        # For rate limit tests, use real behavior (they reload the module)
+        with TestClient(app, raise_server_exceptions=False) as c:
+            yield c
+    else:
         # Also patch at main module level for middleware (belt and suspenders)
         with patch("main.rate_limit_check", _mock_rate_limit_check):
             with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
-                with TestClient(app, raise_server_exceptions=False) as c:
-                    yield c
-    else:
-        # For rate limit tests, use real behavior
-        with TestClient(app, raise_server_exceptions=False) as c:
-            yield c
+                with patch("main.enforce_rate_limit", _mock_enforce_rate_limit):
+                    with TestClient(app, raise_server_exceptions=False) as c:
+                        yield c
 
 
 @pytest.fixture
@@ -175,7 +191,7 @@ def mock_supabase():
 
 
 @pytest.fixture
-def authenticated_client(mock_user):
+def authenticated_client(request, mock_user):
     """
     Test client with authentication already set up.
     Useful for tests that need an authenticated user.
@@ -188,20 +204,21 @@ def authenticated_client(mock_user):
     app.dependency_overrides[get_current_user] = lambda: mock_user
     app.dependency_overrides[security] = lambda: mock_credentials
 
-    if _should_mock_rate_limit:
-        with patch("main.rate_limit_check", _mock_rate_limit_check):
-            with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
-                with TestClient(app, raise_server_exceptions=False) as c:
-                    yield c
-    else:
+    if _is_rate_limit_test(request):
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c
+    else:
+        with patch("main.rate_limit_check", _mock_rate_limit_check):
+            with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
+                with patch("main.enforce_rate_limit", _mock_enforce_rate_limit):
+                    with TestClient(app, raise_server_exceptions=False) as c:
+                        yield c
 
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def admin_client(mock_admin_user):
+def admin_client(request, mock_admin_user):
     """
     Test client with admin authentication set up.
     """
@@ -213,13 +230,14 @@ def admin_client(mock_admin_user):
     app.dependency_overrides[get_current_user] = lambda: mock_admin_user
     app.dependency_overrides[security] = lambda: mock_credentials
 
-    if _should_mock_rate_limit:
-        with patch("main.rate_limit_check", _mock_rate_limit_check):
-            with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
-                with TestClient(app, raise_server_exceptions=False) as c:
-                    yield c
-    else:
+    if _is_rate_limit_test(request):
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c
+    else:
+        with patch("main.rate_limit_check", _mock_rate_limit_check):
+            with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
+                with patch("main.enforce_rate_limit", _mock_enforce_rate_limit):
+                    with TestClient(app, raise_server_exceptions=False) as c:
+                        yield c
 
     app.dependency_overrides.clear()
