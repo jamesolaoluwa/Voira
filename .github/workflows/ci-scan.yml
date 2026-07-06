@@ -43,6 +43,26 @@ jobs:
       - name: Check formatting (Black)
         run: black --check . ../../tests
 
+      - name: Dependency audit (pip-audit)
+        # Fails the build on any NEW known CVE in Python deps. The --ignore-vuln
+        # entries below are advisories that cannot be resolved without a major
+        # framework upgrade or a code migration, each tracked as a follow-up:
+        #   starlette (7): capped at <0.39 by FastAPI 0.115 — needs FastAPI major
+        #   pyasn1 (1): capped by python-jose 3.4 — cleared by python-jose→PyJWT
+        #   pytest (1): dev/test-only tooling CVE
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt \
+            --ignore-vuln PYSEC-2026-161 \
+            --ignore-vuln PYSEC-2026-249 \
+            --ignore-vuln PYSEC-2026-248 \
+            --ignore-vuln CVE-2024-47874 \
+            --ignore-vuln CVE-2025-54121 \
+            --ignore-vuln CVE-2026-48818 \
+            --ignore-vuln CVE-2026-48817 \
+            --ignore-vuln CVE-2026-30922 \
+            --ignore-vuln CVE-2025-71176
+
       - name: Run tests
         # Tests are hermetic and fully mocked — conftest.py provides JWT-shaped
         # Supabase placeholders via os.environ.setdefault. Do NOT inject invalid
@@ -72,6 +92,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Dependency audit (npm)
+        # Fail on high+ severity advisories in production dependencies.
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Lint
         working-directory: apps/web

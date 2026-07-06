@@ -1,0 +1,35 @@
+# Docker build context is the repo root (see infra/Dockerfile:2).
+# Docker only reads .dockerignore from the context root, so this file — not
+# infra/.dockerignore — is what actually applies during the build.
+
+# Secrets & local env
+**/.env
+**/.env.*
+
+# Python runtime / caches
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# VCS & docs
+**/.git
+**/.github
+**/*.md
+
+# Node / frontend (backend image does not need these)
+**/node_modules
+apps/web
+essay-collection-dashboard
+
+# Tests (backend tests live at repo root /tests, not shipped in the image)
+tests
+**/tests
+
+# Local-only inference server (excluded from the API image)
+apps/api/inference_server.py
+
+# Editor / OS cruft
+**/.DS_Store
+**/.vscode
+**/.idea
