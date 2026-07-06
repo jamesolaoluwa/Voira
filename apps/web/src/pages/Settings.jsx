@@ -86,6 +86,11 @@ export default function Settings() {
       }
     } catch (error) {
       console.error('Error loading user settings:', error);
+      toast({
+        title: 'Could not load settings',
+        description: 'Your saved preferences could not be loaded. Showing defaults.',
+        variant: 'destructive',
+      });
     } finally {
       setIsLoading(false);
     }

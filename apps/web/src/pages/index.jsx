@@ -10,6 +10,7 @@ import Library from "./Library";
 
 import Practice from "./Practice";
 import AuthGate from '@/components/AuthGate';
+import FullPageLoader from '@/components/ui/FullPageLoader';
 
 import Pricing from "./Pricing";
 
@@ -107,7 +108,7 @@ function _getCurrentPage(url) {
 // If user is authenticated, go to Home; otherwise render Landing.
 function LandingOrHome() {
     const { user, session, isLoading } = useAuth();
-    if (isLoading) return null;
+    if (isLoading) return <FullPageLoader />;
     if (session || user) {
         return <Navigate to="/home" replace />;
     }
@@ -161,7 +162,7 @@ function PagesContent() {
 
 function AuthRoute() {
     const { user, session, isLoading } = useAuth();
-    if (isLoading) return null;
+    if (isLoading) return <FullPageLoader />;
     if (user || session) return <Navigate to="/home" replace />;
     return <Auth />;
 }
