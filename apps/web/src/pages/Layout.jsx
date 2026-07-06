@@ -3,6 +3,7 @@ import React from 'react';
 import { Outlet } from 'react-router-dom';
 import TopNav from '@/components/navigation/TopNav';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSyncSessions } from '@/hooks/useSyncSessions';
 
 export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
@@ -12,6 +13,10 @@ export default function Layout({ children, currentPageName }) {
   const isLoading = auth?.isLoading ?? true;
   const isAdmin = auth?.isAdmin ?? false;
   const isAuthenticated = !!user && !isLoading;
+
+  // Hydrate the session store app-wide for authenticated users so Home/Growth/
+  // Profile show real data even when visited before Library.
+  useSyncSessions();
   
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors duration-normal ease-smooth">
