@@ -23,20 +23,21 @@ logger = logging.getLogger(__name__)
 # Email Types
 # =============================================================================
 
+
 class EmailType(str, Enum):
     """Types of emails that can be sent."""
-    
+
     # Auth emails (handled by Supabase by default)
     WELCOME = "welcome"
     PASSWORD_RESET = "password_reset"
     EMAIL_CONFIRMATION = "email_confirmation"
-    
+
     # Notification emails
     SESSION_SUMMARY = "session_summary"
     WEEKLY_REPORT = "weekly_report"
     CREDITS_LOW = "credits_low"
     CREDITS_RENEWED = "credits_renewed"
-    
+
     # Admin emails
     NEW_USER_NOTIFICATION = "new_user_notification"
     ERROR_ALERT = "error_alert"
@@ -146,27 +147,28 @@ The Voira Team
 # Notification Service
 # =============================================================================
 
+
 class NotificationService:
     """
     Service for sending email notifications.
     """
-    
+
     @staticmethod
     async def send_email(
         to_email: str,
         email_type: EmailType,
         template_vars: Dict[str, Any],
-        from_email: Optional[str] = None
+        from_email: Optional[str] = None,
     ) -> bool:
         """
         Send an email notification.
-        
+
         Args:
             to_email: Recipient email address
             email_type: Type of email to send
             template_vars: Variables to substitute in template
             from_email: Sender email (defaults to noreply@voira.app)
-            
+
         Returns:
             True if email was sent successfully
         """
@@ -175,42 +177,39 @@ class NotificationService:
             if not template:
                 logger.error(f"Unknown email type: {email_type}")
                 return False
-            
+
             subject = template["subject"]
             body = template["body"].format(**template_vars)
-            
+
             # In development, just log
             if settings.is_development:
                 logger.info(f"[EMAIL] To: {to_email}")
                 logger.info(f"[EMAIL] Subject: {subject}")
                 logger.info(f"[EMAIL] Body:\n{body}")
                 return True
-            
+
             # In production, send via email provider
             return await NotificationService._send_via_provider(
                 to_email=to_email,
                 subject=subject,
                 body=body,
-                from_email=from_email or "noreply@voira.app"
+                from_email=from_email or "noreply@voira.app",
             )
-            
+
         except KeyError as e:
             logger.error(f"Missing template variable: {e}")
             return False
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
             return False
-    
+
     @staticmethod
     async def _send_via_provider(
-        to_email: str,
-        subject: str,
-        body: str,
-        from_email: str
+        to_email: str, subject: str, body: str, from_email: str
     ) -> bool:
         """
         Send email via external provider.
-        
+
         Currently a placeholder - implement with your provider:
         - SendGrid: Use sendgrid-python
         - Resend: Use resend-python
@@ -219,32 +218,28 @@ class NotificationService:
         """
         # TODO: Implement actual email sending
         # Example with Resend:
-        # 
+        #
         # import resend
         # resend.api_key = settings.resend_api_key
-        # 
+        #
         # resend.Emails.send({
         #     "from": from_email,
         #     "to": to_email,
         #     "subject": subject,
         #     "text": body,
         # })
-        
+
         logger.warning(
             f"Email sending not implemented. Would send to {to_email}: {subject}"
         )
         return True
-    
+
     # =========================================================================
     # Convenience Methods
     # =========================================================================
-    
+
     @staticmethod
-    async def send_welcome_email(
-        to_email: str,
-        name: str,
-        credits: int = 10
-    ) -> bool:
+    async def send_welcome_email(to_email: str, name: str, credits: int = 10) -> bool:
         """Send welcome email to new user."""
         return await NotificationService.send_email(
             to_email=to_email,
@@ -252,9 +247,9 @@ class NotificationService:
             template_vars={
                 "name": name or "there",
                 "credits": credits,
-            }
+            },
         )
-    
+
     @staticmethod
     async def send_session_summary(
         to_email: str,
@@ -264,7 +259,7 @@ class NotificationService:
         clarity_score: int,
         confidence_score: int,
         filler_count: int,
-        insight: str = "Keep practicing to see more insights!"
+        insight: str = "Keep practicing to see more insights!",
     ) -> bool:
         """Send session summary email."""
         return await NotificationService.send_email(
@@ -278,14 +273,12 @@ class NotificationService:
                 "confidence_score": confidence_score,
                 "filler_count": filler_count,
                 "insight": insight,
-            }
+            },
         )
-    
+
     @staticmethod
     async def send_credits_low_warning(
-        to_email: str,
-        name: str,
-        credits_remaining: int
+        to_email: str, name: str, credits_remaining: int
     ) -> bool:
         """Send low credits warning."""
         return await NotificationService.send_email(
@@ -294,7 +287,7 @@ class NotificationService:
             template_vars={
                 "name": name or "there",
                 "credits_remaining": credits_remaining,
-            }
+            },
         )
 
 
@@ -302,31 +295,35 @@ class NotificationService:
 # User Notification Preferences
 # =============================================================================
 
+
 class NotificationPreferences:
     """
     Manage user notification preferences.
-    
+
     Preferences are stored in user_profiles table.
     """
-    
+
     DEFAULT_PREFERENCES = {
         "email_session_summary": False,  # Send summary after each session
-        "email_weekly_report": True,     # Send weekly progress report
-        "email_credits_low": True,       # Warn when credits are low
-        "email_product_updates": True,   # Product news and updates
+        "email_weekly_report": True,  # Send weekly progress report
+        "email_credits_low": True,  # Warn when credits are low
+        "email_product_updates": True,  # Product news and updates
     }
-    
+
     @staticmethod
     async def get_preferences(user_id: str) -> Dict[str, bool]:
         """Get notification preferences for a user."""
         try:
             from db import supabase
-            result = supabase.table("user_profiles")\
-                .select("notification_preferences")\
-                .eq("user_id", user_id)\
-                .single()\
+
+            result = (
+                supabase.table("user_profiles")
+                .select("notification_preferences")
+                .eq("user_id", user_id)
+                .single()
                 .execute()
-            
+            )
+
             if result.data and result.data.get("notification_preferences"):
                 return {
                     **NotificationPreferences.DEFAULT_PREFERENCES,
@@ -334,26 +331,23 @@ class NotificationPreferences:
                 }
         except Exception as e:
             logger.warning(f"Failed to get notification preferences: {e}")
-        
+
         return NotificationPreferences.DEFAULT_PREFERENCES
-    
+
     @staticmethod
-    async def update_preferences(
-        user_id: str,
-        preferences: Dict[str, bool]
-    ) -> bool:
+    async def update_preferences(user_id: str, preferences: Dict[str, bool]) -> bool:
         """Update notification preferences for a user."""
         try:
             from db import supabase
-            supabase.table("user_profiles")\
-                .update({"notification_preferences": preferences})\
-                .eq("user_id", user_id)\
-                .execute()
+
+            supabase.table("user_profiles").update(
+                {"notification_preferences": preferences}
+            ).eq("user_id", user_id).execute()
             return True
         except Exception as e:
             logger.error(f"Failed to update notification preferences: {e}")
             return False
-    
+
     @staticmethod
     async def should_send(user_id: str, preference_key: str) -> bool:
         """Check if a notification should be sent based on user preferences."""

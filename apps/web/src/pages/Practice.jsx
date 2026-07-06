@@ -108,10 +108,17 @@ export default function Practice() {
     resumeRecording,
     stopRecording,
     uploadAndTranscribe,
+    forceCleanup,
   } = useAudioRecorder({ detectFillers: true }); // Always true for Practice mode
   
   const intervalRef = useRef(null);
   const addSessionToStore = useSessionStore(state => state.addSession);
+  
+  useEffect(() => {
+    return () => {
+      forceCleanup();
+    };
+  }, [forceCleanup]);
   
   useEffect(() => {
     checkPremiumStatus();

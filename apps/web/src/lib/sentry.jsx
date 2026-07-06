@@ -34,12 +34,33 @@ export function initSentry() {
     import('@sentry/react').then((SentryModule) => {
       Sentry = SentryModule;
       
+      // Environment-specific sampling rates (cost optimization)
+      const environment = import.meta.env.MODE || 'development';
+      const samplingConfig = {
+        development: {
+          traces: 1.0,      // 100% transaction tracing
+          replays: 1.0,     // 100% session replay
+        },
+        staging: {
+          traces: 0.5,      // 50% transaction tracing
+          replays: 0.1,     // 10% session replay
+        },
+        production: {
+          traces: 0.1,      // 10% transaction tracing
+          replays: 0.02,    // 2% session replay
+        },
+      };
+      
+      const config = samplingConfig[environment] || samplingConfig.production;
+      
       Sentry.init({
         dsn,
-        environment: import.meta.env.MODE || 'development',
+        environment,
         
         // Performance monitoring
-        tracesSampleRate: import.meta.env.PROD ? 0.1 : 1.0,
+        tracesSampleRate: config.traces,
+        replaysSessionSampleRate: config.replays,
+        replaysOnErrorSampleRate: import.meta.env.PROD ? 1.0 : 0,
         
         // Only send errors in production
         enabled: import.meta.env.PROD || import.meta.env.VITE_SENTRY_DEBUG === 'true',
@@ -99,9 +120,6 @@ export function initSentry() {
           }),
         ],
         
-        // Session replay (only in production, low sample rate)
-        replaysSessionSampleRate: import.meta.env.PROD ? 0.01 : 0,
-        replaysOnErrorSampleRate: import.meta.env.PROD ? 0.1 : 0,
       });
       
       sentryInitialized = true;

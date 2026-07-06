@@ -1,0 +1,11 @@
+**/.env
+**/.env.*
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.git
+**/node_modules
+**/tests
+**/*.md
+apps/api/inference_server.py

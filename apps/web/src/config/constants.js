@@ -154,8 +154,8 @@ export const STRIPE_PUBLISHABLE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KE
  * Set via environment variables in production.
  */
 export const STRIPE_PRICES = {
-  PRO_MONTHLY: import.meta.env.VITE_STRIPE_PRICE_ID_MONTHLY || 'price_1SwSeWRMlOCa3iSrNXkanthZ',
-  PRO_YEARLY: import.meta.env.VITE_STRIPE_PRICE_ID_YEARLY || 'price_1SwShxRMlOCa3iSrmEInGSLw',
+  PRO_MONTHLY: import.meta.env.VITE_STRIPE_PRICE_ID_MONTHLY || '',
+  PRO_YEARLY: import.meta.env.VITE_STRIPE_PRICE_ID_YEARLY || '',
 };
 
 /**

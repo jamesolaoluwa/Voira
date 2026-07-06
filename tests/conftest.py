@@ -29,6 +29,7 @@ HOW IT WORKS:
 
 =============================================================================
 """
+
 import sys
 import os
 from unittest.mock import patch, AsyncMock, MagicMock
@@ -53,7 +54,7 @@ os.environ.setdefault(
 os.environ.setdefault("CORS_ORIGINS", "http://localhost:5173")
 
 # Add apps/api to path FIRST (before any other imports)
-api_path = os.path.join(os.path.dirname(__file__), '..', 'apps', 'api')
+api_path = os.path.join(os.path.dirname(__file__), "..", "apps", "api")
 sys.path.insert(0, api_path)
 
 
@@ -63,6 +64,7 @@ sys.path.insert(0, api_path)
 # These mocks neutralize rate limiting for tests that don't need it.
 # test_rate_limit.py explicitly opts out by being detected in pytest_configure.
 
+
 async def _mock_rate_limit_check(identifier: str, path: str):
     """Mock rate limit check that always allows requests."""
     return True, {
@@ -71,27 +73,27 @@ async def _mock_rate_limit_check(identifier: str, path: str):
         "X-RateLimit-Reset": "60",
     }
 
+
 def _mock_rate_limit_middleware(key: str):
     """Mock rate limit middleware that does nothing."""
     pass
 
-# Track whether we should mock rate limiting
-_should_mock_rate_limit = True
-_patches = []
 
+# Track whether we should mock rate limiting
+_should_mock_rate_limit = not any("test_rate_limit" in arg for arg in sys.argv)
 
 _patches = [
     patch("rate_limit.rate_limit_check", _mock_rate_limit_check),
     patch("rate_limit.initialize_rate_limiter", AsyncMock(return_value="memory")),
     patch("rate_limit.close_redis", AsyncMock()),
     patch("rate_limit.rate_limit_middleware", _mock_rate_limit_middleware),
-    # Also set the module state to "initialized" to prevent errors
     patch("rate_limit._initialized", True),
     patch("rate_limit._active_backend", "memory"),
 ]
 
-for p in _patches:
-    p.start()
+if _should_mock_rate_limit:
+    for p in _patches:
+        p.start()
 
 
 # =============================================================================
@@ -107,25 +109,25 @@ from unittest.mock import Mock
 # Import app - patches are already active if needed
 from main import app
 
-
 # =============================================================================
 # FIXTURES
 # =============================================================================
+
 
 @pytest.fixture
 def client():
     """
     Test client for FastAPI app with rate limiting properly handled.
-    
+
     For non-rate-limit tests: rate limiting is already mocked globally.
     For rate limit tests: this fixture still works, real behavior is used.
     """
     global _should_mock_rate_limit
-    
+
     if _should_mock_rate_limit:
         # Also patch at main module level for middleware (belt and suspenders)
-        with patch('main.rate_limit_check', _mock_rate_limit_check):
-            with patch('main.rate_limit_middleware', _mock_rate_limit_middleware):
+        with patch("main.rate_limit_check", _mock_rate_limit_check):
+            with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
                 with TestClient(app, raise_server_exceptions=False) as c:
                     yield c
     else:
@@ -163,13 +165,14 @@ def mock_admin_user():
 @pytest.fixture
 def mock_supabase():
     """Mock Supabase client."""
-    with patch('db.supabase') as mock:
+    with patch("db.supabase") as mock:
         yield mock
 
 
 # =============================================================================
 # ADDITIONAL FIXTURES FOR COMMON TEST PATTERNS
 # =============================================================================
+
 
 @pytest.fixture
 def authenticated_client(mock_user):
@@ -178,22 +181,22 @@ def authenticated_client(mock_user):
     Useful for tests that need an authenticated user.
     """
     from auth import get_current_user, security
-    
+
     mock_credentials = Mock()
     mock_credentials.credentials = "fake-token"
-    
+
     app.dependency_overrides[get_current_user] = lambda: mock_user
     app.dependency_overrides[security] = lambda: mock_credentials
-    
+
     if _should_mock_rate_limit:
-        with patch('main.rate_limit_check', _mock_rate_limit_check):
-            with patch('main.rate_limit_middleware', _mock_rate_limit_middleware):
+        with patch("main.rate_limit_check", _mock_rate_limit_check):
+            with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
                 with TestClient(app, raise_server_exceptions=False) as c:
                     yield c
     else:
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c
-    
+
     app.dependency_overrides.clear()
 
 
@@ -203,20 +206,20 @@ def admin_client(mock_admin_user):
     Test client with admin authentication set up.
     """
     from auth import get_current_user, security
-    
+
     mock_credentials = Mock()
     mock_credentials.credentials = "fake-admin-token"
-    
+
     app.dependency_overrides[get_current_user] = lambda: mock_admin_user
     app.dependency_overrides[security] = lambda: mock_credentials
-    
+
     if _should_mock_rate_limit:
-        with patch('main.rate_limit_check', _mock_rate_limit_check):
-            with patch('main.rate_limit_middleware', _mock_rate_limit_middleware):
+        with patch("main.rate_limit_check", _mock_rate_limit_check):
+            with patch("main.rate_limit_middleware", _mock_rate_limit_middleware):
                 with TestClient(app, raise_server_exceptions=False) as c:
                     yield c
     else:
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c
-    
+
     app.dependency_overrides.clear()

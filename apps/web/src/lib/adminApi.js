@@ -51,9 +51,9 @@ export const adminUsers = {
    * @param {number} amount - Credit adjustment (positive = add, negative = subtract)
    * @param {string} reason - Reason for adjustment (required, min 10 chars)
    */
-  async adjustCredits(userId, amount, reason) {
+  async adjustCredits(userId, newCredits, reason) {
     return apiClient.post(`/admin/users/${userId}/credits`, {
-      amount,
+      new_credits: newCredits,
       reason,
     });
   },

@@ -8,49 +8,145 @@ import asyncio
 import re
 import os
 import uuid
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query, Request
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+    WebSocket,
+    WebSocketDisconnect,
+    Query,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from typing import List, Optional
-from auth import get_current_user, get_active_user, check_is_admin, security, get_user_from_websocket_token, get_active_user_from_websocket_token
+from typing import Any, Dict, List, Optional
+from auth import (
+    get_current_user,
+    get_active_user,
+    check_is_admin,
+    security,
+    get_user_from_websocket_token,
+    get_active_user_from_websocket_token,
+    get_active_user_from_websocket_ticket,
+)
 from models import (
-    SessionCreate, SessionResponse, UserResponse, AdminCheckResponse,
-    TranscribeResponse, RefineRequest, RefineResponse, AnalyzeRequest, AnalyzeResponse,
-    FileUploadResponse, AudioUploadResponse,
-    InterviewRefinementRequest, InterviewRefinementResponse, FeedbackItem,
-    DraftCreate, DraftUpdate, DraftResponse
+    SessionCreate,
+    SessionResponse,
+    SessionUpdate,
+    UserResponse,
+    AdminCheckResponse,
+    TranscribeResponse,
+    RefineRequest,
+    RefineResponse,
+    AnalyzeRequest,
+    AnalyzeResponse,
+    FileUploadResponse,
+    AudioUploadResponse,
+    InterviewRefinementRequest,
+    InterviewRefinementResponse,
+    FeedbackItem,
+    DraftCreate,
+    DraftUpdate,
+    DraftResponse,
 )
 from storage import storage_service, StorageService
-from credits import check_credits_available, decrement_credits, check_and_reset_credits
+from credits import (
+    check_credits_available,
+    decrement_credits,
+    check_and_reset_credits,
+    refund_credits,
+)
 from rate_limit import (
-    rate_limit_middleware, 
-    rate_limit_check, 
+    rate_limit_middleware,
+    rate_limit_check,
     close_redis,
     initialize_rate_limiter,
     get_rate_limiter_status,
 )
-from db import supabase
+from db import supabase, log_slow_query
 from config import settings
 from transcription import (
     transcribe_audio,
     UnsupportedFileTypeError,
     FileTooLargeError,
-    TranscriptionProviderError
+    TranscriptionProviderError,
 )
 from providers.deepgram_streaming import DeepgramStreamingProvider
 from providers.deepgram_webm import DeepgramWebmProvider
 from datetime import datetime
-from llm_refinement import refine_transcript, analyze_and_refine, refine_interview_response
+from llm_refinement import (
+    refine_transcript,
+    analyze_and_refine,
+    refine_interview_response,
+)
+from analytics import AnalyticsService
+import time
+from urllib.parse import urlparse
+from ws_tickets import (
+    create_ws_ticket,
+    extract_ws_credential,
+    WS_INSUFFICIENT_CREDITS_CODE,
+)
+
+
+def _validate_reference_file_url(url: Optional[str]) -> None:
+    """
+    SSRF guard: a client-supplied reference_file_url is fetched by OpenAI's
+    Vision API, so it must point only at our own Supabase Storage host. Reject
+    anything else (internal endpoints, cloud metadata, file:/data:, etc.).
+    Empty/None is allowed (optional field).
+    """
+    if not url:
+        return
+    try:
+        parsed = urlparse(url)
+        supa = urlparse(settings.supabase_url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid reference file URL")
+
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid reference file URL")
+    # Hostnames are case-insensitive; compare normalized netloc.
+    if parsed.netloc.lower() != supa.netloc.lower():
+        logger.warning(
+            f"[SSRF] Rejected reference_file_url with disallowed host: {parsed.netloc}"
+        )
+        raise HTTPException(status_code=400, detail="reference file URL is not allowed")
+
+
+async def _authenticate_websocket_user(
+    websocket: WebSocket,
+    query_token: Optional[str] = None,
+    query_ticket: Optional[str] = None,
+) -> dict:
+    """Authenticate a WebSocket connection via ticket (preferred) or legacy JWT."""
+    credential, kind = extract_ws_credential(websocket, query_token, query_ticket)
+    if not credential:
+        raise HTTPException(status_code=401, detail="Missing authentication credential")
+    if kind == "ticket":
+        return await get_active_user_from_websocket_ticket(credential)
+    return await get_active_user_from_websocket_token(credential)
+
 
 # Initialize logging FIRST (before any other imports that might log)
 from logging_config import setup_logging, get_logger, set_request_id, get_request_id
+
 setup_logging()
 logger = get_logger(__name__)
 
 # Initialize Sentry error tracking
-from sentry_config import init_sentry, capture_exception, set_user_context, clear_user_context
+from sentry_config import (
+    init_sentry,
+    capture_exception,
+    set_user_context,
+    clear_user_context,
+)
+
 init_sentry()
 
 # Import health check module
@@ -60,12 +156,18 @@ from health import get_all_health_checks, is_ready, get_overall_status
 from admin import router as admin_router
 
 # Import Stripe billing router
-from stripe_billing import router as billing_router, webhook_router as stripe_webhook_router
+from stripe_billing import (
+    router as billing_router,
+    webhook_router as stripe_webhook_router,
+)
 
 app = FastAPI(
     title="Voira API",
     description="Backend API for Voira voice coaching platform",
     version="1.0.0",
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
 
@@ -73,13 +175,14 @@ app = FastAPI(
 # Security Middleware
 # =============================================================================
 
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses."""
-    
+
     async def dispatch(self, request: Request, call_next):
         # Generate request ID for tracing
         request_id = set_request_id()
-        
+
         # Check request size limit
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > settings.max_request_size:
@@ -88,49 +191,63 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Request body too large"},
                 headers={"X-Request-ID": request_id},
             )
-        
+
         try:
             response = await call_next(request)
         except Exception as e:
             # Capture unhandled exceptions
-            capture_exception(e, extra={
-                "request_id": request_id,
-                "path": request.url.path,
-                "method": request.method,
-            })
+            capture_exception(
+                e,
+                extra={
+                    "request_id": request_id,
+                    "path": request.url.path,
+                    "method": request.method,
+                },
+            )
             raise
-        
+
         # Add security headers
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        
+
         # Add HSTS header in production
         if settings.is_production:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+
         return response
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Apply rate limiting to all requests."""
-    
+
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for health checks
         if request.url.path.startswith("/health"):
             return await call_next(request)
-        
+
+        # Webhook endpoints get a higher limit keyed by IP (not the default
+        # per-user bucket). This prevents Stripe retries from being throttled
+        # while still blocking abuse from unknown sources.
+        is_webhook = (
+            request.url.path.startswith("/webhooks/")
+            or request.url.path == "/billing/webhook"
+        )
+
         # Get identifier (user ID from auth header, or IP address)
         identifier = request.client.host if request.client else "unknown"
-        
+        if is_webhook:
+            identifier = f"webhook:{identifier}"
+
         # Check rate limit
         allowed, rate_headers = await rate_limit_check(
             identifier=identifier,
             path=request.url.path,
         )
-        
+
         if not allowed:
             # Must include CORS headers in 429 responses for browser compatibility
             origin = request.headers.get("origin", "")
@@ -145,19 +262,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Rate limit exceeded. Please try again later."},
                 headers={**rate_headers, **cors_headers},
             )
-        
+
         response = await call_next(request)
-        
+
         # Add rate limit headers to response
         for key, value in rate_headers.items():
             response.headers[key] = value
-        
+
         return response
 
 
 # =============================================================================
 # Startup and Shutdown Events
 # =============================================================================
+
 
 @app.on_event("startup")
 async def startup_validation():
@@ -167,31 +285,33 @@ async def startup_validation():
     NEVER log or print secret values (keys, tokens, etc.)
     """
     logger.info(f"Application starting in {settings.env} environment")
-    
+
     # Check required configuration
     missing_vars = []
     warnings = []
-    
+
     # Required: Supabase
     if not settings.supabase_url:
         missing_vars.append("SUPABASE_URL")
     if not settings.supabase_service_role_key:
         missing_vars.append("SUPABASE_SERVICE_ROLE_KEY")
-    
+
     # Warn about optional but important config
     if not settings.openai_api_key:
         warnings.append("OPENAI_API_KEY not set - LLM refinement will not work")
-    elif not settings.openai_api_key.startswith('sk-'):
+    elif not settings.openai_api_key.startswith("sk-"):
         warnings.append("OPENAI_API_KEY may be invalid (should start with 'sk-')")
-    
+
     if not settings.deepgram_api_key:
         warnings.append("DEEPGRAM_API_KEY not set - transcription will not work")
-    
+
     if settings.is_production:
         if not settings.sentry_dsn:
-            warnings.append("SENTRY_DSN not set - error tracking disabled in production")
+            warnings.append(
+                "SENTRY_DSN not set - error tracking disabled in production"
+            )
         # Note: Redis validation is now handled by initialize_rate_limiter()
-        
+
         # CORS validation for production
         cors_origins = settings.cors_origins_list
         if not cors_origins:
@@ -201,27 +321,29 @@ async def startup_validation():
                 "CORS_ORIGINS contains only localhost origins - "
                 "set to 'https://heyvoira.com' for production"
             )
-    
+
     # Log CORS configuration (safe to log origins)
     logger.info(f"CORS allowed origins: {settings.cors_origins_list}")
-    
+
     # Log warnings
     for warning in warnings:
         logger.warning(warning)
-    
+
     # Fail on missing required vars
     if missing_vars:
         error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
         logger.error(error_msg)
         raise ValueError(error_msg)
-    
+
     # Validate Supabase URL format
-    if settings.supabase_url and not settings.supabase_url.startswith(("http://", "https://")):
+    if settings.supabase_url and not settings.supabase_url.startswith(
+        ("http://", "https://")
+    ):
         logger.warning("SUPABASE_URL should start with http:// or https://")
-    
+
     # Initialize rate limiter (fails fast in production if Redis unavailable)
     await initialize_rate_limiter()
-    
+
     logger.info("Startup validation complete")
 
 
@@ -233,17 +355,23 @@ async def shutdown():
     # Close cache connections
     try:
         from cache import close_cache
+
         await close_cache()
     except ImportError:
         pass
     logger.info("Shutdown complete")
+
 
 # =============================================================================
 # Middleware (order matters - first added = outermost)
 # =============================================================================
 
 # Import additional middleware
-from middleware import TimeoutMiddleware, PerformanceLoggingMiddleware, ErrorHandlingMiddleware
+from middleware import (
+    TimeoutMiddleware,
+    PerformanceLoggingMiddleware,
+    ErrorHandlingMiddleware,
+)
 
 # =============================================================================
 # CORS Configuration
@@ -259,9 +387,9 @@ from middleware import TimeoutMiddleware, PerformanceLoggingMiddleware, ErrorHan
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,  # Explicit origins only, no wildcards
-    allow_credentials=True,                     # Required for Supabase auth
-    allow_methods=["*"],                        # Allow all HTTP methods
-    allow_headers=["*"],                        # Allow all headers
+    allow_credentials=True,  # Required for Supabase auth
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
     expose_headers=[
         "X-Request-ID",
         "X-RateLimit-Limit",
@@ -308,6 +436,7 @@ app.include_router(stripe_webhook_router)
 # Health Check Endpoints
 # =============================================================================
 
+
 @app.get("/health")
 async def health():
     """
@@ -329,27 +458,29 @@ async def health_ready():
     checks = await get_all_health_checks()
     ready = is_ready(checks)
     status = get_overall_status(checks)
-    
+
     response = {
         "status": status,
         "ready": ready,
         "checks": checks,
         "environment": settings.env,
     }
-    
+
     if not ready:
         raise HTTPException(status_code=503, detail=response)
-    
+
     return response
 
 
 @app.get("/health/dependencies")
-async def health_dependencies():
+async def health_dependencies(user: dict = Depends(get_current_user)):
     """
-    Detailed dependency health status.
-    Returns status of all external dependencies.
-    Useful for debugging and monitoring dashboards.
+    Detailed dependency health status (authenticated).
+    In production, requires a valid session to avoid exposing infra details publicly.
     """
+    if settings.is_production and not await check_is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
     checks = await get_all_health_checks()
     return {
         "status": get_overall_status(checks),
@@ -359,17 +490,29 @@ async def health_dependencies():
     }
 
 
+@app.post("/ws/ticket")
+async def create_websocket_ticket(user: dict = Depends(get_active_user)):
+    """
+    Issue a short-lived WebSocket ticket for live transcription.
+    Prefer passing the ticket via Sec-WebSocket-Protocol instead of query params.
+    """
+    rate_limit_middleware(f"ws_ticket:{user['id']}")
+    ticket, expires_in = create_ws_ticket(user["id"])
+    return {"ticket": ticket, "expires_in": expires_in}
+
+
 # =============================================================================
 # API Version Endpoint
 # =============================================================================
 
 from api_versioning import get_version_info
 
+
 @app.get("/api/versions")
 async def api_versions():
     """
     Get information about supported API versions.
-    
+
     Returns current version, supported versions, and deprecation status.
     """
     return get_version_info()
@@ -392,7 +535,7 @@ async def get_me(user: dict = Depends(get_current_user)):
 @app.get("/admin/is-admin", response_model=AdminCheckResponse)
 async def check_admin(
     user: dict = Depends(get_current_user),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """
     Check if current user is admin.
@@ -401,7 +544,7 @@ async def check_admin(
     """
     # Rate limit by user ID
     rate_limit_middleware(f"admin_check:{user['id']}")
-    
+
     is_admin = await check_is_admin(user)
     return AdminCheckResponse(isAdmin=is_admin)
 
@@ -409,7 +552,7 @@ async def check_admin(
 @app.post("/sessions", response_model=SessionResponse)
 async def create_session(
     session_data: SessionCreate,
-    user: dict = Depends(get_active_user)  # Disabled users blocked
+    user: dict = Depends(get_active_user),  # Disabled users blocked
 ):
     """
     Create a new session (recording).
@@ -419,18 +562,23 @@ async def create_session(
     """
     # Rate limit by user ID
     rate_limit_middleware(f"create_session:{user['id']}")
-    
+
     # Check if user is admin
     is_admin = await check_is_admin(user)
-    
-    # Check and enforce credits (unless admin)
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits. Please upgrade or wait for monthly reset."
-        )
-    
+
+    # Reserve the credit ATOMICALLY before creating the session (prevents the
+    # check-then-act race). Refunded below if the insert fails.
+    if not is_admin:
+        try:
+            await decrement_credits(
+                user["id"], amount=1, reason="recording_saved", is_admin=False
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits. Please upgrade or wait for monthly reset.",
+            )
+
     # Create session
     insert_data = {
         "user_id": user["id"],
@@ -451,18 +599,27 @@ async def create_session(
         "words_per_minute": session_data.words_per_minute,
         "highlights": session_data.highlights,
     }
-    
-    response = supabase.table("recordings").insert(insert_data).execute()
-    
-    if not response.data:
+
+    query_start = time.time()
+    try:
+        response = supabase.table("recordings").insert(insert_data).execute()
+    except Exception:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="recording_saved_failed")
         raise HTTPException(status_code=500, detail="Failed to create session")
-    
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query(
+        "recordings", "INSERT", duration_ms, f"new session for user {user['id']}"
+    )
+
+    if not response.data:
+        # Refund the reserved credit since the session was not created.
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="recording_saved_failed")
+        raise HTTPException(status_code=500, detail="Failed to create session")
+
     created = response.data[0]
-    
-    # Decrement credits (unless admin)
-    if not is_admin:
-        await decrement_credits(user["id"], amount=1, reason="recording_saved", is_admin=False)
-    
+
     return SessionResponse(
         id=created["id"],
         user_id=created["user_id"],
@@ -488,18 +645,29 @@ async def create_session(
 
 
 @app.get("/sessions", response_model=List[SessionResponse])
-async def list_sessions(user: dict = Depends(get_current_user)):
+async def list_sessions(
+    user: dict = Depends(get_current_user),
+    limit: int = Query(100, ge=1, le=200, description="Max sessions to return"),
+    offset: int = Query(0, ge=0, description="Number of sessions to skip"),
+):
     """
-    List all sessions for the current user.
+    List sessions for the current user (paginated).
     Ownership enforced by RLS, but we also filter server-side for extra security.
     """
     # Rate limit by user ID
     rate_limit_middleware(f"list_sessions:{user['id']}")
-    
+
     # Query recordings (RLS ensures user only sees their own)
     # Note: Supabase Python client v2 uses desc as keyword argument
-    response = supabase.table("recordings").select("*").eq("user_id", user["id"]).order("created_at", desc=True).execute()
-    
+    response = (
+        supabase.table("recordings")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
+
     sessions = []
     for rec in response.data:
         # Parse datetime strings - handle both Z and +00:00 timezone formats
@@ -514,32 +682,34 @@ async def list_sessions(user: dict = Depends(get_current_user)):
                 return datetime.fromisoformat(dt_str)
             except ValueError:
                 # If it fails, strip microseconds (format: 2026-01-11T03:51:05.87728+00:00 -> 2026-01-11T03:51:05+00:00)
-                dt_str_no_micro = re.sub(r'\.\d+(?=[+-])', '', dt_str)
+                dt_str_no_micro = re.sub(r"\.\d+(?=[+-])", "", dt_str)
                 return datetime.fromisoformat(dt_str_no_micro)
-        
-        sessions.append(SessionResponse(
-            id=rec["id"],
-            user_id=rec["user_id"],
-            title=rec["title"],
-            type=rec["type"],
-            question=rec.get("question"),
-            goal=rec.get("goal"),
-            reference_text=rec.get("reference_text"),
-            audio_url=rec.get("audio_url"),
-            audio_mime=rec.get("audio_mime"),
-            audio_size_bytes=rec.get("audio_size_bytes", 0),
-            duration_seconds=rec.get("duration_seconds", 0),
-            transcript=rec.get("transcript", ""),
-            refined_draft=rec.get("refined_draft", ""),
-            clarity_score=rec.get("clarity_score", 0),
-            confidence_score=rec.get("confidence_score", 0),
-            filler_count=rec.get("filler_count", 0),
-            words_per_minute=rec.get("words_per_minute", 0),
-            highlights=rec.get("highlights", []),
-            created_at=parse_datetime(rec["created_at"]),
-            updated_at=parse_datetime(rec["updated_at"]),
-        ))
-    
+
+        sessions.append(
+            SessionResponse(
+                id=rec["id"],
+                user_id=rec["user_id"],
+                title=rec["title"],
+                type=rec["type"],
+                question=rec.get("question"),
+                goal=rec.get("goal"),
+                reference_text=rec.get("reference_text"),
+                audio_url=rec.get("audio_url"),
+                audio_mime=rec.get("audio_mime"),
+                audio_size_bytes=rec.get("audio_size_bytes", 0),
+                duration_seconds=rec.get("duration_seconds", 0),
+                transcript=rec.get("transcript", ""),
+                refined_draft=rec.get("refined_draft", ""),
+                clarity_score=rec.get("clarity_score", 0),
+                confidence_score=rec.get("confidence_score", 0),
+                filler_count=rec.get("filler_count", 0),
+                words_per_minute=rec.get("words_per_minute", 0),
+                highlights=rec.get("highlights", []),
+                created_at=parse_datetime(rec["created_at"]),
+                updated_at=parse_datetime(rec["updated_at"]),
+            )
+        )
+
     return sessions
 
 
@@ -551,20 +721,156 @@ async def delete_all_sessions(user: dict = Depends(get_current_user)):
     """
     # Rate limit by user ID
     rate_limit_middleware(f"delete_all_sessions:{user['id']}")
-    
+
     # Delete all recordings for the user (RLS ensures user can only delete their own)
+    query_start = time.time()
     response = supabase.table("recordings").delete().eq("user_id", user["id"]).execute()
-    
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query(
+        "recordings", "DELETE", duration_ms, f"all sessions for user {user['id']}"
+    )
+
     deleted_count = len(response.data) if response.data else 0
-    
+
     logger.info(f"Deleted {deleted_count} sessions for user {user['id']}")
-    
-    return {"deleted_count": deleted_count, "message": f"Deleted {deleted_count} session(s)"}
+
+    return {
+        "deleted_count": deleted_count,
+        "message": f"Deleted {deleted_count} session(s)",
+    }
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, user: dict = Depends(get_current_user)):
+    """Delete a single session owned by the current user."""
+    rate_limit_middleware(f"delete_session:{user['id']}")
+
+    if not re.match(r"^[0-9a-fA-F-]{36}$", session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+
+    query_start = time.time()
+    response = (
+        supabase.table("recordings")
+        .delete()
+        .eq("id", session_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query("recordings", "DELETE", duration_ms, f"session {session_id}")
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    logger.info(f"Deleted session {session_id} for user {user['id']}")
+    return {"id": session_id, "message": "Session deleted"}
+
+
+@app.put("/sessions/{session_id}", response_model=SessionResponse)
+async def update_session(
+    session_id: str,
+    patch: SessionUpdate,
+    user: dict = Depends(get_active_user),
+):
+    """
+    Partially update a session (recording).
+
+    Only fields present in the request are written; `None` values are ignored so
+    partial updates can't accidentally overwrite existing data with nulls. This
+    is used by the Library rename flow and by Draft / RefineDraft persistence
+    paths that were previously silently no-ops via the Base44 stub.
+    """
+    rate_limit_middleware(f"update_session:{user['id']}")
+
+    update_dict: Dict[str, Any] = {}
+    if patch.title is not None:
+        update_dict["title"] = patch.title
+    if patch.transcript is not None:
+        update_dict["transcript"] = patch.transcript
+    if patch.refined_draft is not None:
+        update_dict["refined_draft"] = patch.refined_draft
+    if patch.highlights is not None:
+        highlights_value = patch.highlights
+        if isinstance(highlights_value, str):
+            try:
+                highlights_value = (
+                    json.loads(highlights_value) if highlights_value else []
+                )
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400, detail="highlights must be valid JSON"
+                )
+        update_dict["highlights"] = highlights_value
+    if patch.clarity_score is not None:
+        update_dict["clarity_score"] = patch.clarity_score
+    if patch.confidence_score is not None:
+        update_dict["confidence_score"] = patch.confidence_score
+    if patch.filler_count is not None:
+        update_dict["filler_count"] = patch.filler_count
+    if patch.words_per_minute is not None:
+        update_dict["words_per_minute"] = patch.words_per_minute
+
+    if not update_dict:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    query_start = time.time()
+    response = (
+        supabase.table("recordings")
+        .update(update_dict)
+        .eq("id", session_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+    duration_ms = (time.time() - query_start) * 1000
+    log_slow_query(
+        "recordings",
+        "UPDATE",
+        duration_ms,
+        f"session {session_id} for user {user['id']}",
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    rec = response.data[0]
+    logger.info(
+        f"Updated session {session_id} for user {user['id']} "
+        f"(fields={list(update_dict.keys())})"
+    )
+
+    def _parse_dt(dt_str):
+        if dt_str.endswith("Z"):
+            return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        return datetime.fromisoformat(dt_str)
+
+    return SessionResponse(
+        id=rec["id"],
+        user_id=rec["user_id"],
+        title=rec["title"],
+        type=rec["type"],
+        question=rec.get("question"),
+        goal=rec.get("goal"),
+        reference_text=rec.get("reference_text"),
+        audio_url=rec.get("audio_url"),
+        audio_mime=rec.get("audio_mime"),
+        audio_size_bytes=rec.get("audio_size_bytes", 0),
+        duration_seconds=rec.get("duration_seconds", 0),
+        transcript=rec.get("transcript", ""),
+        refined_draft=rec.get("refined_draft", ""),
+        clarity_score=rec.get("clarity_score", 0),
+        confidence_score=rec.get("confidence_score", 0),
+        filler_count=rec.get("filler_count", 0),
+        words_per_minute=rec.get("words_per_minute", 0),
+        highlights=rec.get("highlights", []),
+        created_at=_parse_dt(rec["created_at"]),
+        updated_at=_parse_dt(rec["updated_at"]),
+    )
 
 
 # =============================================================================
 # DRAFT ENDPOINTS (Partial Save / Draft Naming)
 # =============================================================================
+
 
 def _generate_draft_name(question: Optional[str], max_words: int = 8) -> str:
     """
@@ -573,42 +879,39 @@ def _generate_draft_name(question: Optional[str], max_words: int = 8) -> str:
     """
     if not question or not question.strip():
         return "Untitled Draft"
-    
+
     words = question.strip().split()[:max_words]
     name = " ".join(words)
-    
+
     # Add ellipsis if truncated
     if len(question.strip().split()) > max_words:
         name += "..."
-    
+
     return name or "Untitled Draft"
 
 
 @app.post("/drafts", response_model=DraftResponse)
-async def create_draft(
-    draft_data: DraftCreate,
-    user: dict = Depends(get_active_user)
-):
+async def create_draft(draft_data: DraftCreate, user: dict = Depends(get_active_user)):
     """
     Create a new draft (partial save).
-    
+
     Drafts are intentionally saved unfinished work:
     - No LLM calls triggered
     - No credits consumed
     - No audio persistence
     - Separate from completed sessions
-    
+
     If name is not provided, auto-generated from first ~8 words of question.
-    
+
     **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
     rate_limit_middleware(f"create_draft:{user['id']}")
-    
+
     # Generate name if not provided
     name = draft_data.name
     if not name or not name.strip():
         name = _generate_draft_name(draft_data.question)
-    
+
     # Insert draft into database
     draft_record = {
         "user_id": user["id"],
@@ -622,16 +925,16 @@ async def create_draft(
         "transcript_text": draft_data.transcript_text or "",
         "is_user_edited": draft_data.is_user_edited,
     }
-    
+
     response = supabase.table("drafts").insert(draft_record).execute()
-    
+
     if not response.data:
         logger.error(f"Failed to create draft for user {user['id']}")
         raise HTTPException(status_code=500, detail="Failed to create draft")
-    
+
     created = response.data[0]
     logger.info(f"Created draft {created['id']} for user {user['id']}: {name}")
-    
+
     return DraftResponse(
         id=created["id"],
         user_id=created["user_id"],
@@ -650,54 +953,74 @@ async def create_draft(
 
 
 @app.get("/drafts", response_model=List[DraftResponse])
-async def list_drafts(user: dict = Depends(get_current_user)):
+async def list_drafts(
+    user: dict = Depends(get_current_user),
+    limit: int = Query(100, ge=1, le=200, description="Max drafts to return"),
+    offset: int = Query(0, ge=0, description="Number of drafts to skip"),
+):
     """
-    List all drafts for the current user.
+    List drafts for the current user (paginated).
     Returns drafts sorted by updated_at (most recent first).
     """
     rate_limit_middleware(f"list_drafts:{user['id']}")
-    
-    response = supabase.table("drafts").select("*").eq("user_id", user["id"]).order("updated_at", desc=True).execute()
-    
+
+    response = (
+        supabase.table("drafts")
+        .select("*")
+        .eq("user_id", user["id"])
+        .order("updated_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
+
     drafts = []
     for draft in response.data or []:
-        drafts.append(DraftResponse(
-            id=draft["id"],
-            user_id=draft["user_id"],
-            name=draft["name"],
-            type=draft["type"],
-            question=draft.get("question"),
-            desired_style=draft.get("desired_style"),
-            word_limit=draft.get("word_limit"),
-            company_name=draft.get("company_name"),
-            company_context=draft.get("company_context"),
-            transcript_text=draft.get("transcript_text", ""),
-            is_user_edited=draft.get("is_user_edited", False),
-            created_at=datetime.fromisoformat(draft["created_at"].replace("Z", "+00:00")),
-            updated_at=datetime.fromisoformat(draft["updated_at"].replace("Z", "+00:00")),
-        ))
-    
+        drafts.append(
+            DraftResponse(
+                id=draft["id"],
+                user_id=draft["user_id"],
+                name=draft["name"],
+                type=draft["type"],
+                question=draft.get("question"),
+                desired_style=draft.get("desired_style"),
+                word_limit=draft.get("word_limit"),
+                company_name=draft.get("company_name"),
+                company_context=draft.get("company_context"),
+                transcript_text=draft.get("transcript_text", ""),
+                is_user_edited=draft.get("is_user_edited", False),
+                created_at=datetime.fromisoformat(
+                    draft["created_at"].replace("Z", "+00:00")
+                ),
+                updated_at=datetime.fromisoformat(
+                    draft["updated_at"].replace("Z", "+00:00")
+                ),
+            )
+        )
+
     return drafts
 
 
 @app.get("/drafts/{draft_id}", response_model=DraftResponse)
-async def get_draft(
-    draft_id: str,
-    user: dict = Depends(get_current_user)
-):
+async def get_draft(draft_id: str, user: dict = Depends(get_current_user)):
     """
     Get a specific draft by ID.
     RLS ensures users can only access their own drafts.
     """
     rate_limit_middleware(f"get_draft:{user['id']}")
-    
-    response = supabase.table("drafts").select("*").eq("id", draft_id).eq("user_id", user["id"]).execute()
-    
+
+    response = (
+        supabase.table("drafts")
+        .select("*")
+        .eq("id", draft_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+
     if not response.data:
         raise HTTPException(status_code=404, detail="Draft not found")
-    
+
     draft = response.data[0]
-    
+
     return DraftResponse(
         id=draft["id"],
         user_id=draft["user_id"],
@@ -717,18 +1040,16 @@ async def get_draft(
 
 @app.put("/drafts/{draft_id}", response_model=DraftResponse)
 async def update_draft(
-    draft_id: str,
-    draft_data: DraftUpdate,
-    user: dict = Depends(get_active_user)
+    draft_id: str, draft_data: DraftUpdate, user: dict = Depends(get_active_user)
 ):
     """
     Update an existing draft.
     Only provided fields are updated; others remain unchanged.
-    
+
     **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
     rate_limit_middleware(f"update_draft:{user['id']}")
-    
+
     # Build update dict with only provided fields
     update_dict = {}
     if draft_data.name is not None:
@@ -747,19 +1068,25 @@ async def update_draft(
         update_dict["transcript_text"] = draft_data.transcript_text
     if draft_data.is_user_edited is not None:
         update_dict["is_user_edited"] = draft_data.is_user_edited
-    
+
     if not update_dict:
         raise HTTPException(status_code=400, detail="No fields to update")
-    
+
     # Update draft (RLS ensures user can only update their own)
-    response = supabase.table("drafts").update(update_dict).eq("id", draft_id).eq("user_id", user["id"]).execute()
-    
+    response = (
+        supabase.table("drafts")
+        .update(update_dict)
+        .eq("id", draft_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+
     if not response.data:
         raise HTTPException(status_code=404, detail="Draft not found")
-    
+
     draft = response.data[0]
     logger.info(f"Updated draft {draft_id} for user {user['id']}")
-    
+
     return DraftResponse(
         id=draft["id"],
         user_id=draft["user_id"],
@@ -778,44 +1105,49 @@ async def update_draft(
 
 
 @app.delete("/drafts/{draft_id}")
-async def delete_draft(
-    draft_id: str,
-    user: dict = Depends(get_current_user)
-):
+async def delete_draft(draft_id: str, user: dict = Depends(get_current_user)):
     """
     Delete a draft.
     RLS ensures users can only delete their own drafts.
     """
     rate_limit_middleware(f"delete_draft:{user['id']}")
-    
-    response = supabase.table("drafts").delete().eq("id", draft_id).eq("user_id", user["id"]).execute()
-    
+
+    response = (
+        supabase.table("drafts")
+        .delete()
+        .eq("id", draft_id)
+        .eq("user_id", user["id"])
+        .execute()
+    )
+
     if not response.data:
         raise HTTPException(status_code=404, detail="Draft not found")
-    
+
     logger.info(f"Deleted draft {draft_id} for user {user['id']}")
-    
+
     return {"message": "Draft deleted successfully"}
 
 
 @app.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe_audio_endpoint(
     file: UploadFile = File(..., description="Audio file to transcribe"),
-    language: Optional[str] = Form(default="en", description="Language code (en, es, fr, etc.)"),
-    user: dict = Depends(get_active_user)  # Disabled users blocked
+    language: Optional[str] = Form(
+        default="en", description="Language code (en, es, fr, etc.)"
+    ),
+    user: dict = Depends(get_active_user),  # Disabled users blocked
 ):
     """
     Transcribe audio file using Deepgram.
-    
+
     - **file**: Audio file (max 15MB, formats: webm, wav, mp3, m4a, ogg, opus)
     - **language**: Language code (default: "en")
-    
+
     Enforces:
     - Authentication required
     - Disabled users receive 403
     - Max file size: 15MB
     - 1 credit deducted ONLY after successful transcription
-    
+
     Returns:
     - transcript: The transcribed text
     - confidence: Confidence score (0-1)
@@ -824,112 +1156,107 @@ async def transcribe_audio_endpoint(
     """
     # Rate limit by user ID
     rate_limit_middleware(f"transcribe:{user['id']}")
-    
+
     # Check if user is admin
     is_admin = await check_is_admin(user)
-    
-    # Check credits BEFORE processing (unless admin)
-    # Credit is deducted AFTER successful transcription
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits for transcription."
-        )
-    
+
+    # Reserve the credit ATOMICALLY before doing work (prevents the
+    # check-then-act race). Refunded below if transcription fails, preserving
+    # the "users don't pay for failures" guarantee.
+    if not is_admin:
+        try:
+            await decrement_credits(
+                user["id"], amount=1, reason="transcription", is_admin=False
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=402, detail="Insufficient credits for transcription."
+            )
+
     # Read file content into memory
     try:
         file_content = await file.read()
         mime_type = file.content_type or "application/octet-stream"
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         logger.error(f"Error reading uploaded file: {str(e)}")
-        raise HTTPException(
-            status_code=400,
-            detail="Failed to read uploaded file."
-        )
-    
+        raise HTTPException(status_code=400, detail="Failed to read uploaded file.")
+
     # Perform transcription with error handling
     try:
         result = await transcribe_audio(
-            audio_file=file_content,
-            mime_type=mime_type,
-            language=language
+            audio_file=file_content, mime_type=mime_type, language=language
         )
     except UnsupportedFileTypeError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
+        raise HTTPException(status_code=400, detail=str(e))
     except FileTooLargeError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
+        raise HTTPException(status_code=400, detail=str(e))
     except TranscriptionProviderError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         # Don't expose internal errors to client
         logger.error(f"Transcription failed for user {user['id']}: {str(e)}")
         raise HTTPException(
             status_code=503,
-            detail="Transcription service is currently unavailable. Please try again later."
+            detail="Transcription service is currently unavailable. Please try again later.",
         )
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="transcription_failed")
         # Catch-all for unexpected errors
         logger.error(f"Unexpected transcription error for user {user['id']}: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="An error occurred during transcription. Please try again."
+            detail="An error occurred during transcription. Please try again.",
         )
-    
-    # Deduct credit ONLY after successful transcription (unless admin)
-    if not is_admin:
-        try:
-            await decrement_credits(
-                user["id"],
-                amount=1,
-                reason="transcription",
-                is_admin=False
-            )
-        except Exception as e:
-            # Log but don't fail the request - transcription was successful
-            logger.error(f"Failed to deduct credits for user {user['id']} after transcription: {str(e)}")
-    
+
     # Return transcription result
     return TranscribeResponse(
         transcript=result["transcript"],
         confidence=result.get("confidence"),
         duration=result.get("duration"),
-        word_count=result.get("word_count")
+        word_count=result.get("word_count"),
     )
 
 
 @app.websocket("/ws/live-transcribe")
 async def websocket_live_transcribe(
     websocket: WebSocket,
-    token: Optional[str] = Query(None, description="JWT authentication token"),
-    language: str = Query("en", description="Language code for transcription")
+    token: Optional[str] = Query(
+        None, description="Legacy JWT (prefer ticket via subprotocol)"
+    ),
+    ticket: Optional[str] = Query(
+        None, description="Short-lived WS ticket from POST /ws/ticket"
+    ),
+    language: str = Query("en", description="Language code for transcription"),
 ):
     """
     WebSocket endpoint for live transcription streaming.
-    
+
     Real-time speech-to-text: streams audio chunks from client, returns partial transcripts.
-    
+
     Why WebSockets are required:
     - Real-time streaming requires bidirectional communication
     - HTTP/REST cannot push updates from server to client
     - WebSockets enable continuous audio chunk streaming and partial transcript delivery
     - Essential for live transcription where users see text appear as they speak
-    
+
     Why live transcription is display-only for now:
     - Live transcripts are provisional and may contain errors
     - Final accurate transcript comes from POST /transcribe after recording completes
     - Avoids duplicate credit charges (credits deducted only on final transcription)
     - Keeps costs low during active recording sessions
     - Users get immediate feedback without financial penalty
-    
+
     Authentication:
-    - Token must be provided via query parameter: ?token=YOUR_JWT_TOKEN
-    - Example: ws://localhost:8000/ws/live-transcribe?token=xxx&language=en
-    
+    - Preferred: POST /ws/ticket then pass ticket via Sec-WebSocket-Protocol
+    - Legacy: ?token=JWT (deprecated — leaks credentials in URLs/logs)
+
     Protocol:
     - Client sends binary audio chunks (bytes)
     - Server sends JSON messages with transcript events:
@@ -941,18 +1268,11 @@ async def websocket_live_transcribe(
         "end_time": 1.23
       }
     """
-    await websocket.accept()
-    
-    # Authenticate user and check if disabled
-    if not token:
-        await websocket.close(code=1008, reason="Missing authentication token")
-        return
-    
+    # Authenticate BEFORE accepting the connection so unauthenticated clients
+    # never establish a live WebSocket (matches /ws/listen).
     try:
-        user = await get_active_user_from_websocket_token(token)
-        logger.info(f"Live transcription session started for user {user['id']}")
+        user = await _authenticate_websocket_user(websocket, token, ticket)
     except HTTPException as e:
-        # 403 = disabled user, 401 = auth failure
         reason = "Account disabled" if e.status_code == 403 else "Authentication failed"
         await websocket.close(code=1008, reason=reason)
         return
@@ -960,11 +1280,32 @@ async def websocket_live_transcribe(
         logger.error(f"WebSocket authentication error: {e}")
         await websocket.close(code=1011, reason="Internal server error")
         return
-    
+
+    # Gate live transcription on credit availability (no deduction here — final
+    # /transcribe is billed). Prevents zero-credit users from using the live
+    # stream as unlimited free transcription.
+    try:
+        is_admin = await check_is_admin(user)
+        has_credits, _ = await check_credits_available(
+            user["id"], required=1, is_admin=is_admin
+        )
+    except Exception as e:
+        logger.error(f"WebSocket credit check error: {e}")
+        await websocket.close(code=1011, reason="Internal server error")
+        return
+    if not has_credits:
+        await websocket.close(
+            code=WS_INSUFFICIENT_CREDITS_CODE, reason="Insufficient credits"
+        )
+        return
+
+    await websocket.accept(subprotocol="voira")
+    logger.info(f"Live transcription session started for user {user['id']}")
+
     # Initialize transcription provider
     # Using Deepgram for now, but provider abstraction allows easy swapping
     provider = DeepgramStreamingProvider()
-    
+
     try:
         # Start transcription stream
         # Configuration values come from settings (config.py) with sensible defaults:
@@ -976,40 +1317,41 @@ async def websocket_live_transcribe(
             language=language,
             sample_rate=settings.deepgram_sample_rate,
             channels=settings.deepgram_channels,
-            encoding=settings.deepgram_encoding
+            encoding=settings.deepgram_encoding,
         )
-        
+
         # Task to forward transcript events to client
         async def send_transcripts():
             try:
                 async for event in stream:
                     # Send transcript event as JSON to client
                     await websocket.send_json(event)
-                    
+
                     # Log for debugging (truncated to avoid log spam)
                     if event.get("type") in ("partial", "final"):
                         text_preview = event.get("text", "")[:50]
-                        logger.debug(f"Transcribed for user {user['id']}: {text_preview}...")
-                    
+                        logger.debug(
+                            f"Transcribed for user {user['id']}: {text_preview}..."
+                        )
+
                     # Stop on error or close event
                     if event.get("type") == "error":
                         logger.error(f"Transcription error: {event.get('message')}")
                         break
             except Exception as e:
                 logger.error(f"Error in transcript forwarding: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Transcription stream error"
-                })
-        
+                await websocket.send_json(
+                    {"type": "error", "message": "Transcription stream error"}
+                )
+
         send_task = asyncio.create_task(send_transcripts())
-        
+
         # Main loop: receive audio chunks from client and forward to provider
         try:
             while True:
                 # Receive binary audio chunk from client
                 data = await websocket.receive_bytes()
-                
+
                 # Forward audio chunk to Deepgram
                 try:
                     await provider.send_audio_chunk(data)
@@ -1019,11 +1361,10 @@ async def websocket_live_transcribe(
                     break
                 except Exception as e:
                     logger.error(f"Error sending audio chunk: {e}")
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Failed to process audio chunk"
-                    })
-        
+                    await websocket.send_json(
+                        {"type": "error", "message": "Failed to process audio chunk"}
+                    )
+
         except WebSocketDisconnect:
             logger.info(f"Client disconnected for user {user['id']}")
         except Exception as e:
@@ -1035,52 +1376,58 @@ async def websocket_live_transcribe(
                 await send_task
             except asyncio.CancelledError:
                 pass
-            
+
             await provider.close()
             logger.info(f"Live transcription session ended for user {user['id']}")
-    
+
     except Exception as e:
         logger.error(f"Error setting up live transcription: {e}")
         error_msg = str(e)
         # Never expose API keys in error messages
         if settings.deepgram_api_key and settings.deepgram_api_key in error_msg:
             error_msg = "Transcription service configuration error"
-        
-        await websocket.send_json({
-            "type": "error",
-            "message": f"Failed to start transcription: {error_msg}"
-        })
+
+        await websocket.send_json(
+            {"type": "error", "message": f"Failed to start transcription: {error_msg}"}
+        )
         await websocket.close(code=1011, reason="Internal server error")
 
 
 @app.websocket("/ws/listen")
 async def websocket_listen(
     websocket: WebSocket,
-    token: Optional[str] = Query(None, description="JWT authentication token"),
-    detect_fillers: Optional[bool] = Query(None, description="Enable filler word detection (overrides user setting)")
+    token: Optional[str] = Query(
+        None, description="Legacy JWT (prefer ticket via subprotocol)"
+    ),
+    ticket: Optional[str] = Query(
+        None, description="Short-lived WS ticket from POST /ws/ticket"
+    ),
+    detect_fillers: Optional[bool] = Query(
+        None, description="Enable filler word detection (overrides user setting)"
+    ),
 ):
     """
     WebSocket endpoint for live transcription using MediaRecorder (audio/webm).
-    
+
     Accepts binary audio chunks in WebM format from browser MediaRecorder,
     forwards to Deepgram for transcription, and streams transcripts back.
-    
+
     Configuration:
     - model: nova-2
     - language: en-US
     - smart_format: depends on filler detection mode
     - interim_results: true
-    
+
     Filler Detection:
     - If detect_fillers=true: Preserves filler words, reports counts
     - If detect_fillers=false: Uses smart_format for clean output
     - If not provided: Uses user's setting (filler_word_detection)
     - Practice mode should always pass detect_fillers=true
-    
+
     Authentication:
-    - Token must be provided via query parameter: ?token=YOUR_JWT_TOKEN
-    - Example: ws://localhost:8000/ws/listen?token=xxx&detect_fillers=true
-    
+    - Preferred: POST /ws/ticket then pass ticket via Sec-WebSocket-Protocol
+    - Legacy: ?token=JWT (deprecated — leaks credentials in URLs/logs)
+
     Protocol:
     - Client sends binary audio chunks (audio/webm)
     - Server sends JSON messages with transcript events:
@@ -1092,94 +1439,108 @@ async def websocket_listen(
         "total_fillers": 0        // Only when filler detection enabled
       }
     """
-    # Check authentication BEFORE accepting the connection
-    if not token:
-        logger.warning(f"[WebSocket /ws/listen] Connection rejected: Missing authentication token")
-        await websocket.accept()
-        await websocket.close(code=1008, reason="Missing authentication token")
-        return
-    
-    # Log token presence (but not the actual token for security)
-    token_preview = f"{token[:10]}..." if len(token) > 10 else token
-    logger.info(f"[WebSocket /ws/listen] Received connection with token: {token_preview} (length: {len(token)})")
-    
-    # Authenticate user and check if disabled BEFORE accepting connection
+    # Authenticate BEFORE accepting — never accept() then close on auth failure.
     try:
-        user = await get_active_user_from_websocket_token(token)
-        logger.info(f"[WebSocket /ws/listen] Authentication successful for user {user['id']} (email: {user.get('email', 'N/A')})")
+        user = await _authenticate_websocket_user(websocket, token, ticket)
+        logger.info(
+            f"[WebSocket /ws/listen] Authentication successful for user {user['id']}"
+        )
     except HTTPException as e:
-        # 403 = disabled user, 401 = auth failure
-        reason = "Account disabled" if e.status_code == 403 else f"Authentication failed: {e.detail}"
+        reason = "Account disabled" if e.status_code == 403 else "Authentication failed"
         logger.error(f"[WebSocket /ws/listen] {reason}")
-        await websocket.accept()
         await websocket.close(code=1008, reason=reason)
         return
     except Exception as e:
-        logger.error(f"[WebSocket /ws/listen] Authentication error: {type(e).__name__}: {str(e)}")
-        await websocket.accept()
-        await websocket.close(code=1011, reason="Internal server error during authentication")
+        logger.error(
+            f"[WebSocket /ws/listen] Authentication error: {type(e).__name__}: {str(e)}"
+        )
+        await websocket.close(
+            code=1011, reason="Internal server error during authentication"
+        )
         return
-    
-    # Only accept connection AFTER successful authentication
-    await websocket.accept()
+
+    # Gate on credit availability (no deduction — see /ws/live-transcribe).
+    try:
+        is_admin = await check_is_admin(user)
+        has_credits, _ = await check_credits_available(
+            user["id"], required=1, is_admin=is_admin
+        )
+    except Exception as e:
+        logger.error(f"[WebSocket /ws/listen] Credit check error: {e}")
+        await websocket.close(code=1011, reason="Internal server error")
+        return
+    if not has_credits:
+        await websocket.close(
+            code=WS_INSUFFICIENT_CREDITS_CODE, reason="Insufficient credits"
+        )
+        return
+
+    await websocket.accept(subprotocol="voira")
     logger.info(f"[WebSocket /ws/listen] Connection accepted for user {user['id']}")
-    
+
     # Determine if filler detection should be enabled
     # Priority: explicit parameter > user setting > default (false)
     enable_filler_detection = detect_fillers
     if enable_filler_detection is None:
         # Check user's setting
         try:
-            user_settings = await get_user_settings(user['id'])
-            enable_filler_detection = user_settings.get('filler_word_detection', False)
-            logger.info(f"[WebSocket] Using user setting for filler detection: {enable_filler_detection}")
+            user_settings = await get_user_settings(user["id"])
+            enable_filler_detection = user_settings.get("filler_word_detection", False)
+            logger.info(
+                f"[WebSocket] Using user setting for filler detection: {enable_filler_detection}"
+            )
         except Exception as e:
-            logger.warning(f"[WebSocket] Could not fetch user settings, defaulting to no filler detection: {e}")
+            logger.warning(
+                f"[WebSocket] Could not fetch user settings, defaulting to no filler detection: {e}"
+            )
             enable_filler_detection = False
     else:
-        logger.info(f"[WebSocket] Using explicit filler detection parameter: {enable_filler_detection}")
-    
+        logger.info(
+            f"[WebSocket] Using explicit filler detection parameter: {enable_filler_detection}"
+        )
+
     # Initialize Deepgram provider with filler detection mode
     provider = DeepgramWebmProvider(detect_fillers=enable_filler_detection)
-    
+
     try:
         # Connect to Deepgram first
         await provider.connect()
-        
+
         # Start transcription stream (WebM format, Deepgram auto-detects)
         stream = provider.start_stream()
-        
+
         # Task to forward transcript events to client
         async def send_transcripts():
             try:
                 async for event in stream:
                     # Send transcript event as JSON to client
                     await websocket.send_json(event)
-                    
+
                     # Log for debugging
                     if event.get("type") in ("partial", "final"):
                         text_preview = event.get("text", "")[:50]
-                        logger.debug(f"Transcribed for user {user['id']}: {text_preview}...")
-                    
+                        logger.debug(
+                            f"Transcribed for user {user['id']}: {text_preview}..."
+                        )
+
                     # Stop on error or close event
                     if event.get("type") == "error":
                         logger.error(f"Transcription error: {event.get('message')}")
                         break
             except Exception as e:
                 logger.error(f"Error in transcript forwarding: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Transcription stream error"
-                })
-        
+                await websocket.send_json(
+                    {"type": "error", "message": "Transcription stream error"}
+                )
+
         send_task = asyncio.create_task(send_transcripts())
-        
+
         # Main loop: receive audio chunks from client and forward to provider
         try:
             while True:
                 # Receive binary audio chunk (audio/webm) from client
                 data = await websocket.receive_bytes()
-                
+
                 # Relay binary audio bytes directly to Deepgram connection
                 try:
                     await provider.send_audio_chunk(data)
@@ -1188,11 +1549,10 @@ async def websocket_listen(
                     break
                 except Exception as e:
                     logger.error(f"Error sending audio chunk to Deepgram: {e}")
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Failed to process audio chunk"
-                    })
-        
+                    await websocket.send_json(
+                        {"type": "error", "message": "Failed to process audio chunk"}
+                    )
+
         except WebSocketDisconnect:
             logger.info(f"Client disconnected for user {user['id']}")
         except Exception as e:
@@ -1204,21 +1564,20 @@ async def websocket_listen(
                 await send_task
             except asyncio.CancelledError:
                 pass
-            
+
             await provider.close()
             logger.info(f"Live transcription session ended for user {user['id']}")
-    
+
     except Exception as e:
         logger.error(f"Error setting up live transcription: {e}")
         error_msg = str(e)
         # Never expose API keys in error messages
         if settings.deepgram_api_key and settings.deepgram_api_key in error_msg:
             error_msg = "Transcription service configuration error"
-        
-        await websocket.send_json({
-            "type": "error",
-            "message": f"Failed to start transcription: {error_msg}"
-        })
+
+        await websocket.send_json(
+            {"type": "error", "message": f"Failed to start transcription: {error_msg}"}
+        )
         await websocket.close(code=1011, reason="Internal server error")
 
 
@@ -1226,23 +1585,41 @@ async def websocket_listen(
 # LLM Refinement Endpoints
 # ============================================
 
+
 @app.post("/refine", response_model=RefineResponse)
 async def refine_draft(
     request: RefineRequest,
-    user: dict = Depends(get_active_user)  # Disabled users blocked
+    user: dict = Depends(get_active_user),  # Disabled users blocked
 ):
     """
     Refine a raw transcript into a polished response.
-    
+
     This endpoint uses OpenAI to refine verbatim speech while preserving
     the user's authentic voice and meaning. Uses context-aware prompts
     based on session type and voice profile.
-    
+
     Disabled users receive 403.
     """
     # Rate limit by user ID
     rate_limit_middleware(f"refine:{user['id']}")
-    
+
+    # SSRF guard on any client-supplied reference URL.
+    _validate_reference_file_url(request.reference_file_url)
+
+    # /refine triggers paid LLM (and possibly Voira) calls, so it must consume a
+    # credit like /analyze. Reserve atomically up front; refund on failure.
+    is_admin = await check_is_admin(user)
+    if not is_admin:
+        try:
+            await decrement_credits(
+                user["id"], amount=1, reason="refine", is_admin=False
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits for refinement. Please upgrade or wait for monthly reset.",
+            )
+
     try:
         refined_text = await refine_transcript(
             raw_transcript=request.raw_transcript,
@@ -1254,50 +1631,55 @@ async def refine_draft(
             reference_file_type=request.reference_file_type,
             question=request.question,
             goal=request.goal,
-            user_id=user['id'],
+            user_id=user["id"],
             company_name=request.company_name,
-            word_limit=request.word_limit  # Explicit word limit from UI
+            word_limit=request.word_limit,  # Explicit word limit from UI
         )
-        
+
         return RefineResponse(refined_text=refined_text)
-    
+
     except ValueError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="refine_failed")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="refine_failed")
         logger.error(f"Error refining transcript for user {user['id']}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to refine transcript: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail="Failed to refine transcript. Please try again."
+        )
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_transcript_endpoint(
-    request: AnalyzeRequest,
-    user: dict = Depends(get_active_user)
+    request: AnalyzeRequest, user: dict = Depends(get_active_user)
 ):
     """
     Analyze a raw transcript and generate a refined version.
-    
+
     This endpoint:
     1. Runs deterministic analytics (filler words, confidence, clarity)
     2. Uses OpenAI to refine the transcript with context-aware prompts
-    
+
     Uses voice profile data and session type to generate personalized,
     context-aware refinements. Returns both analytics and refined text.
-    
+
     **Credit Consumption:**
     - Costs 1 credit per request (includes LLM refinement)
     - Admins bypass credit consumption
     - Credit is deducted AFTER successful analysis
-    
+
     **Tradeoffs (GAP-001 Resolution):**
     - Why credits: /analyze triggers expensive LLM calls for refinement
     - Why flat cost (1 credit): Simplifies billing; tiered pricing deferred
     - Future: May revisit for free preview mode or tiered analysis depth
-    
+
     **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     """
     # Rate limit by user ID
     rate_limit_middleware(f"analyze:{user['id']}")
-    
+
     # Check if user is admin (admins bypass credit checks)
     # ADMIN BYPASS SCOPE:
     # - Admin is determined ONLY by user_profiles.role = 'admin' (auth.py:check_is_admin)
@@ -1306,17 +1688,27 @@ async def analyze_transcript_endpoint(
     # - The DB-level enforcement is in deduct_credit() which also checks user_profiles.role
     # - Do NOT expand admin bypass to broader roles (e.g., "premium_user") without review
     is_admin = await check_is_admin(user)
-    
-    # Check credits BEFORE any LLM calls (unless admin)
-    # Credit is deducted AFTER successful analysis to avoid charging for failures
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        logger.info(f"[Analyze:CreditCheck] Insufficient credits for user {user['id']}")
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits for analysis. Please upgrade or wait for monthly reset."
-        )
-    
+
+    # SSRF guard on any client-supplied reference URL.
+    _validate_reference_file_url(request.reference_file_url)
+
+    # Reserve the credit ATOMICALLY before any LLM calls (prevents the
+    # check-then-act race). Refunded below if analysis fails, so users still
+    # aren't charged for failures.
+    if not is_admin:
+        try:
+            await decrement_credits(
+                user["id"], amount=1, reason="analysis", is_admin=False
+            )
+        except ValueError:
+            logger.info(
+                f"[Analyze:CreditCheck] Insufficient credits for user {user['id']}"
+            )
+            raise HTTPException(
+                status_code=402,
+                detail="Insufficient credits for analysis. Please upgrade or wait for monthly reset.",
+            )
+
     try:
         result = await analyze_and_refine(
             raw_transcript=request.raw_transcript,
@@ -1328,11 +1720,11 @@ async def analyze_transcript_endpoint(
             reference_file_type=request.reference_file_type,
             question=request.question,
             goal=request.goal,
-            user_id=user['id'],
+            user_id=user["id"],
             company_name=request.company_name,
-            word_limit=request.word_limit  # Explicit word limit from UI
+            word_limit=request.word_limit,  # Explicit word limit from UI
         )
-        
+
         # Build full analytics response (v3 contract)
         response = AnalyzeResponse(
             refined_text=result["refined_text"],
@@ -1348,41 +1740,19 @@ async def analyze_transcript_endpoint(
             drift=result.get("drift"),
             metrics=result.get("metrics"),
         )
-    
+
     except ValueError as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="analysis_failed")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        if not is_admin:
+            await refund_credits(user["id"], amount=1, reason="analysis_failed")
         logger.error(f"Error analyzing transcript for user {user['id']}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to analyze transcript: {str(e)}")
-    
-    # Deduct credit ONLY after successful analysis (unless admin)
-    # This ensures users are not charged for failed requests
-    #
-    # CONCURRENCY: BUG-005 FIXED
-    # decrement_credits() now uses atomic_decrement_credits() Postgres function.
-    # Single UPDATE with WHERE clause prevents race conditions and negative balances.
-    #
-    # POST-SUCCESS DEDUCTION TRADEOFF:
-    # We deduct AFTER success to avoid charging users for failed requests.
-    # Exploit vector: User could intentionally trigger failures to get free retries.
-    # This is accepted because:
-    # - UX fairness: Users should not pay for our failures
-    # - Low abuse risk: Failures are logged and rate-limited
-    # - Revisit when: Abuse patterns detected (>10% failure rate per user)
-    if not is_admin:
-        try:
-            await decrement_credits(
-                user["id"],
-                amount=1,
-                reason="analysis",  # Distinct from "refine" for billing clarity
-                is_admin=False
-            )
-            logger.info(f"[Analyze:CreditDeducted] User {user['id']} charged 1 credit for analysis")
-        except Exception as e:
-            # Log but don't fail the request - analysis was successful
-            # User got value, we should not break their experience
-            logger.error(f"[Analyze:CreditError] Failed to deduct credit for user {user['id']}: {e}")
-    
+        raise HTTPException(
+            status_code=500, detail="Failed to analyze transcript. Please try again."
+        )
+
     return response
 
 
@@ -1390,33 +1760,33 @@ async def analyze_transcript_endpoint(
 # Interview Refinement Endpoint (GAP-011)
 # ============================================
 
+
 @app.post("/refine-interview", response_model=InterviewRefinementResponse)
 async def refine_interview_endpoint(
-    request: InterviewRefinementRequest,
-    user: dict = Depends(get_active_user)
+    request: InterviewRefinementRequest, user: dict = Depends(get_active_user)
 ):
     """
     Refine an interview response using the turn-based pipeline.
-    
+
     This is a single-turn refinement flow (one question → one refined response).
     NOT Practice Mode. NOT multi-turn. NOT real-time.
-    
+
     **Required Fields:**
     - interview_question: The interview question being answered
     - desired_style: Desired response style (e.g., "Confident but humble, story-driven")
-    
+
     **Optional Fields:**
     - company_name: Company name for alignment (LLM infers culture)
     - company_role_context: User-provided context (overrides company_name inference)
     - transcript: User's recorded answer (enables feedback generation)
-    
+
     **NOT Supported (v1):**
     - reference_text, reference_file_url: Reference upload is disabled
-    
+
     **Returns:**
     - refined_answer_text: Polished, submission-ready response (ALWAYS)
     - feedback: Targeted feedback on recorded response (ONLY if transcript provided)
-    
+
     **Note:** Disabled users are blocked from this endpoint (403 Forbidden).
     - alignment_signals_used: Company/role signals applied
     - improvements_applied: List of improvements made
@@ -1425,18 +1795,22 @@ async def refine_interview_endpoint(
     """
     # Rate limit by user ID
     rate_limit_middleware(f"refine_interview:{user['id']}")
-    
+
     # Check if user is admin
     is_admin = await check_is_admin(user)
-    
-    # Check credits (interview refinement costs 1 credit)
-    has_credits, profile = await check_credits_available(user["id"], required=1, is_admin=is_admin)
-    if not has_credits:
-        raise HTTPException(
-            status_code=402,
-            detail="Insufficient credits for interview refinement."
-        )
-    
+
+    # Reserve the credit ATOMICALLY before LLM calls (prevents check-then-act
+    # race). Refunded below if refinement fails.
+    if not is_admin:
+        try:
+            await decrement_credits(
+                user["id"], amount=1, reason="interview_refinement", is_admin=False
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=402, detail="Insufficient credits for interview refinement."
+            )
+
     try:
         # Call the refinement pipeline
         result = await refine_interview_response(
@@ -1445,22 +1819,9 @@ async def refine_interview_endpoint(
             company_name=request.company_name,
             company_role_context=request.company_role_context,
             transcript=request.transcript,
-            user_id=user['id']
+            user_id=user["id"],
         )
-        
-        # Deduct credit ONLY after successful refinement (unless admin)
-        if not is_admin:
-            try:
-                await decrement_credits(
-                    user["id"],
-                    amount=1,
-                    reason="interview_refinement",
-                    is_admin=False
-                )
-            except Exception as e:
-                # Log but don't fail the request - refinement was successful
-                logger.error(f"Failed to deduct credits for user {user['id']} after interview refinement: {e}")
-        
+
         # Log telemetry
         logger.info(
             f"[InterviewRefinement:Endpoint] Success for user {user['id']}: "
@@ -1468,7 +1829,7 @@ async def refine_interview_endpoint(
             f"has_transcript={request.transcript is not None}, "
             f"tokens={result.get('token_usage', {}).get('total_tokens', 0)}"
         )
-        
+
         # Build response with proper FeedbackItem models
         feedback_items = None
         if result.get("feedback"):
@@ -1477,12 +1838,12 @@ async def refine_interview_endpoint(
                     category=f.get("category", "content"),
                     observation=f.get("observation", ""),
                     suggestion=f.get("suggestion", ""),
-                    priority=f.get("priority", "medium")
+                    priority=f.get("priority", "medium"),
                 )
                 for f in result["feedback"]
                 if isinstance(f, dict)
             ]
-        
+
         return InterviewRefinementResponse(
             refined_answer_text=result["refined_answer_text"],
             alignment_signals_used=result.get("alignment_signals_used", []),
@@ -1491,14 +1852,25 @@ async def refine_interview_endpoint(
             feedback=feedback_items,
             assumptions_or_limits=result.get("assumptions_or_limits"),
             suggested_follow_up=result.get("suggested_follow_up"),
-            token_usage=result.get("token_usage")
+            token_usage=result.get("token_usage"),
         )
-    
+
     except ValueError as e:
+        if not is_admin:
+            await refund_credits(
+                user["id"], amount=1, reason="interview_refinement_failed"
+            )
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        if not is_admin:
+            await refund_credits(
+                user["id"], amount=1, reason="interview_refinement_failed"
+            )
         logger.error(f"Error in interview refinement for user {user['id']}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to refine interview response: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to refine interview response. Please try again.",
+        )
 
 
 # ============================================
@@ -1510,7 +1882,9 @@ ALLOWED_REFERENCE_TYPES = {
     # Documents
     "application/pdf": [".pdf"],
     "application/msword": [".doc"],
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
+        ".docx"
+    ],
     # Images
     "image/jpeg": [".jpg", ".jpeg"],
     "image/png": [".png"],
@@ -1529,24 +1903,26 @@ def validate_file_type(content_type: str, filename: str) -> bool:
         # Try to infer from filename
         ext = os.path.splitext(filename)[1].lower()
         return any(ext in exts for exts in ALLOWED_REFERENCE_TYPES.values())
-    
+
     return content_type in ALLOWED_REFERENCE_TYPES
 
 
 @app.post("/upload-audio", response_model=AudioUploadResponse)
 async def upload_audio_file(
     file: UploadFile = File(..., description="Audio file to upload"),
-    session_id: Optional[str] = Form(None, description="Optional session ID to associate with"),
-    user: dict = Depends(get_current_user)
+    session_id: Optional[str] = Form(
+        None, description="Optional session ID to associate with"
+    ),
+    user: dict = Depends(get_active_user),
 ):
     """
     Upload an audio recording to storage.
-    
+
     Accepts audio files (webm, mp3, wav, m4a, ogg, flac) up to 15MB.
     Returns the file URL for playback and storage path for reference.
     """
     rate_limit_middleware(f"upload_audio:{user['id']}")
-    
+
     # Read file content
     try:
         file_content = await file.read()
@@ -1554,37 +1930,39 @@ async def upload_audio_file(
     except Exception as e:
         logger.error(f"Error reading audio file: {e}")
         raise HTTPException(status_code=400, detail="Error reading audio file")
-    
+
     # Validate file
     is_valid, error_msg = StorageService.validate_audio_file(
-        file.content_type,
-        file.filename,
-        file_size
+        file.content_type, file.filename, file_size
     )
-    
+
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
-    
+
     try:
         # Upload to storage
         result = await storage_service.upload_audio(
-            user_id=user['id'],
+            user_id=user["id"],
             file_content=file_content,
             filename=file.filename or "recording.webm",
             content_type=file.content_type or "audio/webm",
-            session_id=session_id
+            session_id=session_id,
         )
-        
+
         logger.info(f"Audio uploaded by user {user['id']}: {result['storage_path']}")
-        
+
         return AudioUploadResponse(
             file_url=result["file_url"],
             file_type=file.content_type or "audio/webm",
             file_size=result["file_size"],
             storage_path=result["storage_path"],
-            session_id=session_id
+            session_id=session_id,
         )
-        
+
+    except ValueError as e:
+        # Invalid identifier (e.g. session_id path-traversal attempt)
+        logger.warning(f"Rejected audio upload for user {user['id']}: {e}")
+        raise HTTPException(status_code=400, detail="Invalid upload parameters")
     except Exception as e:
         logger.error(f"Error uploading audio: {e}")
         raise HTTPException(status_code=500, detail="Failed to upload audio file")
@@ -1592,49 +1970,51 @@ async def upload_audio_file(
 
 @app.post("/upload-reference", response_model=FileUploadResponse)
 async def upload_reference_file(
-    file: UploadFile = File(..., description="Reference file to upload (PDF, Word doc, or image)"),
-    user: dict = Depends(get_current_user)
+    file: UploadFile = File(
+        ..., description="Reference file to upload (PDF, Word doc, or image)"
+    ),
+    user: dict = Depends(get_active_user),
 ):
     """
     Upload a reference file (PDF, Word document, or image) for use in transcript refinement.
-    
+
     Validates file type and size, uploads to Supabase Storage, and optionally extracts text.
     Returns file URL and metadata.
     """
     rate_limit_middleware(f"upload_reference:{user['id']}")
-    
+
     # Validate file type
     if not validate_file_type(file.content_type, file.filename):
         raise HTTPException(
             status_code=400,
-            detail=f"File type not allowed. Supported types: PDF, Word documents (.doc, .docx), and images (JPEG, PNG, GIF, WebP, BMP, TIFF)"
+            detail=f"File type not allowed. Supported types: PDF, Word documents (.doc, .docx), and images (JPEG, PNG, GIF, WebP, BMP, TIFF)",
         )
-    
+
     # Read file content
     try:
         file_content = await file.read()
         file_size = len(file_content)
-        
+
         # Validate file size
         if file_size > MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400,
-                detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024 * 1024):.0f}MB"
+                detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024 * 1024):.0f}MB",
             )
-        
+
         if file_size == 0:
             raise HTTPException(status_code=400, detail="File is empty")
-        
+
     except Exception as e:
         logger.error(f"Error reading file: {e}")
         raise HTTPException(status_code=400, detail="Error reading file")
-    
+
     try:
         # Generate unique filename
         file_ext = os.path.splitext(file.filename)[1]
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         storage_path = f"reference-files/{user['id']}/{unique_filename}"
-        
+
         # Upload to Supabase Storage
         # Using the 'reference-files' bucket (create it in Supabase if it doesn't exist)
         storage_response = supabase.storage.from_("reference-files").upload(
@@ -1642,45 +2022,55 @@ async def upload_reference_file(
             file_content,
             file_options={
                 "content-type": file.content_type or "application/octet-stream",
-                "upsert": False  # Don't overwrite existing files
-            }
+                "upsert": False,  # Don't overwrite existing files
+            },
         )
-        
+
         if not storage_response or "error" in str(storage_response):
             logger.error(f"Supabase storage upload failed: {storage_response}")
-            raise HTTPException(status_code=500, detail="Failed to upload file to storage")
-        
+            raise HTTPException(
+                status_code=500, detail="Failed to upload file to storage"
+            )
+
         # Get public URL
-        public_url_response = supabase.storage.from_("reference-files").get_public_url(storage_path)
-        file_url = public_url_response if isinstance(public_url_response, str) else public_url_response.get("publicUrl", "")
-        
+        public_url_response = supabase.storage.from_("reference-files").get_public_url(
+            storage_path
+        )
+        file_url = (
+            public_url_response
+            if isinstance(public_url_response, str)
+            else public_url_response.get("publicUrl", "")
+        )
+
         if not file_url:
             # Fallback: construct URL manually
-            supabase_url = settings.supabase_url.rstrip('/')
+            supabase_url = settings.supabase_url.rstrip("/")
             file_url = f"{supabase_url}/storage/v1/object/public/reference-files/{storage_path}"
-        
+
         # Extract text for non-image files (optional, can be done async)
         extracted_text = None
-        if file.content_type and not file.content_type.startswith('image/'):
+        if file.content_type and not file.content_type.startswith("image/"):
             # For PDF/Word docs, we could extract text here
             # For now, we'll return None and let the frontend handle extraction if needed
             # Or we could use a library like PyPDF2, python-docx, etc.
             pass
-        
+
         logger.info(f"File uploaded successfully: {storage_path} by user {user['id']}")
-        
+
         return FileUploadResponse(
             file_url=file_url,
             file_type=file.content_type or "application/octet-stream",
             file_size=file_size,
-            extracted_text=extracted_text
+            extracted_text=extracted_text,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error during file upload")
+        raise HTTPException(
+            status_code=500, detail="Internal server error during file upload"
+        )
 
 
 # =============================================================================
@@ -1689,38 +2079,46 @@ async def upload_reference_file(
 
 from models import UserSettings, UserSettingsUpdate
 
+
 async def get_user_settings(user_id: str) -> dict:
     """
     Get or create user settings from database.
-    
+
     Phase 1: Only filler_word_detection is persisted.
     Returns defaults if database operations fail.
     """
     try:
         # Try to get existing settings
-        response = supabase.table("user_settings").select("*").eq("user_id", user_id).single().execute()
+        response = (
+            supabase.table("user_settings")
+            .select("*")
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
         if response.data:
             return response.data
     except Exception as e:
         logger.debug(f"Settings not found for user {user_id}, will create: {e}")
-    
+
     # Create default settings if not found
     try:
-        response = supabase.table("user_settings").insert({
-            "user_id": user_id,
-            "filler_word_detection": False
-        }).execute()
+        response = (
+            supabase.table("user_settings")
+            .insert({"user_id": user_id, "filler_word_detection": False})
+            .execute()
+        )
         if response.data and len(response.data) > 0:
             return response.data[0]
     except Exception as e:
         logger.error(f"Error creating user settings: {e}")
-    
+
     # Return defaults if database operations fail (graceful degradation)
     return {
         "user_id": user_id,
         "filler_word_detection": False,
         "created_at": None,
-        "updated_at": None
+        "updated_at": None,
     }
 
 
@@ -1728,7 +2126,7 @@ async def get_user_settings(user_id: str) -> dict:
 async def get_settings(user: dict = Depends(get_current_user)):
     """
     Get current user's settings (Phase 1).
-    
+
     Returns filler_word_detection setting.
     Auto-creates settings row if user doesn't have one.
     """
@@ -1738,30 +2136,36 @@ async def get_settings(user: dict = Depends(get_current_user)):
 
 @app.put("/user/settings", response_model=UserSettings)
 async def update_settings(
-    settings_update: UserSettingsUpdate,
-    user: dict = Depends(get_current_user)
+    settings_update: UserSettingsUpdate, user: dict = Depends(get_current_user)
 ):
     """
     Update current user's settings (Phase 1).
-    
+
     Only filler_word_detection can be updated in Phase 1.
     """
     # Get current settings first (ensures row exists)
     current_settings = await get_user_settings(user["id"])
-    
+
     # Build update dict with only provided fields (Phase 1: only filler_word_detection)
     update_data = {}
     if settings_update.filler_word_detection is not None:
         update_data["filler_word_detection"] = settings_update.filler_word_detection
-    
+
     if not update_data:
         # No updates provided
         return UserSettings(**current_settings)
-    
+
     try:
-        response = supabase.table("user_settings").update(update_data).eq("user_id", user["id"]).execute()
+        response = (
+            supabase.table("user_settings")
+            .update(update_data)
+            .eq("user_id", user["id"])
+            .execute()
+        )
         if response.data and len(response.data) > 0:
-            logger.info(f"Settings updated for user {user['id']}: filler_word_detection={update_data.get('filler_word_detection')}")
+            logger.info(
+                f"Settings updated for user {user['id']}: filler_word_detection={update_data.get('filler_word_detection')}"
+            )
             return UserSettings(**response.data[0])
         else:
             # Fallback to current with updates applied
@@ -1778,11 +2182,12 @@ async def update_settings(
 
 from feature_flags import get_all_flags, get_user_flags, is_enabled
 
+
 @app.get("/feature-flags")
 async def get_feature_flags(user: dict = Depends(get_current_user)):
     """
     Get feature flags for the current user.
-    
+
     Returns which features are enabled for this user.
     """
     return {
@@ -1794,17 +2199,17 @@ async def get_feature_flags(user: dict = Depends(get_current_user)):
 @app.get("/admin/feature-flags")
 async def get_all_feature_flags(
     user: dict = Depends(get_current_user),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """
     Get all feature flags (admin only).
-    
+
     Returns complete flag configuration.
     """
     is_admin = await check_is_admin(user)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
-    
+
     return {
         "flags": get_all_flags(),
         "environment": settings.env,
@@ -1817,15 +2222,16 @@ async def get_all_feature_flags(
 
 from backup import UserDataExport, SessionExport, ExportFormat
 
+
 @app.get("/user/export")
 async def export_my_data(user: dict = Depends(get_current_user)):
     """
     Export all data for the current user (GDPR compliance).
-    
+
     Returns all user data including profile, sessions, and voice profiles.
     """
     rate_limit_middleware(f"export_data:{user['id']}")
-    
+
     try:
         data = await UserDataExport.export_user_data(user["id"])
         return data
@@ -1838,33 +2244,101 @@ async def export_my_data(user: dict = Depends(get_current_user)):
 async def export_session(
     session_id: str,
     format: str = Query("json", description="Export format: json or txt"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
 ):
     """
     Export a session in the specified format.
-    
+
     Returns the session data as a downloadable file.
     """
     from fastapi.responses import Response
-    
+
     if format not in [ExportFormat.JSON, ExportFormat.TXT]:
-        raise HTTPException(status_code=400, detail="Invalid format. Use 'json' or 'txt'")
-    
+        raise HTTPException(
+            status_code=400, detail="Invalid format. Use 'json' or 'txt'"
+        )
+
     try:
         data = await SessionExport.export_session(session_id, user["id"], format)
-        
+
         content_type = "application/json" if format == "json" else "text/plain"
         filename = f"voira_session_{session_id}.{format}"
-        
+
         return Response(
             content=data,
             media_type=content_type,
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}"
-            }
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to export session: {e}")
         raise HTTPException(status_code=500, detail="Failed to export session")
+
+
+# Analytics endpoints
+
+
+@app.post("/analytics/batch")
+async def batch_track_events(
+    batch: Dict[str, Any], user: Optional[dict] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Track multiple analytics events in a single batch request.
+
+    This endpoint reduces API calls by accepting batches of events.
+    Typical use: Queue 10 events or flush after 30 seconds.
+
+    Args:
+        batch: Dict with "events" list containing event dicts
+        user: Current user (optional - for user_id context)
+
+    Returns:
+        Confirmation with event count processed
+    """
+    MAX_BATCH_EVENTS = 100
+    try:
+        events = batch.get("events", [])
+        if not isinstance(events, list):
+            raise HTTPException(status_code=400, detail="`events` must be a list")
+        if not events:
+            return {"status": "ok", "count": 0}
+        # Cap batch size to prevent abuse / unbounded work.
+        if len(events) > MAX_BATCH_EVENTS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Too many events in batch (max {MAX_BATCH_EVENTS})",
+            )
+
+        # Track each event
+        user_id = user.get("id") if user else None
+        processed_count = 0
+
+        for event in events:
+            try:
+                # Track via AnalyticsService
+                success = await AnalyticsService.track(
+                    event_type=event.get("event", "unknown"),
+                    user_id=user_id or event.get("user_id"),
+                    properties=event.get("data", {}),
+                    session_id=event.get("session_id"),
+                )
+                if success:
+                    processed_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to track event: {e}")
+                continue
+
+        logger.info(
+            f"Batch analytics: {processed_count}/{len(events)} events processed"
+        )
+
+        return {
+            "status": "ok",
+            "count": processed_count,
+            "total": len(events),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to process analytics batch: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process analytics batch")

@@ -105,6 +105,13 @@ export const useSessionStore = create((set, get) => ({
     }
     return set(prev => ({ ...prev, sessions: (prev.sessions || []).filter(s => s.id !== id) }));
   },
+  updateSession: (id, patch) => {
+    if (!id || !patch) return;
+    return set(prev => ({
+      ...prev,
+      sessions: (prev.sessions || []).map(s => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+  },
   getSessions: () => get().sessions,
   getStatsSummary: () => computeStats(get().sessions || []),
   // derived helpers

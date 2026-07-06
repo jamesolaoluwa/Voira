@@ -43,9 +43,10 @@ const features = [
 
 export default function Home() {
   const navigate = useNavigate();
-  const { user: authUser, session, isLoading: authLoading } = useAuth();
+  const { user: authUser, session, isLoading: authLoading, refreshUser } = useAuth();
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [lastProfileRefresh, setLastProfileRefresh] = useState(0);
   const sessions = useSessionStore(state => state.sessions || []);
   // Filter out seed/demo data for stats
   const realSessions = React.useMemo(() => {
@@ -89,6 +90,23 @@ export default function Home() {
 
     return () => { mounted = false; };
   }, [authLoading, authUser]);
+
+  // Refresh user profile if > 5 minutes old (Claude.md - Item #4)
+  useEffect(() => {
+    if (!authUser || !refreshUser) return;
+
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastProfileRefresh;
+    const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+    if (lastProfileRefresh === 0 || timeSinceLastRefresh > REFRESH_INTERVAL) {
+      refreshUser().then(() => {
+        setLastProfileRefresh(now);
+      }).catch(err => {
+        console.warn('Failed to refresh profile:', err);
+      });
+    }
+  }, [authUser, refreshUser, lastProfileRefresh]);
 
   if (isLoading) {
     return (

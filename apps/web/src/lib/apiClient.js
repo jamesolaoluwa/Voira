@@ -1,9 +1,10 @@
 /**
  * API Client for backend communication
- * Handles authentication headers and error handling
+ * Handles authentication headers, timeouts, and error handling
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const DEFAULT_TIMEOUT_MS = 30000;
 
 /**
  * Get auth token from Supabase session
@@ -19,12 +20,12 @@ async function getAuthToken() {
  * @param {string} endpoint - API endpoint
  * @param {Object} options - Fetch options
  * @param {boolean} options.requireAuth - If true, throws if no auth token available (default: false)
+ * @param {number} options.timeoutMs - Request timeout in milliseconds (default: 30000)
  */
 async function apiRequest(endpoint, options = {}) {
-  const { requireAuth = false, ...fetchOptions } = options;
+  const { requireAuth = false, timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
   const token = await getAuthToken();
   
-  // Guard: If endpoint requires auth but no token, fail fast without making request
   if (requireAuth && !token) {
     const error = new Error('Authentication required but no session available');
     error.status = 401;
@@ -32,8 +33,6 @@ async function apiRequest(endpoint, options = {}) {
     throw error;
   }
   
-  // For FormData, let browser set Content-Type with boundary
-  // For JSON, set Content-Type explicitly
   const isFormData = fetchOptions.body instanceof FormData;
   const headers = {};
   
@@ -41,7 +40,6 @@ async function apiRequest(endpoint, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
   
-  // Merge any provided headers (FormData uploads can override)
   Object.assign(headers, fetchOptions.headers);
   
   if (token) {
@@ -52,12 +50,13 @@ async function apiRequest(endpoint, options = {}) {
   const response = await fetch(url, {
     ...fetchOptions,
     headers,
+    signal: AbortSignal.timeout(timeoutMs),
   });
   
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ detail: response.statusText }));
     const error = new Error(errorData.detail || `API error: ${response.status}`);
-    error.status = response.status; // Attach status code for error handling
+    error.status = response.status;
     throw error;
   }
   
@@ -67,7 +66,6 @@ async function apiRequest(endpoint, options = {}) {
 export const apiClient = {
   get: (endpoint, options = {}) => apiRequest(endpoint, { method: 'GET', ...options }),
   post: (endpoint, data, options = {}) => {
-    // Support both JSON and FormData
     if (data instanceof FormData) {
       return apiRequest(endpoint, {
         method: 'POST',
@@ -89,3 +87,13 @@ export const apiClient = {
   delete: (endpoint, options = {}) => apiRequest(endpoint, { method: 'DELETE', ...options }),
 };
 
+/**
+ * Fetch a short-lived WebSocket ticket (avoids putting JWTs in query strings).
+ */
+export async function fetchWebSocketTicket() {
+  const result = await apiClient.post('/ws/ticket', {}, { requireAuth: true, timeoutMs: 10000 });
+  if (!result?.ticket) {
+    throw new Error('Failed to obtain WebSocket ticket');
+  }
+  return result.ticket;
+}

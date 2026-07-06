@@ -110,16 +110,19 @@ function UserDetailModal({ userId, onClose }) {
   const [actionReason, setActionReason] = useState('');
   const [activeAction, setActiveAction] = useState(null); // 'credits' | 'disable' | null
 
-  const handleAdjustCredits = async (amount) => {
+  const handleAdjustCredits = async (delta) => {
     if (!actionReason || actionReason.length < 10) {
       alert('Please provide a reason (at least 10 characters)');
       return;
     }
     
+    const current = user?.credits_remaining ?? 0;
+    const newCredits = Math.max(0, current + delta);
+
     try {
       await adjustCredits.mutateAsync({
         userId,
-        amount,
+        amount: newCredits,
         reason: actionReason,
       });
       setActionReason('');
