@@ -243,6 +243,10 @@ export default function Draft() {
   const [draft, setDraft] = useState(null);
   
   const [isRegenerating, setIsRegenerating] = useState(false);
+  // Which button triggered the current regeneration, so we only show
+  // the spinner on that button (e.g. "Generate Refined Draft" vs the
+  // "Regenerate" button in the Rewrite Tone panel).
+  const [regenerateSource, setRegenerateSource] = useState(null); // 'initial' | 'tone' | null
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [currentRecording, setCurrentRecording] = useState(null);
@@ -421,6 +425,32 @@ export default function Draft() {
           return;
         }
       }
+
+      // PRIORITY 3b (belt-and-suspenders): navigation state loaded a session
+      // that has a transcript but is missing the refined essay. This happens
+      // if an older normalization path ever drops refined_draft. Hydrate from
+      // the backend so reopening a session never shows a blank essay.
+      if (recordingId && !draftId && transcript && !refinedText) {
+        try {
+          console.log('[Draft] Session missing refined_draft in nav state, hydrating from API');
+          const hydrated = await sessions.getSessionById(recordingId);
+          if (hydrated) {
+            const hydratedRefined = hydrated.refined_draft || '';
+            if (hydratedRefined) {
+              refinedText = hydratedRefined;
+              // Keep other hydrated scalars fresh too (they're cheap to copy)
+              referenceText = referenceText || hydrated.reference_text || '';
+              if (!question) question = hydrated.question || '';
+              if (!recording) {
+                recording = hydrated;
+                setCurrentRecording(hydrated);
+              }
+            }
+          }
+        } catch (hydrateError) {
+          console.warn('[Draft] Refined-draft hydration failed (non-fatal):', hydrateError);
+        }
+      }
       
       // No data source available - show error state
       if (!transcript && !refinedText) {
@@ -583,13 +613,18 @@ export default function Draft() {
     navigate(createPageUrl('Library'));
   };
   
-  const handleRegenerate = async () => {
+  const handleRegenerate = async (source = 'tone') => {
+    // Guard against React passing a SyntheticEvent when used as an onClick
+    // handler without an explicit arrow wrapper.
+    if (source && typeof source === 'object') source = 'tone';
+
     // Validate we have original text to regenerate
     if (!draft?.original || draft.original.trim().length < 3) {
       console.warn('[Draft] Cannot regenerate - no original transcript');
       return;
     }
-    
+
+    setRegenerateSource(source);
     setIsRegenerating(true);
     try {
       // Use backend /refine endpoint for consistent, production-quality refinement
@@ -637,6 +672,7 @@ export default function Draft() {
       });
     } finally {
       setIsRegenerating(false);
+      setRegenerateSource(null);
     }
   };
   
@@ -1068,11 +1104,11 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                     <div className="text-center py-8">
                       <p className="text-zinc-500 dark:text-zinc-400 mb-4">No refined output yet.</p>
                       <Button
-                        onClick={handleRegenerate}
+                        onClick={() => handleRegenerate('initial')}
                         disabled={isRegenerating}
                         className="bg-violet-500 hover:bg-violet-600 text-white"
                       >
-                        {isRegenerating ? (
+                        {isRegenerating && regenerateSource === 'initial' ? (
                           <>
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                             Generating...
@@ -1245,11 +1281,11 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
               ))}
             </div>
             <Button 
-              onClick={handleRegenerate}
+              onClick={() => handleRegenerate('tone')}
               disabled={isRegenerating}
               className="w-full mt-4 bg-zinc-50 dark:bg-[#13131a] hover:bg-zinc-100 dark:hover:bg-[#1a1a24] text-zinc-700 dark:text-zinc-300 border border-zinc-300 dark:border-white/5 disabled:opacity-50"
               >
-              {isRegenerating ? (
+              {isRegenerating && regenerateSource === 'tone' ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Regenerating...

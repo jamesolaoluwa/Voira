@@ -12,6 +12,7 @@ The function uses a single UPDATE with WHERE clause:
 
 This guarantees that only one concurrent request can "win" the credit.
 """
+
 from db import supabase
 from typing import Optional
 import logging
@@ -26,37 +27,61 @@ async def check_and_reset_credits(user_id: str) -> dict:
     """
     # Call the database function to check and reset credits
     try:
-        result = supabase.rpc("check_and_reset_credits", {"p_user_id": user_id}).execute()
+        result = supabase.rpc(
+            "check_and_reset_credits", {"p_user_id": user_id}
+        ).execute()
         # Function doesn't return a value, so we fetch the profile
     except Exception:
         pass  # Function may not exist yet, continue
-    
+
     # Get or create user profile
-    profile_result = supabase.rpc("get_or_create_user_profile", {"p_user_id": user_id}).execute()
+    profile_result = supabase.rpc(
+        "get_or_create_user_profile", {"p_user_id": user_id}
+    ).execute()
     if profile_result.data:
         return profile_result.data[0]
-    
+
     # Fallback: direct query
-    response = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
+    response = (
+        supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
+    )
     if response.data:
         return response.data[0]
-    
-    # Create default profile for new users
-    # NOTE: Admin status is NOT inferred from user_metadata.
-    # Admins are designated ONLY by setting user_profiles.role = 'admin' directly.
-    # New users always start as 'free_user' with 10 credits.
-    # Premium users get higher credits via subscription (Stripe webhook updates).
-    insert_response = supabase.table("user_profiles").insert({
-        "user_id": user_id,
-        "role": "free_user",
-        "credits_remaining": 10,
-        "reference_uploads_remaining": 1,
-    }).execute()
-    
+
+    # Create default profile for new users (free tier: 10 credits/month).
+    # monthly_credit_allowance + credits_reset_at enable calendar-month resets
+    # via check_and_reset_credits even without the phase0 migration applied.
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        credits_reset_at = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        credits_reset_at = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+
+    insert_response = (
+        supabase.table("user_profiles")
+        .insert(
+            {
+                "user_id": user_id,
+                "role": "free_user",
+                "credits_remaining": 10,
+                "monthly_credit_allowance": 10,
+                "subscription_plan": "free",
+                "subscription_status": "inactive",
+                "credits_reset_at": credits_reset_at.isoformat(),
+                "reference_uploads_remaining": 1,
+            }
+        )
+        .execute()
+    )
+
     return insert_response.data[0] if insert_response.data else {}
 
 
-async def check_credits_available(user_id: str, required: int = 1, is_admin: bool = False) -> tuple[bool, dict]:
+async def check_credits_available(
+    user_id: str, required: int = 1, is_admin: bool = False
+) -> tuple[bool, dict]:
     """
     Check if user has enough credits.
     Returns (has_credits: bool, profile: dict).
@@ -64,57 +89,55 @@ async def check_credits_available(user_id: str, required: int = 1, is_admin: boo
     """
     if is_admin:
         return True, {}
-    
+
     profile = await check_and_reset_credits(user_id)
     credits_remaining = profile.get("credits_remaining", 0)
-    
+
     return credits_remaining >= required, profile
 
 
-async def decrement_credits(user_id: str, amount: int = 1, reason: str = "usage", is_admin: bool = False) -> dict:
+async def decrement_credits(
+    user_id: str, amount: int = 1, reason: str = "usage", is_admin: bool = False
+) -> dict:
     """
     Atomically decrement user credits using database-level locking.
-    
+
     BUG-005 FIX: Uses `atomic_decrement_credits` Postgres function which:
     - Performs check and decrement in a single atomic UPDATE
     - Prevents race conditions between concurrent requests
     - Prevents credits from going negative
     - Logs to credits_ledger within the same transaction
-    
+
     Args:
         user_id: User's UUID
         amount: Number of credits to deduct (default: 1)
         reason: Reason for deduction (for ledger logging)
         is_admin: If True, bypasses credit deduction
-    
+
     Returns:
         dict with deduction result:
         - On success: {"success": True, "credits_remaining": int, ...}
         - On failure: {"success": False, "error": str, ...}
-    
+
     Raises:
         ValueError: If atomic deduction fails (insufficient credits or user not found)
     """
     if is_admin:
         return {"success": True, "credits_remaining": None, "admin_bypass": True}
-    
+
     # First ensure profile exists and check for monthly reset
     await check_and_reset_credits(user_id)
-    
+
     # Use atomic database function for deduction
     try:
         result = supabase.rpc(
             "atomic_decrement_credits",
-            {
-                "p_user_id": user_id,
-                "p_amount": amount,
-                "p_reason": reason
-            }
+            {"p_user_id": user_id, "p_amount": amount, "p_reason": reason},
         ).execute()
-        
+
         if result.data:
             deduction_result = result.data
-            
+
             if deduction_result.get("success"):
                 logger.info(
                     f"[Credits:AtomicDeduct] Success: user={user_id}, "
@@ -135,49 +158,47 @@ async def decrement_credits(user_id: str, amount: int = 1, reason: str = "usage"
                 )
         else:
             raise ValueError("Atomic deduction returned no data")
-            
+
+    except ValueError:
+        # Insufficient credits / user not found - propagate to caller.
+        raise
     except Exception as e:
-        # If atomic function doesn't exist yet, fall back to legacy behavior
-        # This allows gradual migration - remove this fallback after migration is applied
-        if "function" in str(e).lower() and "does not exist" in str(e).lower():
-            logger.warning(
-                f"[Credits:Fallback] atomic_decrement_credits not available, "
-                f"using legacy deduction for user={user_id}"
-            )
-            return await _legacy_decrement_credits(user_id, amount, reason)
+        # The atomic RPC is required in all environments. Do NOT silently fall
+        # back to a non-atomic path (that reintroduces the BUG-005 race).
+        logger.error(f"[Credits:AtomicDeduct] RPC error for user {user_id}: {e}")
         raise
 
 
-async def _legacy_decrement_credits(user_id: str, amount: int, reason: str) -> dict:
+async def refund_credits(user_id: str, amount: int = 1, reason: str = "refund") -> None:
     """
-    Legacy (non-atomic) credit deduction.
-    
-    WARNING: This has a race condition (BUG-005).
-    Only used as fallback if atomic_decrement_credits DB function is not available.
-    Remove this function after migration is applied to all environments.
+    Best-effort refund of previously-reserved credits when the paid operation
+    fails after the credit was deducted.
+
+    Used by the reserve-then-work pattern: we deduct atomically up front (which
+    is race-safe) and refund here if the downstream work raises. This keeps the
+    "users don't pay for failures" guarantee while preventing double-spend.
+
+    Uses the atomic `atomic_refund_credits` RPC (single UPDATE) to avoid the
+    lost-update race of a read-modify-write under concurrency. The RPC caps the
+    balance at the monthly allowance and writes the ledger entry in one step.
     """
-    profile = await check_and_reset_credits(user_id)
-    current_credits = profile.get("credits_remaining", 0)
-    new_credits = max(0, current_credits - amount)
-    
-    # Update profile (NOT ATOMIC - race condition possible)
-    update_response = supabase.table("user_profiles").update({
-        "credits_remaining": new_credits,
-    }).eq("user_id", user_id).execute()
-    
-    # Log to ledger
+    if amount <= 0:
+        return
     try:
-        supabase.table("credits_ledger").insert({
-            "user_id": user_id,
-            "amount": -amount,
-            "reason": reason,
-            "balance_after": new_credits,
-        }).execute()
-    except Exception:
-        pass  # Logging failure shouldn't break the flow
-    
-    return {
-        "success": True,
-        "credits_remaining": new_credits,
-        "legacy_fallback": True
-    }
+        result = supabase.rpc(
+            "atomic_refund_credits",
+            {"p_user_id": user_id, "p_amount": amount, "p_reason": reason},
+        ).execute()
+        if result.data and result.data.get("success"):
+            logger.info(
+                f"[Credits:Refund] Refunded {amount} credit(s) to user {user_id} "
+                f"(balance={result.data.get('credits_remaining')})"
+            )
+        else:
+            logger.warning(
+                f"[Credits:Refund] Refund RPC returned no success for user {user_id}: {result.data}"
+            )
+    except Exception as e:
+        logger.error(
+            f"[Credits:Refund] Failed to refund credits for user {user_id}: {e}"
+        )

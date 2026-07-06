@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Shield, User, CreditCard, Loader2 } from 'lucide-react';
-import { auth, billing, credits } from '@/components/services/api';
+import { auth, billing } from '@/components/services/api';
+import { adminUsers } from '@/lib/adminApi';
 import CreditsDisplay from '@/components/ui/CreditsDisplay';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -42,7 +43,7 @@ export default function Admin() {
     setIsUpdating(true);
     setMessage('');
     try {
-      await credits.resetCredits(parseInt(creditAmount));
+      await adminUsers.adjustCredits(user.id, parseInt(creditAmount, 10), 'admin_panel_adjustment');
       setMessage('Credits updated successfully!');
       setTimeout(() => setMessage(''), 3000);
   // AuthContext will update user/profile via existing auth flows

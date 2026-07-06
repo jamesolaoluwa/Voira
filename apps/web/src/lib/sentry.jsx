@@ -60,7 +60,7 @@ export function initSentry() {
         // Performance monitoring
         tracesSampleRate: config.traces,
         replaysSessionSampleRate: config.replays,
-        replaysOnErrorSampleRate: 1.0,  // Always capture replays for errors
+        replaysOnErrorSampleRate: import.meta.env.PROD ? 1.0 : 0,
         
         // Only send errors in production
         enabled: import.meta.env.PROD || import.meta.env.VITE_SENTRY_DEBUG === 'true',
@@ -120,9 +120,6 @@ export function initSentry() {
           }),
         ],
         
-        // Session replay (only in production, low sample rate)
-        replaysSessionSampleRate: import.meta.env.PROD ? 0.01 : 0,
-        replaysOnErrorSampleRate: import.meta.env.PROD ? 0.1 : 0,
       });
       
       sentryInitialized = true;

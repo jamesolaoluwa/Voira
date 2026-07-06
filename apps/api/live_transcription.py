@@ -28,28 +28,28 @@ logger = logging.getLogger(__name__)
 class LiveTranscriptionProvider(ABC):
     """
     Abstract base class for live transcription providers.
-    
+
     This abstraction allows swapping providers (Deepgram, AssemblyAI, Google STT)
     without changing the WebSocket endpoint implementation.
     """
-    
+
     @abstractmethod
     async def start_stream(
         self,
         language: str = "en",
         sample_rate: int = 16000,
         channels: int = 1,
-        encoding: str = "linear16"
+        encoding: str = "linear16",
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Start a live transcription stream.
-        
+
         Args:
             language: Language code (e.g., "en", "es")
             sample_rate: Audio sample rate in Hz
             channels: Number of audio channels
             encoding: Audio encoding format
-        
+
         Yields:
             Dictionary with transcription events:
             - type: str - Event type ("partial", "final", "error")
@@ -59,22 +59,22 @@ class LiveTranscriptionProvider(ABC):
             - end_time: Optional[float] - End timestamp in seconds
         """
         pass
-    
+
     @abstractmethod
     async def send_audio_chunk(self, audio_data: bytes) -> None:
         """
         Send an audio chunk to the transcription stream.
-        
+
         Args:
             audio_data: Raw audio bytes
         """
         pass
-    
+
     @abstractmethod
     async def close(self) -> None:
         """Close the transcription stream and cleanup resources."""
         pass
-    
+
     @abstractmethod
     def is_connected(self) -> bool:
         """Check if the stream is currently connected."""

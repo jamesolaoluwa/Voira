@@ -39,6 +39,7 @@ QUERY LOGGING:
 - Use log_slow_query() helper for manual instrumentation
 - Helps identify optimization opportunities
 """
+
 import logging
 from supabase import create_client, Client
 from config import settings
@@ -52,18 +53,19 @@ SLOW_QUERY_THRESHOLD_MS = 500
 # Create Supabase client with service_role key (backend only)
 # NEVER expose this to the frontend
 supabase: Client = create_client(
-    settings.supabase_url,
-    settings.supabase_service_role_key
+    settings.supabase_url, settings.supabase_service_role_key
 )
 
 logger.info("Supabase database client initialized")
 
 
-def log_slow_query(table: str, operation: str, duration_ms: float, query_summary: str = ""):
+def log_slow_query(
+    table: str, operation: str, duration_ms: float, query_summary: str = ""
+):
     """Log slow database queries to Sentry for monitoring.
-    
+
     Call this after database operations to track slow queries.
-    
+
     Args:
         table: Table name affected
         operation: Type of operation (SELECT, INSERT, UPDATE, DELETE)
@@ -83,9 +85,9 @@ def log_slow_query(table: str, operation: str, duration_ms: float, query_summary
                 "query_summary": query_summary,
             },
         )
+
+
 logger.info(
     "Connection pooling is handled by Supabase. "
     "See module docstring for pool size configuration."
 )
-
-

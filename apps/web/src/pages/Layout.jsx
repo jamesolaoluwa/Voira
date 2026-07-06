@@ -3,7 +3,6 @@ import React from 'react';
 import { Outlet } from 'react-router-dom';
 import TopNav from '@/components/navigation/TopNav';
 import { useAuth } from '@/contexts/AuthContext';
-import AuthDebug from '@/components/AuthDebug';
 
 export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
@@ -114,14 +113,14 @@ export default function Layout({ children, currentPageName }) {
       {isLandingPage || isAuthPage ? (
         <main className="min-h-screen">
           {children || <Outlet />}
-          {!import.meta.env.PROD && <AuthDebug />}
+          {/* {!import.meta.env.PROD && <AuthDebug />} */}
         </main>
       ) : (
         <>
           <TopNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} isAdmin={isAdmin} />
           <main className="min-h-screen">
             {children || <Outlet />}
-            {!import.meta.env.PROD && <AuthDebug />}
+            {/* {!import.meta.env.PROD && <AuthDebug />} */}
           </main>
         </>
       )}

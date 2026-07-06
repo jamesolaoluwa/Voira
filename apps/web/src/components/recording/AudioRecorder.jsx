@@ -7,8 +7,11 @@ import {
   RECORDING_TIMESLICE_MS,
   WEBSOCKET_CONNECTION_TIMEOUT_MS,
   WEBSOCKET_READY_CHECK_INTERVAL_MS,
-  MIN_JWT_TOKEN_LENGTH
 } from '@/config/constants';
+import { fetchWebSocketTicket } from '@/lib/apiClient';
+
+const isDev = import.meta.env.DEV;
+const devLog = (...args) => { if (isDev) console.log(...args); };
 
 // WebSocket URL for live transcription - derived from centralized config
 // This function adds validation to prevent accidental frontend connections
@@ -73,39 +76,18 @@ export default function useAudioRecorder(options = {}) {
   const accumulatedTranscriptRef = useRef(''); // Track accumulated final transcripts
   const pendingChunksRef = useRef([]); // Queue chunks that arrive before WebSocket is ready
   
-  // Helper to get JWT token for WebSocket auth from Supabase session
-  const getAuthToken = async () => {
+  // Helper to obtain a short-lived WS ticket (no JWT in query strings)
+  const getWsTicket = async () => {
     try {
-      const { supabase } = await import('@/components/lib/supabase');
-      // Await session to ensure it's loaded before constructing WebSocket URL
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[TranscriptionWS] Error getting Supabase session:', error);
+      const ticket = await fetchWebSocketTicket();
+      if (!ticket || typeof ticket !== 'string' || ticket.length < 20) {
+        console.error('[TranscriptionWS] Invalid WebSocket ticket received');
         return null;
       }
-      
-      if (!session) {
-        console.warn('[TranscriptionWS] No Supabase session found - user may not be authenticated');
-        return null;
-      }
-      
-      const token = session.access_token;
-      if (!token) {
-        console.warn('[TranscriptionWS] Session exists but access_token is missing');
-        return null;
-      }
-      
-      // Validate token is a proper JWT (should be at least MIN_JWT_TOKEN_LENGTH chars)
-      if (token.length < MIN_JWT_TOKEN_LENGTH) {
-        console.error(`[TranscriptionWS] Token too short (${token.length} chars) - likely invalid`);
-        return null;
-      }
-      
-      console.log(`[TranscriptionWS] Token retrieved from Supabase session (length: ${token.length})`);
-      return token;
+      devLog('[TranscriptionWS] WebSocket ticket obtained');
+      return ticket;
     } catch (err) {
-      console.error('[TranscriptionWS] Error getting auth token:', err);
+      console.error('[TranscriptionWS] Error obtaining WebSocket ticket:', err);
       return null;
     }
   };
@@ -143,61 +125,34 @@ export default function useAudioRecorder(options = {}) {
     // Now start fresh connection - refs are cleaned up above
     
     try {
-      // Get JWT token for authentication from Supabase session
-      // MUST await this before constructing WebSocket URL
-      const token = await getAuthToken();
+      const ticket = await getWsTicket();
       
-      // Hard validation: token must exist and be valid length (JWT tokens are typically 150+ chars)
-      if (!token || typeof token !== 'string') {
-        console.error('[TranscriptionWS] Token validation failed: token is null, undefined, or not a string');
+      if (!ticket) {
         setError('Authentication expired. Please refresh the page and try again.');
         wsStatusRef.current = 'error';
-        return false; // DO NOT open WebSocket
-      }
-      
-      if (token.trim().length === 0) {
-        console.error('[TranscriptionWS] Token validation failed: token is empty string');
-        setError('Authentication expired. Please refresh the page and try again.');
-        wsStatusRef.current = 'error';
-        return false; // DO NOT open WebSocket
-      }
-      
-      if (token.length < MIN_JWT_TOKEN_LENGTH) {
-        console.error(`[TranscriptionWS] Token validation failed: token too short (${token.length} chars, expected >= ${MIN_JWT_TOKEN_LENGTH})`);
-        setError('Authentication expired. Please refresh the page and try again.');
-        wsStatusRef.current = 'error';
-        return false; // DO NOT open WebSocket
+        return false;
       }
 
-      // Build WebSocket URL - ensure it points to backend, never frontend
       const baseWsUrl = getTranscriptionWebSocketUrl();
-      // Include detect_fillers parameter if enabled (for Practice mode or user setting)
-      const fillerParam = detectFillersRef.current ? '&detect_fillers=true' : '';
-      const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}${fillerParam}`;
+      const fillerParam = detectFillersRef.current ? '?detect_fillers=true' : '';
+      const wsUrl = `${baseWsUrl}${fillerParam}`;
       
       if (detectFillersRef.current) {
-        console.log('[TranscriptionWS] Filler word detection ENABLED');
+        devLog('[TranscriptionWS] Filler word detection ENABLED');
       }
       
-      // Final validation: ensure URL is not pointing to frontend
-      const url = new URL(wsUrl);
-      if (url.port === '5173' || (url.hostname === 'localhost' && !url.port && url.protocol === 'ws:')) {
-        console.error('[TranscriptionWS] WebSocket URL validation failed - points to frontend!', wsUrl);
-        console.error('[TranscriptionWS] API_BASE_URL:', API_BASE_URL);
-        console.error('[TranscriptionWS] VITE_TRANSCRIPTION_WS_URL:', import.meta.env.VITE_TRANSCRIPTION_WS_URL);
-        setError('WebSocket configuration error - cannot connect to frontend. Please check VITE_TRANSCRIPTION_WS_URL or VITE_API_BASE_URL.');
+      const url = new URL(wsUrl.replace(/^ws/, 'http').replace(/^wss/, 'https'));
+      if (url.port === '5173' || (url.hostname === 'localhost' && !url.port && url.protocol === 'http:')) {
+        console.error('[TranscriptionWS] WebSocket URL validation failed - points to frontend!');
+        setError('WebSocket configuration error. Please check VITE_API_BASE_URL.');
         wsStatusRef.current = 'error';
-        return false; // DO NOT open WebSocket
+        return false;
       }
       
-      // Log EXACT WebSocket URL with masked token (first 10 chars only)
-      const tokenPreview = token.substring(0, 10);
-      const maskedUrl = wsUrl.replace(/token=[^&]+/, `token=${tokenPreview}...`);
-      console.log(`[TranscriptionWS] Connecting to ${maskedUrl} (token length: ${token.length})`);
+      devLog('[TranscriptionWS] Connecting to live transcription WebSocket');
       
-      // Open WebSocket connection to backend
       wsStatusRef.current = 'connecting';
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl, ['voira', ticket]);
       wsRef.current = ws;
       
       // Return true to indicate connection was initiated successfully
@@ -296,7 +251,9 @@ export default function useAudioRecorder(options = {}) {
           });
           wsStatusRef.current = 'error';
           // Provide user-friendly error message
-          if (closeCode === 1008) {
+          if (closeCode === 4401) {
+            setError('You are out of credits. Free credits reset monthly.');
+          } else if (closeCode === 1008) {
             setError('Authentication failed. Please refresh the page and try again.');
           } else {
             setError(`Live transcription connection closed: ${closeReason || 'Connection lost'}`);

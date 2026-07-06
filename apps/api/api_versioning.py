@@ -46,19 +46,20 @@ SUPPORTED_VERSIONS = list(API_VERSIONS.keys())
 # Version Router Factory
 # =============================================================================
 
+
 def create_versioned_router(version: str = "v1") -> APIRouter:
     """
     Create a router with version prefix.
-    
+
     Args:
         version: API version (v1, v2, etc.)
-        
+
     Returns:
         APIRouter with version prefix
     """
     if version not in SUPPORTED_VERSIONS:
         raise ValueError(f"Unsupported API version: {version}")
-    
+
     return APIRouter(
         prefix=f"/api/{version}",
         tags=[f"API {version.upper()}"],
@@ -69,6 +70,7 @@ def create_versioned_router(version: str = "v1") -> APIRouter:
 # Version Detection Middleware
 # =============================================================================
 
+
 def get_api_version(
     request: Request,
     x_api_version: Optional[str] = Header(None, alias="X-API-Version"),
@@ -76,7 +78,7 @@ def get_api_version(
 ) -> str:
     """
     Determine API version from request.
-    
+
     Priority:
     1. URL path (/api/v1/...)
     2. X-API-Version header
@@ -88,28 +90,28 @@ def get_api_version(
     for version in SUPPORTED_VERSIONS:
         if f"/api/{version}/" in path or path.endswith(f"/api/{version}"):
             return version
-    
+
     # Check headers
     if x_api_version and x_api_version in SUPPORTED_VERSIONS:
         return x_api_version
-    
+
     if accept_version and accept_version in SUPPORTED_VERSIONS:
         return accept_version
-    
+
     return DEFAULT_VERSION
 
 
 def add_version_headers(response: JSONResponse, version: str) -> JSONResponse:
     """Add API version headers to response."""
     version_info = API_VERSIONS.get(version, {})
-    
+
     response.headers["X-API-Version"] = version
-    
+
     if version_info.get("deprecated"):
         response.headers["X-API-Deprecated"] = "true"
         if version_info.get("sunset_date"):
             response.headers["Sunset"] = version_info["sunset_date"]
-    
+
     return response
 
 
@@ -117,10 +119,11 @@ def add_version_headers(response: JSONResponse, version: str) -> JSONResponse:
 # Version Info Endpoint
 # =============================================================================
 
+
 def get_version_info() -> dict:
     """
     Get information about all API versions.
-    
+
     Returns:
         Dict with version information
     """
@@ -143,19 +146,18 @@ def get_version_info() -> dict:
 # Deprecation Warning Helper
 # =============================================================================
 
+
 def deprecation_warning(
-    endpoint: str,
-    replacement: Optional[str] = None,
-    sunset_date: Optional[str] = None
+    endpoint: str, replacement: Optional[str] = None, sunset_date: Optional[str] = None
 ) -> dict:
     """
     Generate deprecation warning message.
-    
+
     Args:
         endpoint: Deprecated endpoint path
         replacement: New endpoint to use instead
         sunset_date: Date when endpoint will be removed
-        
+
     Returns:
         Warning dict to include in response
     """
@@ -163,13 +165,13 @@ def deprecation_warning(
         "deprecated": True,
         "message": f"The endpoint '{endpoint}' is deprecated.",
     }
-    
+
     if replacement:
         warning["replacement"] = replacement
         warning["message"] += f" Please use '{replacement}' instead."
-    
+
     if sunset_date:
         warning["sunset_date"] = sunset_date
         warning["message"] += f" This endpoint will be removed on {sunset_date}."
-    
+
     return warning
