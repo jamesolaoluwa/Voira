@@ -46,9 +46,9 @@ export const adminUsers = {
   },
 
   /**
-   * Adjust a user's credit balance
+   * Set a user's credit balance to an absolute value.
    * @param {string} userId - User ID
-   * @param {number} amount - Credit adjustment (positive = add, negative = subtract)
+   * @param {number} newCredits - New credit balance (absolute, not a delta)
    * @param {string} reason - Reason for adjustment (required, min 10 chars)
    */
   async adjustCredits(userId, newCredits, reason) {
