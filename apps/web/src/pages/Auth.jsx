@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
+import Orb from '@/components/ui/Orb';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import { auth } from '@/components/services/api';
 import { Loader2 } from 'lucide-react';
@@ -15,8 +15,10 @@ import { safeParseEmail, safeParsePassword } from '@/lib/validation';
 import { normalizeEmail } from '@/lib/sanitize';
 import { useAuth } from '@/contexts/AuthContext';
 
-// Auth flow timeout - if session not established after this, show error
 const AUTH_TIMEOUT_MS = 8000;
+
+const inputClassName =
+  'bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-accent/50 text-zinc-900 dark:text-zinc-100';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -30,16 +32,13 @@ export default function Auth() {
   const [error, setError] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [signUpSuccess, setSignUpSuccess] = useState(false);
-  
-  // Ref to prevent double-submission (covers race window before isLoading is set)
+
   const authInFlightRef = useRef(false);
 
-  // forgot password flow
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
 
-  // Redirect when session is established (handles both email login and OAuth)
   useEffect(() => {
     console.log('[Auth] useEffect - authLoading:', authLoading, 'session:', !!session);
     if (!authLoading && session) {
@@ -50,20 +49,18 @@ export default function Auth() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Prevent double-submission (covers race window before isLoading state updates)
+
     if (authInFlightRef.current || isLoading) {
       console.debug('[Auth] Sign-in already in progress, ignoring duplicate submit');
       return;
     }
-    
+
     authInFlightRef.current = true;
     setError('');
     setIsLoading(true);
     setSignUpSuccess(false);
 
     try {
-      // Validate and normalize inputs before calling auth
       const emailResult = safeParseEmail(email);
       if (!emailResult.success) throw new Error('Please enter a valid email address');
       const normalizedEmail = normalizeEmail(emailResult.data);
@@ -73,35 +70,25 @@ export default function Auth() {
 
       if (isSignUp) {
         const result = await auth.signUp(normalizedEmail, password, name);
-        
-        // Check if email confirmation is required
-        // Supabase returns user but session is null when confirmation is required
+
         if (result?.user && !result?.session) {
           setSignUpSuccess(true);
           setIsLoading(false);
           authInFlightRef.current = false;
           return;
         }
-        // Immediate session (no confirmation): reset before redirect so returning to this page doesn't block future sign-in
         authInFlightRef.current = false;
         setIsLoading(false);
-        // Redirect will happen via useEffect when session is set
       } else {
         const result = await auth.signIn(normalizedEmail, password);
-        
-        // signIn should return a session. If it succeeded but no session,
-        // wait briefly for onAuthStateChange, then check explicitly
+
         if (result?.session) {
-          // Session returned directly, redirect should happen via useEffect
-          // Set a timeout fallback in case useEffect doesn't trigger
           setTimeout(async () => {
             if (authInFlightRef.current) {
-              // Still waiting - check session manually
               const { data: { session: currentSession } } = await supabase.auth.getSession();
               if (currentSession) {
                 console.log('[Auth] Timeout fallback: session found, navigating');
                 navigate('/home', { replace: true });
-                // Authentication succeeded; clear in-flight flag for consistency
                 authInFlightRef.current = false;
                 setIsLoading(false);
               } else {
@@ -113,17 +100,12 @@ export default function Auth() {
             }
           }, AUTH_TIMEOUT_MS);
         } else {
-          // Edge case: signIn returned without throwing but no session present.
-          // Reset loading state so the user isn't stuck indefinitely.
           console.warn('[Auth] signIn completed without session; resetting state');
           setError('Sign-in did not complete. Please try again.');
           setIsLoading(false);
           authInFlightRef.current = false;
         }
       }
-      // Don't navigate here - let useEffect handle it when session updates
-      // Don't setIsLoading(false) on success - page will redirect
-      
     } catch (err) {
       console.error('[Auth] Error:', err);
       setError(err.message || 'Authentication failed');
@@ -133,12 +115,11 @@ export default function Auth() {
   };
 
   const handleGoogleSignIn = async () => {
-    // Prevent spam-clicking Google button too
     if (authInFlightRef.current || isLoading) {
       console.debug('[Auth] Google sign-in already in progress');
       return;
     }
-    
+
     setError('');
     try {
       await auth.signInWithGoogle();
@@ -154,9 +135,8 @@ export default function Auth() {
     if (!forgotEmail) return setError('Please enter your email');
     setIsLoading(true);
     try {
-      // send password reset email; redirect back to our reset-password route
-      const { data, error: supError } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-        redirectTo: `${window.location.origin}/reset-password`
+      const { error: supError } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
       });
       if (supError) throw supError;
       setForgotSent(true);
@@ -169,46 +149,36 @@ export default function Auth() {
 
   return (
     <div className="min-h-screen flex">
-      {/* Left Side: Visual / Animation */}
-      <div className="hidden lg:flex lg:w-3/5 bg-zinc-100 dark:bg-[#0a0a0f] relative overflow-hidden">
-        {/* Ambient background effects */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-500/20 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-teal-500/20 rounded-full blur-3xl animate-pulse" 
-               style={{ animationDelay: '1s' }} />
+      {/* Left panel: WebGL Orb on a fixed dark canvas (theme-independent) */}
+      <div className="hidden lg:flex lg:w-3/5 bg-black relative overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <Orb
+            hoverIntensity={0.52}
+            rotateOnHover
+            hue={0}
+            forceHoverState={false}
+            backgroundColor="#000000"
+          />
         </div>
 
-        {/* Central animated element */}
-        <div className="relative z-10 flex flex-col items-center justify-center w-full p-12">
-          {/* Voice Visualizer */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 1, ease: 'easeOut' }}
-          >
-            <VoiceVisualizer size={320} isActive={true} amplitude={0.4} />
-          </motion.div>
-
-          {/* Brand Section */}
+        <div className="relative z-10 flex flex-col items-center justify-end w-full p-12 pb-16 pointer-events-none">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, delay: 0.5, ease: 'easeOut' }}
-            className="mt-16 flex flex-col items-center"
+            className="flex flex-col items-center text-center"
           >
-            <h2 className="text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-4">Voira</h2>
-            
-            {/* Animated Tagline with Letter Stagger */}
-            <div className="text-xl text-zinc-700 dark:text-zinc-400">
+            <h2 className="font-heading text-4xl font-bold text-white mb-4">Voira</h2>
+            <div className="text-xl text-white/65">
               {'Your voice, refined.'.split('').map((char, i) => (
                 <motion.span
                   key={i}
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ 
-                    duration: 0.4, 
-                    delay: 0.8 + i * 0.025, 
-                    ease: [0.25, 0.1, 0.25, 1]
+                  transition={{
+                    duration: 0.4,
+                    delay: 0.8 + i * 0.025,
+                    ease: [0.25, 0.1, 0.25, 1],
                   }}
                   style={{ display: char === ' ' ? 'inline' : 'inline-block' }}
                 >
@@ -228,7 +198,6 @@ export default function Auth() {
           transition={{ duration: 0.6 }}
           className="w-full max-w-md"
         >
-          {/* Logo - routes back to Landing */}
           <div className="mb-8 flex items-center justify-between">
             <Link to={createPageUrl('Landing')} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
               <img
@@ -251,7 +220,6 @@ export default function Auth() {
             </p>
           </div>
 
-          {/* Render the sign-in / sign-up form only when not in forgot mode */}
           {!forgotMode ? (
             <form onSubmit={handleSubmit} className="space-y-6">
               {isSignUp && (
@@ -263,7 +231,7 @@ export default function Auth() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Enter your name"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                    className={inputClassName}
                     required
                   />
                 </div>
@@ -277,7 +245,7 @@ export default function Auth() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="user@example.com"
-                  className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                  className={inputClassName}
                   required
                 />
               </div>
@@ -291,14 +259,14 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100 pr-10"
+                    className={`${inputClassName} pr-10`}
                     required
                   />
                   <button
                     type="button"
                     aria-label={passwordVisible ? 'Hide password' : 'Show password'}
                     onClick={togglePasswordVisibility}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-800"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
                   >
                     {passwordVisible ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
@@ -311,25 +279,25 @@ export default function Auth() {
                 </div>
               )}
 
-              {/* Sign-up success message - shown when email confirmation is required */}
               {signUpSuccess && (
                 <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-sm text-emerald-400">
-                  <p className="font-medium">Account created! 🎉</p>
+                  <p className="font-medium">Account created!</p>
                   <p className="mt-1">Please check your email for a confirmation link before signing in.</p>
                 </div>
               )}
 
-              {/* Forgot password link is shown on sign-in only and will toggle the forgotMode */}
               {!isSignUp && (
                 <div className="text-sm text-right">
-                  <button type="button" onClick={() => setForgotMode(true)} className="text-violet-500 hover:underline">Forgot password?</button>
+                  <button type="button" onClick={() => setForgotMode(true)} className="text-accent hover:underline">
+                    Forgot password?
+                  </button>
                 </div>
               )}
 
               <Button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-12 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white text-base disabled:opacity-50"
+                className="w-full h-12 bg-accent hover:bg-accent/90 text-white text-base disabled:opacity-50"
               >
                 {isLoading ? (
                   <>
@@ -343,7 +311,7 @@ export default function Auth() {
 
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-zinc-300 dark:border-white/10"></div>
+                  <div className="w-full border-t border-zinc-300 dark:border-white/10" />
                 </div>
                 <div className="relative flex justify-center text-sm">
                   <span className="px-4 bg-zinc-50 dark:bg-[#0D0D12] text-zinc-600 dark:text-zinc-500">or</span>
@@ -357,7 +325,7 @@ export default function Auth() {
                 disabled={isLoading}
                 className="w-full h-12 border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/5 disabled:opacity-50"
               >
-                <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" aria-hidden="true">
                   <path
                     fill="currentColor"
                     d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -379,10 +347,9 @@ export default function Auth() {
               </Button>
             </form>
           ) : (
-            // Forgot-password UI is rendered outside the form so it cannot affect sign-in form behavior
             <div className="space-y-2">
               {forgotSent ? (
-                <div className="text-sm text-teal-600">Check your email for a reset link.</div>
+                <div className="text-sm text-emerald-600 dark:text-emerald-400">Check your email for a reset link.</div>
               ) : (
                 <>
                   <Input
@@ -391,11 +358,23 @@ export default function Auth() {
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
                     placeholder="your@email.com"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                    className={inputClassName}
                   />
                   <div className="flex gap-2 justify-end">
-                    <button type="button" onClick={() => { setForgotMode(false); setForgotEmail(''); setError(''); }} className="text-sm text-zinc-600">Cancel</button>
-                    <button type="button" onClick={handleForgotSend} className="px-4 py-2 rounded-md bg-violet-600 text-white hover:opacity-90">Send reset</button>
+                    <button
+                      type="button"
+                      onClick={() => { setForgotMode(false); setForgotEmail(''); setError(''); }}
+                      className="text-sm text-zinc-600 dark:text-zinc-400"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleForgotSend}
+                      className="px-4 py-2 rounded-md bg-accent text-white hover:bg-accent/90"
+                    >
+                      Send reset
+                    </button>
                   </div>
                 </>
               )}
@@ -423,19 +402,18 @@ export default function Auth() {
                 {isSignUp ? (
                   <>
                     Already have an account?{' '}
-                    <span className="text-violet-400 font-medium">Sign in</span>
+                    <span className="text-accent font-medium">Sign in</span>
                   </>
                 ) : (
                   <>
-                    Don't have an account?{' '}
-                    <span className="text-violet-400 font-medium">Sign up</span>
+                    Don&apos;t have an account?{' '}
+                    <span className="text-accent font-medium">Sign up</span>
                   </>
                 )}
               </button>
             )}
           </div>
         </motion.div>
-        
       </div>
     </div>
   );
