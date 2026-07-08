@@ -1,75 +1,30 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { motion, useScroll, useTransform } from 'framer-motion';
-import { Button } from '@/components/ui/button';
 import { GradientButton } from '@/components/ui/GradientButton';
-import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
 import Container from '@/components/layout/Container';
 import { MotionDiv } from '@/components/ui/Motion';
 import EtherealShadow from '@/components/ui/EtherealShadow';
 import EtherealShadowFilter from '@/components/ui/EtherealShadowFilter';
-import Orb from '@/components/ui/Orb';
-import { TextLoop } from '@/components/ui/TextLoop';
 import { FeatureTabs } from '@/components/ui/FeatureTabs';
 import { TestimonialSection } from '@/components/ui/TestimonialSection';
 import { ArcGalleryHero } from '@/components/ui/ArcGalleryHero';
 import { ScrollExpandMedia } from '@/components/ui/ScrollExpandMedia';
+import LandingHero from '@/components/landing/LandingHero';
 import { useScramble } from 'use-scramble';
 import {
-  ArrowRight,
   GraduationCap,
   Award,
   Mic,
   Megaphone,
   FileText,
-  Sparkles,
 } from 'lucide-react';
 
-/* ─── Animation presets (slower, smoother) ───────────────────────────── */
+/* ─── Animation preset (ease-out, no bounce) ─────────────────────────── */
 const SMOOTH = [0.22, 1, 0.36, 1];
-const HERO_STAGGER = { staggerChildren: 0.1, delayChildren: 0.15 };
-const itemUp = {
-  initial: { opacity: 0, y: 20 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.7, ease: SMOOTH },
-};
 
-/* ─── Dark palette — black base for hero and scenes ──────────────────── */
+/* ─── Dark base for the sections below the hero ──────────────────────── */
 const PURPLE_DARK = '#000000';
-const PURPLE_MID = '#110C24';
-
-/* ─── Feature scenes — full-viewport background with text overlay ────── */
-const FEATURE_SCENES = [
-  {
-    id: 'college',
-    headline: 'Personal statements\nfrom what you say',
-    description: 'Talk about your experience out loud. Voira removes filler words and turns it into a clear personal statement.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1920&q=80',
-  },
-  {
-    id: 'scholarships',
-    headline: 'Scholarship essays\nfrom your voice',
-    description: 'Explain why you need support in your own words. Voira turns that into a clear draft you can edit.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1920&q=80',
-  },
-  {
-    id: 'interviews',
-    headline: 'Practice interview answers\nby speaking',
-    description: 'Practice common questions by speaking. Voira writes a clean version you can review and adjust.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=1920&q=80',
-  },
-  {
-    id: 'career',
-    headline: 'Cover letters and pitches\nfrom your voice',
-    description: 'Record a short cover letter or pitch. Voira turns it into a simple, direct message for recruiters.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=1920&q=80',
-  },
-];
 
 /* ─── Feature tabs data ──────────────────────────────────────────────── */
 const FEATURE_TABS = [
@@ -195,7 +150,7 @@ const PROFESSIONAL_SECTION = {
   scrollToExpand: 'Scroll to see how Voira helps at work.',
 };
 
-/* ─── Built for [scramble] heading — runs once in this order: essays, prompts, interviews, then everything applications ──────── */
+/* ─── Built for [scramble] heading ─────────────────────────────────── */
 const BUILT_FOR_PHRASES = [
   'essays',
   'prompts',
@@ -210,7 +165,6 @@ function BuiltForScrambleHeading() {
   indexRef.current = index;
   const text = BUILT_FOR_PHRASES[index];
 
-  // Only run scramble when index >= 1 (prompts, interviews, everything applications.)
   const isLastPhrase = index === BUILT_FOR_PHRASES.length - 1;
   const { ref } = useScramble({
     text: index > 0 ? text : '',
@@ -230,12 +184,11 @@ function BuiltForScrambleHeading() {
     },
   });
 
-  // Show "essays" as static text for 2s, then advance to scramble "prompts"
   useEffect(() => {
     if (index !== 0) return;
     const t = setTimeout(() => setIndex(1), 7000);
     return () => clearTimeout(t);
-  }, []);
+  }, [index]);
 
   useEffect(() => {
     return () => {
@@ -259,100 +212,11 @@ function BuiltForScrambleHeading() {
   );
 }
 
-/* ─── Full-viewport cinematic feature scene with strong parallax ──────── */
-function CinematicScene({ scene }) {
-  const ref = useRef(null);
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ['start end', 'end start'],
-  });
-
-  // Background moves at ~40% of scroll speed — strong visible parallax depth
-  const bgY = useTransform(scrollYProgress, [0, 1], ['-15%', '15%']);
-  // Zoom: starts zoomed-in, settles at center, slightly zooms again on exit
-  const bgScale = useTransform(scrollYProgress, [0, 0.4, 0.6, 1], [1.2, 1.05, 1.05, 1.15]);
-  // Content slides up slightly as user scrolls (counter-parallax for depth)
-  const contentY = useTransform(scrollYProgress, [0, 0.5, 1], [60, 0, -40]);
-  // Content fades in as it enters center, fades out as it leaves
-  const contentOpacity = useTransform(scrollYProgress, [0, 0.25, 0.5, 0.75, 1], [0, 1, 1, 1, 0]);
-
-  return (
-    <section ref={ref} className="relative w-full h-screen overflow-hidden" style={{ background: PURPLE_DARK }}>
-      {/* Background image — parallax layer (taller than viewport for shift room) */}
-      <motion.div
-        className="absolute -inset-x-0 -top-[15%] -bottom-[15%] z-0 will-change-transform"
-        style={{ y: bgY, scale: bgScale }}
-      >
-        <img
-          src={scene.bgImage}
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-        />
-        {/* Overlays — seamless blending */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/55 to-black/20" />
-        <div className="absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-[#0A0515] to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-[#0A0515] to-transparent" />
-        <div className="absolute inset-0 bg-[#5B5CF6]/[0.04] mix-blend-overlay" />
-      </motion.div>
-
-      {/* Content — counter-parallax (moves opposite to bg for depth) */}
-      <motion.div
-        className="relative z-10 flex h-screen items-center will-change-transform"
-        style={{ y: contentY, opacity: contentOpacity }}
-      >
-        <div className="w-full max-w-7xl mx-auto px-5 sm:px-8 lg:px-12">
-          <div className="max-w-xl lg:max-w-2xl">
-            <MotionDiv
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.9, ease: SMOOTH }}
-            >
-              <h3 className="font-heading text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold tracking-tight text-white leading-[1.1] mb-6 whitespace-pre-line">
-                {scene.headline}
-              </h3>
-            </MotionDiv>
-            <MotionDiv
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.9, ease: SMOOTH, delay: 0.1 }}
-            >
-              <p className="text-base sm:text-lg lg:text-xl text-white/65 leading-relaxed mb-10 max-w-lg">
-                {scene.description}
-              </p>
-            </MotionDiv>
-            <MotionDiv
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.7, ease: SMOOTH, delay: 0.2 }}
-            >
-              <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-                <Button
-                  size="lg"
-                  className="h-11 px-8 bg-accent text-white hover:bg-accent/90 transition-colors duration-300"
-                >
-                  {scene.cta}
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </Link>
-            </MotionDiv>
-          </div>
-        </div>
-      </motion.div>
-    </section>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
    MAIN LANDING PAGE
 ═══════════════════════════════════════════════════════════════════════ */
 export default function Landing() {
-  const heroRef = useRef(null);
   useEffect(() => {
-    // Force landing page to dark mode only (restore previous setting on unmount)
     const previousTheme = localStorage.getItem('voira-theme');
     const root = document.documentElement;
 
@@ -370,154 +234,13 @@ export default function Landing() {
       }
     };
   }, []);
-  const { scrollYProgress: heroScroll } = useScroll({
-    target: heroRef,
-    offset: ['start start', 'end start'],
-  });
-  // Hero text floats up as user scrolls down — creates depth against static bg
-  const heroTextY = useTransform(heroScroll, [0, 1], [0, -120]);
-  const heroTextOpacity = useTransform(heroScroll, [0, 0.6, 1], [1, 0.6, 0]);
 
   return (
-    <div className="min-h-screen overflow-x-hidden" style={{ background: PURPLE_DARK, color: '#F5F5F7' }}>
+    <div className="landing-scope min-h-screen overflow-x-hidden">
 
-      {/* ═══ 1. HERO + ORB — Single shared background ═════════════════ */}
-      <section ref={heroRef} className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
-        {/* Header: absolute so it floats on top */}
-        <header className="absolute inset-x-0 top-0 z-30">
-          <div className="w-full mx-auto flex h-16 items-center justify-between px-5 sm:px-8 lg:px-12">
-            <Link to={createPageUrl('Landing')} className="flex items-center group">
-              <img
-                src="/assets/VoiraLogoMain.png"
-                alt="Voira"
-                className="h-14 w-14 object-contain transition-transform duration-normal ease-smooth group-hover:scale-105"
-              />
-            </Link>
-            <div className="flex items-center gap-3">
-              <Link to={createPageUrl('Auth')} className="no-underline">
-                <button className="h-10 px-6 rounded-xl text-sm font-medium text-white/90 hover:text-white backdrop-blur-md bg-white/[0.08] border border-white/[0.15] hover:bg-white/[0.14] transition-all duration-300 cursor-pointer">
-                  Login
-                </button>
-              </Link>
-              <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-                <button className="h-10 px-6 rounded-xl text-sm font-medium text-zinc-900 bg-white hover:bg-white/90 transition-all duration-300 cursor-pointer">
-                  Sign up
-                </button>
-              </Link>
-            </div>
-          </div>
-        </header>
+      <LandingHero />
 
-        {/* Orb background — pinned to the hero viewport area */}
-        <div className="absolute inset-x-0 top-0 h-screen z-0 overflow-hidden bg-black">
-          <Orb
-            hoverIntensity={0.52}
-            rotateOnHover
-            hue={0}
-            forceHoverState={false}
-            backgroundColor="#000000"
-          />
-        </div>
-
-        {/* Hero content — floats up on scroll for depth */}
-        <div className="relative z-10 flex min-h-screen flex-col items-center justify-center py-24 px-4 sm:px-6 lg:px-8">
-          <motion.div style={{ y: heroTextY, opacity: heroTextOpacity }} className="will-change-transform">
-          <Container size="wide" className="flex flex-col items-center justify-center text-center">
-            <motion.div
-              className="w-full max-w-3xl mx-auto"
-              initial="initial"
-              animate="animate"
-              variants={HERO_STAGGER}
-            >
-              <motion.h1
-                variants={itemUp}
-                className="font-heading text-6xl sm:text-7xl lg:text-8xl xl:text-9xl font-bold tracking-[0.04em] sm:tracking-[0.06em] lg:tracking-[0.08em] mb-6 text-white"
-              >
-                VOIRA
-              </motion.h1>
-              <motion.p
-                variants={itemUp}
-                className="font-heading text-lg sm:text-xl lg:text-2xl font-medium tracking-tight mb-3 text-white"
-              >
-                Say it out loud. Voira turns it into clear writing.
-              </motion.p>
-              <motion.div variants={itemUp} className="mb-10 h-8 flex items-center justify-center">
-                <TextLoop interval={3} className="text-sm sm:text-base text-white/50">
-                  <span>Talk through your answer. Voira writes it up.</span>
-                  <span>Keeps your tone and fixes the wording.</span>
-                  <span>Good for essays, prompts, and short answers.</span>
-                  <span>Made for students and early professionals.</span>
-                </TextLoop>
-              </motion.div>
-              <motion.div variants={itemUp} className="flex flex-wrap gap-4 justify-center">
-                <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-                  <button
-                    type="button"
-                    className="h-12 px-8 rounded-xl text-base font-medium text-white/90 hover:text-white backdrop-blur-md bg-white/[0.08] border border-white/[0.15] hover:bg-white/[0.14] transition-all duration-300 cursor-pointer"
-                  >
-                    Get Started
-                  </button>
-                </Link>
-              </motion.div>
-            </motion.div>
-          </Container>
-          </motion.div>
-        </div>
-
-        {/* Orb content — same section, same background, no seam */}
-        <div className="relative z-10 py-24 sm:py-32 lg:py-40">
-          <MotionDiv
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, amount: 0.3 }}
-            transition={{ duration: 0.9, ease: SMOOTH }}
-            className="flex flex-col items-center text-center mx-auto max-w-4xl px-5 sm:px-8"
-          >
-            {/* Voice Visualizer */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
-              className="flex justify-center lg:justify-end mb-12"
-            >
-              <div className="relative">
-                <VoiceVisualizer size={280} isActive={true} amplitude={0.3} />
-                {/* Floating labels */}
-                <motion.div
-                  className="absolute -top-4 -left-8 px-4 py-2 bg-white dark:bg-[#1a1a24] rounded-xl border border-zinc-200 dark:border-white/5 text-sm text-zinc-700 dark:text-zinc-400 shadow-sm dark:shadow-none"
-                  animate={{ y: [0, -8, 0] }}
-                  transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-                >
-                  No fillers
-                </motion.div>
-                <motion.div
-                  className="absolute top-1/2 -right-12 px-4 py-2 bg-white dark:bg-[#1a1a24] rounded-xl border border-zinc-200 dark:border-white/5 text-sm text-zinc-700 dark:text-zinc-400 shadow-sm dark:shadow-none"
-                  animate={{ y: [0, 8, 0] }}
-                  transition={{ duration: 3.5, repeat: Infinity, ease: 'easeInOut', delay: 0.5 }}
-                >
-                  Your voice
-                </motion.div>
-                <motion.div
-                  className="absolute -bottom-4 left-8 px-4 py-2 bg-white dark:bg-[#1a1a24] rounded-xl border border-zinc-200 dark:border-white/5 text-sm text-zinc-700 dark:text-zinc-400 shadow-sm dark:shadow-none"
-                  animate={{ y: [0, -6, 0] }}
-                  transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-                >
-                  Refined output
-                </motion.div>
-              </div>
-            </motion.div>
-            <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-5 text-white">
-              Talk first. Edit later.
-            </h2>
-            <p className="text-lg max-w-xl text-white/50 leading-relaxed">
-              You speak normally. Voira turns it into a clear draft for essays, forms, and emails.
-              It keeps your style and cuts out filler words.
-            </p>
-          </MotionDiv>
-        </div>
-      </section>
-
-      {/* ═══ 3. FEATURE SECTIONS — scroll expansion for use cases ═══════ */}
+      {/* ═══ FEATURE SECTIONS — scroll expansion for use cases ═══════ */}
       <ScrollExpandMedia
         mediaType={STUDENT_SECTION.mediaType}
         mediaSrc={STUDENT_SECTION.mediaSrc}
@@ -569,9 +292,8 @@ export default function Landing() {
         </div>
       </ScrollExpandMedia>
 
-      {/* ═══ 4–6. TESTIMONIALS → FEATURE TABS → CTA → FOOTER ═══ */}
+      {/* ═══ TESTIMONIALS → FEATURE TABS → CTA → FOOTER ═══ */}
       <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
-        {/* Shared ethereal effects — darker, black-focused background */}
         <EtherealShadowFilter
           color="rgba(0, 0, 0, 0.6)"
           animation={{ scale: 60, speed: 50 }}
@@ -585,7 +307,6 @@ export default function Landing() {
           color="rgba(0, 0, 0, 0.7)"
         />
 
-        {/* ── Testimonials ────────────────────────────────────────── */}
         <div className="relative z-10">
           <TestimonialSection
             title="Join the Founding 1000"
@@ -594,7 +315,6 @@ export default function Landing() {
           />
         </div>
 
-        {/* ── Feature Tabs ────────────────────────────────────────── */}
         <div className="relative z-10">
           <FeatureTabs
             heading={<BuiltForScrambleHeading />}
@@ -604,7 +324,6 @@ export default function Landing() {
           />
         </div>
 
-        {/* ── Final CTA with arc gallery ─────────────────────────── */}
         <div className="relative z-10 mx-auto max-w-5xl px-5 sm:px-8 lg:px-12 pt-16 pb-24 sm:pt-20 sm:pb-28 lg:pt-24 lg:pb-32">
           <ArcGalleryHero images={APPLICATION_IMAGES} className="mb-4 sm:mb-2 lg:mb-0" />
           <MotionDiv
@@ -637,7 +356,6 @@ export default function Landing() {
           </MotionDiv>
         </div>
 
-        {/* ── Footer ──────────────────────────────────────────────── */}
         <footer className="relative z-10 py-10">
           <Container size="wide" className="flex flex-col items-center justify-between gap-4 sm:flex-row">
             <p className="text-sm text-white/70">© 2026 Voira. All rights reserved.</p>
