@@ -187,10 +187,10 @@ function BuiltForScrambleHeading() {
     },
   });
 
-  // Show "essays" as static text for 2s, then advance to scramble "prompts"
+  // Show "essays" as static text, then advance to scramble "prompts"
   useEffect(() => {
     if (index !== 0) return;
-    const t = setTimeout(() => setIndex(1), 7000);
+    const t = setTimeout(() => setIndex(1), 6000);
     return () => clearTimeout(t);
   }, []);
 
@@ -249,11 +249,13 @@ export default function Landing() {
       {/* ═══ 2. TALK FIRST — voice visualizer intro ═══════════════════ */}
       <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
         <div className="relative z-10 py-24 sm:py-32 lg:py-40">
+          {/* Calm opacity crossfade (no rise) — a reflective beat, distinct
+              from the hero's fade-rise and the CTA's upward reveal. */}
           <MotionDiv
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
             viewport={{ once: true, amount: 0.3 }}
-            transition={{ duration: 0.9, ease: SMOOTH }}
+            transition={{ duration: 1.1, ease: SMOOTH }}
             className="flex flex-col items-center text-center mx-auto max-w-4xl px-5 sm:px-8"
           >
             {/* Voice Visualizer */}
