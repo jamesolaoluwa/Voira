@@ -216,7 +216,7 @@ export default function RefineDraft() {
           variant="ghost"
           size="icon"
           onClick={() => navigate(createPageUrl('Home'))}
-          className="text-zinc-400 hover:text-white"
+          className="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
         >
           <ArrowLeft className="w-5 h-5" />
         </Button>
@@ -254,7 +254,7 @@ export default function RefineDraft() {
           className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6 space-y-4"
         >
           <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+            <FileText className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
             Your Existing Draft
           </h3>
           
@@ -303,7 +303,7 @@ export default function RefineDraft() {
           className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6 space-y-6"
         >
           <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-            <Mic className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+            <Mic className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
             Tell Voira What to Change
           </h3>
 
@@ -319,7 +319,7 @@ export default function RefineDraft() {
                 size="lg"
                 onClick={handleStartRecording}
                 disabled={isProcessing}
-                className="bg-gradient-to-r from-teal-600 to-teal-500 hover:from-teal-500 hover:to-teal-400"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 <Mic className="w-5 h-5 mr-2" />
                 Record Changes
@@ -355,7 +355,7 @@ export default function RefineDraft() {
             size="lg"
             onClick={handleRefine}
             disabled={isProcessing || (!existingDraft && !uploadedFile)}
-            className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 px-12 h-14 text-lg"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 px-12 h-14 text-lg"
           >
             {isProcessing ? (
               <>

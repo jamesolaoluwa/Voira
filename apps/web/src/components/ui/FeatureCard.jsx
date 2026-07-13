@@ -18,15 +18,15 @@ export default function FeatureCard({ icon: Icon, title, description, href, dela
           transition={{ duration: 0.2 }}
         >
           {/* Hover glow effect */}
-          <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 to-teal-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+          <div className="absolute inset-0 bg-zinc-900/5 dark:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
           
           {/* Icon container */}
           <motion.div 
-            className="relative mb-4 w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500/20 to-teal-500/20 flex items-center justify-center"
+            className="relative mb-4 w-12 h-12 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center"
             whileHover={{ scale: 1.1, rotate: 5 }}
             transition={{ type: 'spring', stiffness: 300 }}
           >
-            <Icon className="w-6 h-6 text-violet-600 dark:text-violet-400 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors duration-300" />
+            <Icon className="w-6 h-6 text-zinc-700 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-white transition-colors duration-300" />
           </motion.div>
           
           {/* Content */}
@@ -38,7 +38,7 @@ export default function FeatureCard({ icon: Icon, title, description, href, dela
           </p>
           
           {/* Bottom accent line */}
-          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-teal-500 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-500 origin-left" />
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-zinc-400 dark:bg-zinc-500 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-500 origin-left" />
         </motion.div>
       </Link>
     </motion.div>

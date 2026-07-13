@@ -59,7 +59,9 @@ const typeLabels = {
   practice: 'Practice',
 };
 
-const filterOptions = ['All', 'Application', 'Interview', 'Free Speak', 'Drafts'];
+const filterOptions = ['All', 'Application', 'Practice', 'Drafts'];
+
+const PRACTICE_TYPES = new Set(['practice', 'interview', 'free']);
 
 export default function Library() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -263,15 +265,16 @@ export default function Library() {
     const matchesSearch = title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          tags.some(tag => String(tag).toLowerCase().includes(searchQuery.toLowerCase()));
     
-    // Handle filter logic including "Drafts" filter
+    // Handle filter logic including "Drafts" and merged "Practice" types
     let matchesFilter = false;
     if (activeFilter === 'All') {
       matchesFilter = true;
     } else if (activeFilter === 'Drafts') {
       matchesFilter = rec.isDraft === true;
-    } else {
-      matchesFilter = !rec.isDraft && rec.type && typeLabels[rec.type] && 
-                      typeLabels[rec.type].toLowerCase() === activeFilter.toLowerCase();
+    } else if (activeFilter === 'Application') {
+      matchesFilter = !rec.isDraft && rec.type === 'application';
+    } else if (activeFilter === 'Practice') {
+      matchesFilter = !rec.isDraft && PRACTICE_TYPES.has(rec.type);
     }
     
     return matchesSearch && matchesFilter;
@@ -517,7 +520,7 @@ export default function Library() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search recordings..."
-            className="pl-11 bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/5 focus:border-violet-500"
+            className="pl-11 bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/5 focus:border-zinc-900/40 dark:focus:border-white/40"
           />
         </div>
         
@@ -531,8 +534,8 @@ export default function Library() {
                 size="sm"
                 onClick={() => setActiveFilter(filter)}
                 className={activeFilter === filter 
-                  ? 'bg-violet-500/20 text-violet-300 hover:bg-violet-500/30 border-violet-500/30' 
-                  : 'border-white/10 text-zinc-400 hover:text-white hover:bg-white/5'}
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 border-transparent' 
+                  : 'border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5'}
               >
                 {filter}
               </Button>
@@ -545,7 +548,7 @@ export default function Library() {
       <div className="space-y-4">
         {(isLoading || isLoadingDrafts) ? (
           <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+            <Loader2 className="w-8 h-8 text-zinc-400 dark:text-zinc-500 animate-spin" />
           </div>
         ) : (
           <AnimatePresence>
@@ -568,20 +571,20 @@ export default function Library() {
                   className={`group bg-white dark:bg-[#1a1a24] rounded-2xl border shadow-sm dark:shadow-none p-6 transition-all ${
                     isDraft 
                       ? 'border-amber-300/50 dark:border-amber-500/20 hover:border-amber-400 dark:hover:border-amber-500/40' 
-                      : 'border-zinc-200 dark:border-white/5 hover:border-violet-400 dark:hover:border-violet-500/20'
+                      : 'border-zinc-200 dark:border-white/5 hover:border-zinc-400 dark:hover:border-white/20'
                   }`}
                 >
                   <div className="flex items-start gap-4">
                     {/* Icon */}
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                            isDraft ? 'bg-amber-500/20' :
-                            recording.type === 'application' ? 'bg-violet-500/20' :
-                            recording.type === 'interview' ? 'bg-teal-500/20' : 'bg-amber-500/20'
+                            isDraft
+                              ? 'bg-amber-500/20'
+                              : 'bg-zinc-100 dark:bg-zinc-800/50'
                           }`}>
                             <TypeIcon className={`w-5 h-5 ${
-                              isDraft ? 'text-amber-400' :
-                              recording.type === 'application' ? 'text-violet-400' :
-                              recording.type === 'interview' ? 'text-teal-400' : 'text-amber-400'
+                              isDraft
+                                ? 'text-amber-700 dark:text-amber-300'
+                                : 'text-zinc-700 dark:text-zinc-300'
                             }`} />
                           </div>
                     
@@ -596,7 +599,7 @@ export default function Library() {
                           isDraft: isDraft,
                         }}
                       >
-                        <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 hover:text-violet-600 dark:hover:text-violet-400 transition-colors truncate">
+                        <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors truncate">
                           {recording.title || recording.name || recording.question || `${typeLabels[recording.type] || 'Recording'} – ${new Date(recording.createdAt || recording.created_date || Date.now()).toLocaleDateString()}`}
                         </h3>
                       </Link>
@@ -604,15 +607,12 @@ export default function Library() {
                       <div className="flex flex-wrap items-center gap-3 mt-2">
                         {/* Draft badge - shown first if it's a draft */}
                         {isDraft && (
-                          <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
                             Draft
                           </Badge>
                         )}
                         
-                        <Badge className={`${
-                          recording.type === 'application' ? 'bg-violet-500/20 text-violet-300' :
-                          recording.type === 'interview' ? 'bg-teal-500/20 text-teal-300' : 'bg-amber-500/20 text-amber-300'
-                        }`}>
+                        <Badge className="bg-zinc-100 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-white/10">
                           {typeLabels[recording.type] || 'Recording'}
                         </Badge>
                         
@@ -636,7 +636,7 @@ export default function Library() {
                         </span>
                         {!isDraft && (recording.confidenceScore || recording.clarity_score) ? (
                           <span>
-                            Confidence: <span className="text-teal-400">{recording.confidenceScore || recording.clarity_score}%</span>
+                            Confidence: <span className="text-zinc-700 dark:text-zinc-300">{recording.confidenceScore || recording.clarity_score}%</span>
                           </span>
                         ) : null}
                       </div>
@@ -650,7 +650,7 @@ export default function Library() {
                             variant="ghost"
                             size="icon"
                             aria-label="More actions"
-                            className="text-zinc-500 hover:text-violet-400 hover:bg-violet-500/10"
+                            className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5"
                           >
                             <MoreHorizontal className="w-4 h-4" />
                           </Button>
@@ -694,7 +694,7 @@ export default function Library() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="text-zinc-500 hover:text-violet-400"
+                          className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                         >
                           <ChevronRight className="w-5 h-5" />
                         </Button>

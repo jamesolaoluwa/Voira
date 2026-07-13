@@ -27,6 +27,10 @@ const sentenceLengthOptions = [
   { value: 'long', label: 'Long', description: 'Detailed and flowing' },
 ];
 
+const selectedOptionClass = 'bg-zinc-100 dark:bg-white/10 border border-zinc-300 dark:border-white/20';
+const selectedLabelClass = 'text-zinc-900 dark:text-zinc-100';
+const sliderThumbClass = '[&_[role=slider]]:bg-zinc-900 dark:[&_[role=slider]]:bg-white [&_[role=slider]]:border-zinc-700 dark:[&_[role=slider]]:border-zinc-300';
+
 export default function VoiceProfile() {
   const sessions = useSessionStore(state => state.sessions || []);
   // Filter out seed/demo data for stats
@@ -259,11 +263,11 @@ export default function VoiceProfile() {
                 onClick={() => setSelectedTone(option.value)}
                 className={`p-4 rounded-xl text-left transition-all ${
                   selectedTone === option.value
-                    ? 'bg-violet-500/20 border border-violet-500/30'
+                    ? selectedOptionClass
                     : 'bg-zinc-50 dark:bg-[#13131a] border border-transparent hover:border-zinc-300 dark:hover:border-white/10'
                 }`}
               >
-                <p className={`font-medium ${selectedTone === option.value ? 'text-violet-700 dark:text-violet-300' : 'text-zinc-800 dark:text-zinc-200'}`}>
+                <p className={`font-medium ${selectedTone === option.value ? selectedLabelClass : 'text-zinc-800 dark:text-zinc-200'}`}>
                   {option.label}
                 </p>
                 <p className="text-xs text-zinc-600 dark:text-zinc-500 mt-1">{option.description}</p>
@@ -286,7 +290,7 @@ export default function VoiceProfile() {
             </p>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs text-zinc-500 dark:text-zinc-600">Humble</span>
-              <span className="text-violet-600 dark:text-violet-400 font-medium">{confidence[0]}%</span>
+              <span className="text-zinc-700 dark:text-zinc-300 font-medium">{confidence[0]}%</span>
               <span className="text-xs text-zinc-500 dark:text-zinc-600">Assertive</span>
             </div>
             <Slider
@@ -294,7 +298,7 @@ export default function VoiceProfile() {
               onValueChange={setConfidence}
               max={100}
               step={1}
-              className="[&_[role=slider]]:bg-violet-500 [&_[role=slider]]:border-violet-400"
+              className={sliderThumbClass}
             />
           </motion.div>
           
@@ -310,7 +314,7 @@ export default function VoiceProfile() {
             </p>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs text-zinc-500 dark:text-zinc-600">Factual</span>
-              <span className="text-teal-600 dark:text-teal-400 font-medium">{emotionalDepth[0]}%</span>
+              <span className="text-zinc-700 dark:text-zinc-300 font-medium">{emotionalDepth[0]}%</span>
               <span className="text-xs text-zinc-500 dark:text-zinc-600">Expressive</span>
             </div>
             <Slider
@@ -318,7 +322,7 @@ export default function VoiceProfile() {
               onValueChange={setEmotionalDepth}
               max={100}
               step={1}
-              className="[&_[role=slider]]:bg-teal-500 [&_[role=slider]]:border-teal-400"
+              className={sliderThumbClass}
             />
           </motion.div>
         </div>
@@ -341,11 +345,11 @@ export default function VoiceProfile() {
                 onClick={() => setSentenceLength(option.value)}
                 className={`p-4 rounded-xl text-center transition-all ${
                   sentenceLength === option.value
-                    ? 'bg-teal-500/20 border border-teal-500/30'
+                    ? selectedOptionClass
                     : 'bg-zinc-50 dark:bg-[#13131a] border border-transparent hover:border-zinc-300 dark:hover:border-white/10'
                 }`}
               >
-                <p className={`font-medium ${sentenceLength === option.value ? 'text-teal-700 dark:text-teal-300' : 'text-zinc-800 dark:text-zinc-200'}`}>
+                <p className={`font-medium ${sentenceLength === option.value ? selectedLabelClass : 'text-zinc-800 dark:text-zinc-200'}`}>
                   {option.label}
                 </p>
                 <p className="text-xs text-zinc-600 dark:text-zinc-500 mt-1">{option.description}</p>
@@ -367,10 +371,10 @@ export default function VoiceProfile() {
               {preferredWords.map((word) => (
                 <Badge 
                   key={word} 
-                  className="bg-violet-500/20 text-violet-300 px-3 py-1 flex items-center gap-1"
+                  className="bg-zinc-100 dark:bg-white/10 text-zinc-700 dark:text-zinc-300 px-3 py-1 flex items-center gap-1"
                 >
                   {word}
-                  <button onClick={() => removeWord('preferred', word)} className="ml-1 hover:text-white">
+                  <button onClick={() => removeWord('preferred', word)} className="ml-1 hover:text-zinc-900 dark:hover:text-zinc-100">
                     <X className="w-3 h-3" />
                   </button>
                 </Badge>
@@ -443,9 +447,9 @@ export default function VoiceProfile() {
         >
           <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
             <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+              <Sparkles className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Example Past Responses</h2>
-              {!isPremium && <Crown className="w-4 h-4 text-violet-600 dark:text-violet-400" />}
+              {!isPremium && <Crown className="w-4 h-4 text-zinc-700 dark:text-zinc-300" />}
             </div>
             <p className="text-zinc-600 dark:text-zinc-500 text-sm mb-4">
               {isPremium 
@@ -478,7 +482,7 @@ export default function VoiceProfile() {
           <Button 
             onClick={handleSaveProfile}
             disabled={isSaving || isLoading}
-            className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 px-8 disabled:opacity-50"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 disabled:opacity-50"
           >
             {isSaving ? (
               <>

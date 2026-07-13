@@ -150,8 +150,8 @@ export default function Settings() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-8"
         >
           <div className="flex items-start gap-4 mb-8">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center shrink-0">
-              <Mic className="w-6 h-6 text-amber-400" />
+            <div className="w-12 h-12 rounded-xl bg-zinc-100 dark:bg-white/10 flex items-center justify-center shrink-0">
+              <Mic className="w-6 h-6 text-zinc-700 dark:text-zinc-300" />
             </div>
             <div>
               <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-1">Thinking Pause Tracking</h2>
@@ -165,7 +165,7 @@ export default function Settings() {
               <div className="flex-1">
                 <Label className="text-base font-medium text-zinc-800 dark:text-zinc-200">Enable pause tracking</Label>
                 <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-2 leading-relaxed">
-                  See how often you use thinking pauses during Application, Interview, and Free Speak sessions.
+                  See how often you use thinking pauses during Application Essay sessions.
                 </p>
               </div>
               <Switch
@@ -180,20 +180,12 @@ export default function Settings() {
               <p className="font-medium text-zinc-700 dark:text-zinc-300 mb-4">How each mode works:</p>
               <div className="grid gap-3">
                 <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-violet-500 w-28 shrink-0">Practice</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Always tracks pauses to help you improve (great for learning!)</span>
+                  <span className="font-semibold text-zinc-900 dark:text-zinc-100 w-28 shrink-0">Practice</span>
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Always tracks pauses to help you improve</span>
                 </div>
                 <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-teal-500 w-28 shrink-0">Application</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled • Output is automatically polished</span>
-                </div>
-                <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-amber-500 w-28 shrink-0">Interview</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled • Keeps your natural voice</span>
-                </div>
-                <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-zinc-500 w-28 shrink-0">Free Speak</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled • Keeps your natural voice</span>
+                  <span className="font-semibold text-zinc-900 dark:text-zinc-100 w-28 shrink-0">Application</span>
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled; output is automatically polished</span>
                 </div>
               </div>
             </div>
@@ -208,8 +200,8 @@ export default function Settings() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
         >
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center">
-              <Volume2 className="w-5 h-5 text-violet-400" />
+            <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-white/10 flex items-center justify-center">
+              <Volume2 className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Voice Cleanup Intensity</h2>
@@ -224,11 +216,11 @@ export default function Settings() {
                 onClick={() => setCleanupIntensity(option.value)}
                 className={`p-4 rounded-xl text-left transition-all ${
                   cleanupIntensity === option.value
-                    ? 'bg-violet-500/20 border border-violet-500/30'
+                    ? 'bg-zinc-100 dark:bg-white/10 border border-zinc-300 dark:border-white/20'
                     : 'bg-zinc-50 dark:bg-[#13131a] border border-transparent hover:border-zinc-300 dark:hover:border-white/10'
                 }`}
               >
-                <p className={`font-medium ${cleanupIntensity === option.value ? 'text-violet-700 dark:text-violet-300' : 'text-zinc-800 dark:text-zinc-200'}`}>
+                <p className={`font-medium ${cleanupIntensity === option.value ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-800 dark:text-zinc-200'}`}>
                   {option.label}
                 </p>
                 <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">{option.description}</p>
@@ -245,8 +237,8 @@ export default function Settings() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
         >
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-teal-500/20 flex items-center justify-center">
-              <Shield className="w-5 h-5 text-teal-400" />
+            <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-white/10 flex items-center justify-center">
+              <Shield className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Privacy & Data</h2>
@@ -287,8 +279,8 @@ export default function Settings() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
         >
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
-              <Download className="w-5 h-5 text-amber-400" />
+            <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-white/10 flex items-center justify-center">
+              <Download className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Export Preferences</h2>
@@ -303,11 +295,11 @@ export default function Settings() {
                 onClick={() => setExportFormat(option.value)}
                 className={`p-4 rounded-xl text-center transition-all ${
                   exportFormat === option.value
-                    ? 'bg-amber-500/20 border border-amber-500/30'
+                    ? 'bg-zinc-100 dark:bg-white/10 border border-zinc-300 dark:border-white/20'
                     : 'bg-zinc-50 dark:bg-[#13131a] border border-transparent hover:border-zinc-300 dark:hover:border-white/10'
                 }`}
               >
-                <p className={`font-medium ${exportFormat === option.value ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-800 dark:text-zinc-200'}`}>
+                <p className={`font-medium ${exportFormat === option.value ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-800 dark:text-zinc-200'}`}>
                   {option.label}
                 </p>
               </button>
@@ -323,8 +315,8 @@ export default function Settings() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
         >
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center">
-              <CreditCard className="w-5 h-5 text-violet-400" />
+            <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-white/10 flex items-center justify-center">
+              <CreditCard className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
             </div>
             <div className="flex-1">
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Plan & Billing</h2>
@@ -361,7 +353,7 @@ export default function Settings() {
           </div>
           
           <Link to={createPageUrl('Pricing')}>
-            <Button className="w-full bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400">
+            <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
               <Crown className="w-4 h-4 mr-2" />
               Upgrade Plan
             </Button>
@@ -376,8 +368,8 @@ export default function Settings() {
           className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
         >
           <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-rose-500/20 flex items-center justify-center">
-              <Cpu className="w-5 h-5 text-rose-400" />
+            <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-white/10 flex items-center justify-center">
+              <Cpu className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">AI Provider</h2>
@@ -392,11 +384,11 @@ export default function Settings() {
                 onClick={() => setAiProvider(option.value)}
                 className={`p-4 rounded-xl text-left transition-all ${
                   aiProvider === option.value
-                    ? 'bg-rose-500/20 border border-rose-500/30'
+                    ? 'bg-zinc-100 dark:bg-white/10 border border-zinc-300 dark:border-white/20'
                     : 'bg-zinc-50 dark:bg-[#13131a] border border-transparent hover:border-zinc-300 dark:hover:border-white/10'
                 }`}
               >
-                <p className={`font-medium ${aiProvider === option.value ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-800 dark:text-zinc-200'}`}>
+                <p className={`font-medium ${aiProvider === option.value ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-800 dark:text-zinc-200'}`}>
                   {option.label}
                 </p>
                 <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-1">{option.description}</p>
@@ -463,7 +455,7 @@ export default function Settings() {
           <Button 
             onClick={saveSettings}
             disabled={isSaving || isLoading}
-            className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 px-8 disabled:opacity-50"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 disabled:opacity-50"
           >
             {isSaving ? (
               <>

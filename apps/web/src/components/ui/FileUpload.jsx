@@ -129,8 +129,8 @@ export default function FileUpload({
         onDrop={handleDrop}
         className={`relative border-2 border-dashed rounded-xl p-6 text-center transition-all cursor-pointer ${
           isDragging 
-            ? 'border-violet-500/50 bg-violet-500/5' 
-            : 'border-zinc-300 dark:border-white/10 hover:border-violet-500/50 hover:bg-violet-500/5'
+            ? 'border-zinc-900/40 dark:border-white/40 bg-zinc-100 dark:bg-white/5' 
+            : 'border-zinc-300 dark:border-white/10 hover:border-zinc-900/40 dark:hover:border-white/40 hover:bg-zinc-100 dark:hover:bg-white/5'
         }`}
       >
         <input
@@ -148,8 +148,8 @@ export default function FileUpload({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
             >
-              <Upload className="w-8 h-8 text-violet-400 mx-auto mb-3 animate-pulse" />
-              <p className="text-zinc-400 text-sm">Uploading...</p>
+              <Upload className="w-8 h-8 text-zinc-600 dark:text-zinc-400 mx-auto mb-3 animate-pulse" />
+              <p className="text-zinc-600 dark:text-zinc-500 text-sm">Uploading...</p>
             </motion.div>
           ) : uploadedFile ? (
             <motion.div

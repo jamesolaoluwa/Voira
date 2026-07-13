@@ -3,7 +3,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
-import ScoreCard from '@/components/ui/ScoreCard';
 import SessionNamingModal from '@/components/ui/SessionNamingModal';
 import PremiumGate from '@/components/premium/PremiumGate';
 import BadgeNotification from '@/components/badges/BadgeNotification';
@@ -16,18 +15,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { 
   Briefcase, 
-  GraduationCap, 
-  Users, 
+  Megaphone,
   ChevronRight,
   Mic,
   Square,
-  RotateCcw,
   Sparkles,
   ArrowRight,
   Save,
   Trash2,
   Shuffle,
-  Plus,
   Edit3,
   Loader2
 } from 'lucide-react';
@@ -43,9 +39,8 @@ import {
 } from '@/components/ui/select';
 
 const scenarios = [
-  { id: 'interview', icon: Briefcase, label: 'Job Interview', color: 'violet' },
-  { id: 'scholarship', icon: GraduationCap, label: 'Scholarship', color: 'teal' },
-  { id: 'behavioral', icon: Users, label: 'Behavioral', color: 'amber' },
+  { id: 'interview', icon: Briefcase, label: 'Interviews' },
+  { id: 'presentation', icon: Megaphone, label: 'Speeches & Presentation' },
 ];
 
 const sampleQuestions = {
@@ -53,18 +48,31 @@ const sampleQuestions = {
     "Tell me about a time you faced a significant challenge at work.",
     "Why are you interested in this position?",
     "What's your greatest professional achievement?",
-  ],
-  scholarship: [
     "How will this scholarship help you achieve your goals?",
     "Describe a moment that shaped who you are today.",
-    "What impact do you want to make in your community?",
-  ],
-  behavioral: [
     "Describe a situation where you had to work with a difficult team member.",
     "Tell me about a time you failed and what you learned.",
     "Give an example of when you showed leadership.",
   ],
+  presentation: [
+    "What is the central message of your talk, and why should your audience care?",
+    "How would you open your presentation to grab attention in the first 30 seconds?",
+    "Walk us through how you would handle a challenging question after your talk.",
+  ],
 };
+
+const feedbackMetrics = [
+  { label: 'Clarity', key: 'clarity', maxValue: 100, delay: 0 },
+  { label: 'Confidence', key: 'confidence', maxValue: 100, delay: 0.1 },
+  { label: 'Thinking Pauses', key: 'fillers', maxValue: 10, delay: 0.2 },
+  { label: 'Relevance', key: 'relevance', maxValue: 100, delay: 0.3 },
+];
+
+const primaryCtaClass =
+  'bg-primary text-primary-foreground hover:bg-primary/90';
+
+const inputClass =
+  'bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100';
 
 export default function Practice() {
   const queryClient = useQueryClient();
@@ -157,6 +165,7 @@ export default function Practice() {
   
   const handleSelectScenario = (scenario) => {
     setSelectedScenario(scenario);
+    setQuestionPurpose(scenario);
     setCurrentQuestion(sampleQuestions[scenario][0]);
     setShowFeedback(false);
     setShowActionBar(false);
@@ -358,6 +367,9 @@ export default function Practice() {
     }
   };
 
+  const wordCount = rawTranscript.split(/\s+/).filter(Boolean).length;
+  const wpm = duration > 0 ? Math.round((wordCount / duration) * 60) : 0;
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f]">
       <PageContainer className="py-6 lg:py-10">
@@ -371,7 +383,7 @@ export default function Practice() {
           Practice Mode
         </h1>
         <p className="text-zinc-600 dark:text-zinc-500 text-lg">
-          Rehearse interviews with supportive, real-time feedback
+          Rehearse interviews, speeches, and presentations with supportive feedback
         </p>
       </motion.div>
       
@@ -386,7 +398,7 @@ export default function Practice() {
             className="max-w-2xl mx-auto"
           >
             <h2 className="text-xl font-semibold text-zinc-800 dark:text-zinc-200 mb-6 text-center">Choose a scenario</h2>
-            <div className="grid gap-4 max-w-3xl mx-auto">
+            <div className="grid sm:grid-cols-2 gap-4 max-w-3xl mx-auto">
               {scenarios.map((scenario, index) => (
                 <motion.button
                   key={scenario.id}
@@ -394,21 +406,15 @@ export default function Practice() {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.1 }}
                   onClick={() => handleSelectScenario(scenario.id)}
-                  className="group flex items-center gap-4 p-6 bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none hover:border-violet-400 dark:hover:border-violet-500/30 transition-all"
+                  className="group flex items-center gap-4 p-6 bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none hover:border-zinc-400 dark:hover:border-white/20 transition-all"
                 >
-                  <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
-                    scenario.color === 'violet' ? 'bg-violet-500/20' :
-                    scenario.color === 'teal' ? 'bg-teal-500/20' : 'bg-amber-500/20'
-                  }`}>
-                    <scenario.icon className={`w-6 h-6 ${
-                      scenario.color === 'violet' ? 'text-violet-600 dark:text-violet-400' :
-                      scenario.color === 'teal' ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'
-                    }`} />
+                  <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-zinc-100 dark:bg-zinc-800/50">
+                    <scenario.icon className="w-6 h-6 text-zinc-700 dark:text-zinc-300" />
                   </div>
                   <span className="text-lg font-medium text-zinc-800 dark:text-zinc-200 flex-1 text-left">
                     {scenario.label}
                   </span>
-                  <ChevronRight className="w-5 h-5 text-zinc-400 dark:text-zinc-600 group-hover:text-violet-600 dark:group-hover:text-violet-400 transition-colors" />
+                  <ChevronRight className="w-5 h-5 text-zinc-400 dark:text-zinc-600 group-hover:text-zinc-700 dark:group-hover:text-zinc-300 transition-colors" />
                 </motion.button>
               ))}
             </div>
@@ -429,7 +435,7 @@ export default function Practice() {
                   setSelectedScenario(null);
                   handleReset();
                 }}
-                className="text-zinc-500 hover:text-white mb-4"
+                className="text-zinc-600 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-white mb-4"
               >
                 ← Back to scenarios
               </Button>
@@ -441,7 +447,7 @@ export default function Practice() {
                 className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-8"
               >
                 <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm text-violet-600 dark:text-violet-400">Question</p>
+                  <p className="text-sm font-medium text-zinc-600 dark:text-zinc-500">Question</p>
                   <div className="flex items-center gap-2">
                     <Button
                       size="sm"
@@ -473,25 +479,23 @@ export default function Practice() {
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-violet-300 dark:border-violet-500/20 shadow-md dark:shadow-none p-6 space-y-4"
+                  className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/10 shadow-md dark:shadow-none p-6 space-y-4"
                 >
                   <div className="flex items-center justify-between">
                     <h4 className="font-semibold text-zinc-900 dark:text-zinc-100">Create Your Own Question</h4>
-                    <button onClick={() => setShowCustomQuestion(false)} className="text-zinc-500 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
+                    <button onClick={() => setShowCustomQuestion(false)} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white">
                       ×
                     </button>
                   </div>
                   <div>
                     <Label className="text-zinc-800 dark:text-zinc-300 mb-2 block">Purpose</Label>
                     <Select value={questionPurpose} onValueChange={setQuestionPurpose}>
-                      <SelectTrigger className="bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10">
+                      <SelectTrigger className={inputClass}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="interview">Job Interview</SelectItem>
-                        <SelectItem value="application">Application Essay</SelectItem>
-                        <SelectItem value="scholarship">Scholarship</SelectItem>
-                        <SelectItem value="behavioral">Behavioral</SelectItem>
+                        <SelectItem value="interview">Interviews</SelectItem>
+                        <SelectItem value="presentation">Speeches & Presentation</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -501,12 +505,12 @@ export default function Practice() {
                       value={customQuestion}
                       onChange={(e) => setCustomQuestion(e.target.value)}
                       placeholder="e.g., Tell me about your leadership experience..."
-                      className="bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100"
+                      className={inputClass}
                     />
                   </div>
                   <Button
                     onClick={handleUseCustomQuestion}
-                    className="w-full bg-gradient-to-r from-violet-600 to-violet-500"
+                    className={`w-full ${primaryCtaClass}`}
                     disabled={!customQuestion.trim()}
                   >
                     Use This Question
@@ -530,34 +534,29 @@ export default function Practice() {
                     className="mt-8 grid grid-cols-4 gap-3 w-full max-w-2xl"
                   >
                     <div className="bg-white dark:bg-[hsl(var(--card))] rounded-xl p-4 text-center shadow-sm dark:shadow-none border border-zinc-200 dark:border-white/5">
-                      <div className="text-2xl font-bold text-teal-600 dark:text-teal-400 mb-1">
+                      <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">
                         {Math.round(duration / 60)}:{String(duration % 60).padStart(2, '0')}
                       </div>
                       <div className="text-xs text-zinc-600 dark:text-zinc-500">Duration</div>
                     </div>
                     <div className="bg-white dark:bg-[hsl(var(--card))] rounded-xl p-4 text-center shadow-sm dark:shadow-none border border-zinc-200 dark:border-white/5">
-                      <div className="text-2xl font-bold text-violet-600 dark:text-violet-400 mb-1">
-                        {rawTranscript.split(/\s+/).filter(Boolean).length}
+                      <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+                        {wordCount}
                       </div>
                       <div className="text-xs text-zinc-600 dark:text-zinc-500">Words</div>
                     </div>
                     <div className="bg-white dark:bg-[hsl(var(--card))] rounded-xl p-4 text-center shadow-sm dark:shadow-none border border-zinc-200 dark:border-white/5">
-                      <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-1">
-                        {duration > 0 ? Math.round((rawTranscript.split(/\s+/).filter(Boolean).length / duration) * 60) : 0}
+                      <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+                        {wpm}
                       </div>
                       <div className="text-xs text-zinc-600 dark:text-zinc-500">WPM</div>
                     </div>
-                    {/* Live Thinking Pause Counter - Practice mode always tracks for learning */}
                     <div className={`rounded-xl p-4 text-center shadow-sm dark:shadow-none border transition-colors duration-300 ${
-                      liveFillerCount > 5 
-                        ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/30' 
+                      liveFillerCount > 5
+                        ? 'bg-zinc-100 dark:bg-zinc-800/50 border-zinc-400 dark:border-white/20'
                         : 'bg-white dark:bg-[hsl(var(--card))] border-zinc-200 dark:border-white/5'
                     }`}>
-                      <div className={`text-2xl font-bold mb-1 ${
-                        liveFillerCount > 5 
-                          ? 'text-amber-600 dark:text-amber-400' 
-                          : 'text-amber-500 dark:text-amber-500'
-                      }`}>
+                      <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">
                         {liveFillerCount}
                       </div>
                       <div className="text-xs text-zinc-600 dark:text-zinc-500">Pauses</div>
@@ -579,9 +578,9 @@ export default function Practice() {
                         onClick={isRecording ? handleStopRecording : handleStartRecording}
                         disabled={isGeneratingFeedback}
                         className={`h-14 px-8 rounded-2xl ${
-                          isRecording 
-                            ? 'bg-rose-600 hover:bg-rose-500' 
-                            : 'bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400'
+                          isRecording
+                            ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                            : primaryCtaClass
                         }`}
                       >
                         {isGeneratingFeedback ? (
@@ -615,7 +614,7 @@ export default function Practice() {
                     <Button
                       size="lg"
                       onClick={() => setShowNamingModal(true)}
-                      className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+                      className={primaryCtaClass}
                     >
                       <Save className="w-4 h-4 mr-2" />
                       Save to Library
@@ -624,7 +623,7 @@ export default function Practice() {
                       size="lg"
                       variant="outline"
                       onClick={handleNextQuestion}
-                      className="border-white/10"
+                      className="border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5"
                     >
                       Next Question
                       <ArrowRight className="w-4 h-4 ml-2" />
@@ -633,7 +632,7 @@ export default function Practice() {
                       size="lg"
                       variant="outline"
                       onClick={handleReset}
-                      className="border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
+                      className="border-zinc-300 dark:border-white/10 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/5"
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
@@ -656,14 +655,37 @@ export default function Practice() {
                   {/* Score Cards */}
                   {isGeneratingFeedback ? (
                     <div className="flex items-center justify-center py-12">
-                      <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+                      <Loader2 className="w-8 h-8 text-zinc-600 dark:text-zinc-400 animate-spin" />
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-4">
-                      <ScoreCard label="Clarity" value={feedback.clarity} color="violet" delay={0} />
-                      <ScoreCard label="Confidence" value={feedback.confidence} color="teal" delay={0.1} />
-                      <ScoreCard label="Thinking Pauses" value={feedback.fillers} maxValue={10} color="amber" delay={0.2} />
-                      <ScoreCard label="Relevance" value={feedback.relevance} color="violet" delay={0.3} />
+                      {feedbackMetrics.map((metric) => {
+                        const value = feedback[metric.key];
+                        const percentage = (value / metric.maxValue) * 100;
+                        return (
+                          <motion.div
+                            key={metric.key}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ duration: 0.4, delay: metric.delay }}
+                            className="bg-white dark:bg-[#1a1a24] rounded-xl p-4 border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none"
+                          >
+                            <p className="text-zinc-600 dark:text-zinc-500 text-sm mb-2">{metric.label}</p>
+                            <div className="flex items-end gap-2 mb-3">
+                              <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{value}</span>
+                              <span className="text-zinc-500 dark:text-zinc-600 text-sm mb-1">/ {metric.maxValue}</span>
+                            </div>
+                            <div className="h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                              <motion.div
+                                className="h-full rounded-full bg-primary"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${percentage}%` }}
+                                transition={{ duration: 0.8, delay: metric.delay + 0.2, ease: 'easeOut' }}
+                              />
+                            </div>
+                          </motion.div>
+                        );
+                      })}
                     </div>
                   )}
                   
@@ -675,7 +697,7 @@ export default function Practice() {
                     className="bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
                   >
                     <div className="flex items-center gap-2 mb-4">
-                      <Sparkles className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+                      <Sparkles className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
                       <h4 className="font-semibold text-zinc-900 dark:text-zinc-100">Suggested Improvement</h4>
                     </div>
                     <p className="text-zinc-700 dark:text-zinc-400 leading-relaxed">
@@ -694,17 +716,17 @@ export default function Practice() {
                       feature="AI Coaching"
                       description="Get detailed AI-powered feedback on your responses, including pacing analysis, emotional tone insights, and personalized improvement suggestions."
                     >
-                      <div className="bg-gradient-to-br from-[#1a1a24] to-[#13131a] rounded-2xl border border-white/5 p-6">
-                        <h3 className="text-lg font-semibold text-zinc-100 mb-4 flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-violet-400" />
+                      <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 p-6">
+                        <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-4 flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
                           AI Coaching
                         </h3>
-                        <div className="space-y-3 text-sm text-zinc-400">
-                          <p>• <strong className="text-zinc-300">Pacing:</strong> Your speaking rate was steady—ideal for clarity</p>
-                          <p>• <strong className="text-zinc-300">Emotional Tone:</strong> Confident and authentic with moments of genuine passion</p>
-                          <p>• <strong className="text-zinc-300">Voice Pattern:</strong> Clarity improved since last session</p>
-                          <p>• <strong className="text-zinc-300">Pause Patterns:</strong> Thinking pauses tend to occur during transitions—try bridging phrases</p>
-                          <p>• <strong className="text-zinc-300">Recommendation:</strong> Add specific metrics to strengthen impact</p>
+                        <div className="space-y-3 text-sm text-zinc-600 dark:text-zinc-400">
+                          <p>• <strong className="text-zinc-800 dark:text-zinc-300">Pacing:</strong> Your speaking rate was steady—ideal for clarity</p>
+                          <p>• <strong className="text-zinc-800 dark:text-zinc-300">Emotional Tone:</strong> Confident and authentic with moments of genuine passion</p>
+                          <p>• <strong className="text-zinc-800 dark:text-zinc-300">Voice Pattern:</strong> Clarity improved since last session</p>
+                          <p>• <strong className="text-zinc-800 dark:text-zinc-300">Pause Patterns:</strong> Thinking pauses tend to occur during transitions—try bridging phrases</p>
+                          <p>• <strong className="text-zinc-800 dark:text-zinc-300">Recommendation:</strong> Add specific metrics to strengthen impact</p>
                         </div>
                       </div>
                     </PremiumGate>
@@ -715,10 +737,10 @@ export default function Practice() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.5 }}
-                    className="p-4 bg-violet-500/10 rounded-xl border border-violet-500/20"
+                    className="p-4 bg-zinc-100 dark:bg-zinc-800/50 rounded-xl border border-zinc-200 dark:border-white/10"
                   >
-                    <p className="text-violet-300 text-sm">
-                      💪 Great effort! Your response showed strong personal connection. 
+                    <p className="text-zinc-700 dark:text-zinc-300 text-sm">
+                      Great effort! Your response showed strong personal connection.
                       Try to add more specific metrics or outcomes next time.
                     </p>
                   </motion.div>

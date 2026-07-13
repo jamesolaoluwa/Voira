@@ -88,7 +88,7 @@ export default function Growth() {
   };
   
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#0D0D12] p-6 lg:p-10">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -116,8 +116,8 @@ export default function Growth() {
           <p className="text-zinc-600 dark:text-zinc-500 mb-6 max-w-md mx-auto">
             Start recording to track your speaking growth over time. Your progress will appear here.
           </p>
-          <Link to={createPageUrl('Speak')}>
-            <Button className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400">
+          <Link to={createPageUrl('Practice')}>
+            <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
               <Mic className="w-4 h-4 mr-2" />
               Start Recording
             </Button>
@@ -135,7 +135,7 @@ export default function Growth() {
         {/* Thinking Pause Density (using density, not raw count) */}
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
-            <Mic className="w-5 h-5 text-violet-400" />
+            <Mic className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
             {stats.totalSessions >= 2 && stats.trends.fillers.reductionPct !== 0 && (
               <span className={`text-xs ${stats.trends.fillers.reductionPct >= 0 ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
                 {getTrendIcon(stats.trends.fillers.direction, stats.trends.fillers.reductionPct >= 0)}
@@ -151,7 +151,7 @@ export default function Growth() {
         {/* Confidence Score (reliability-weighted) */}
         <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6">
           <div className="flex items-center justify-between mb-3">
-            <Sparkles className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+            <Sparkles className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
             {stats.totalSessions >= 2 && stats.trends.confidence.change !== 0 && (
               <span className={`text-xs ${stats.trends.confidence.change >= 0 ? 'text-green-400' : 'text-rose-400'} flex items-center`}>
                 {getTrendIcon(stats.trends.confidence.direction, stats.trends.confidence.change >= 0)}
@@ -214,15 +214,15 @@ export default function Growth() {
         >
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Thinking Pause Density</h3>
-            <p className="text-xs text-teal-600 dark:text-teal-400">Normalized per 100 words</p>
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">Normalized per 100 words</p>
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData.fillerData}>
                 <defs>
                   <linearGradient id="fillerGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/>
+                    <stop offset="5%" stopColor="#27272a" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#27272a" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
@@ -232,7 +232,7 @@ export default function Growth() {
                 <Area 
                   type="monotone" 
                   dataKey="density" 
-                  stroke="#8B5CF6" 
+                  stroke="#27272a" 
                   strokeWidth={2}
                   fill="url(#fillerGradient)" 
                 />
@@ -250,7 +250,7 @@ export default function Growth() {
         >
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Confidence Trend</h3>
-            <p className="text-xs text-violet-600 dark:text-violet-400">
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
               Baseline: {DEFAULT_BASELINE.confidenceExpectation}
             </p>
           </div>
@@ -273,10 +273,10 @@ export default function Growth() {
                 <Line 
                   type="monotone" 
                   dataKey="score" 
-                  stroke="#14B8A6" 
+                  stroke="#27272a" 
                   strokeWidth={3}
-                  dot={{ fill: '#14B8A6', strokeWidth: 0, r: 4 }}
-                  activeDot={{ r: 6, fill: '#14B8A6' }}
+                  dot={{ fill: '#a1a1aa', strokeWidth: 0, r: 4 }}
+                  activeDot={{ r: 6, fill: '#27272a' }}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -322,7 +322,7 @@ export default function Growth() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-        className="bg-gradient-to-br from-violet-100 to-teal-100 dark:from-violet-500/10 dark:to-teal-500/10 rounded-2xl border border-violet-200 dark:border-white/5 p-6"
+        className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
       >
         <div className="flex items-center gap-2 mb-6">
           <Award className="w-5 h-5 text-amber-600 dark:text-amber-400" />

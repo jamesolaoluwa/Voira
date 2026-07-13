@@ -112,7 +112,7 @@ export default function ResetPassword() {
       {/* Left visual panel */}
       <div className="hidden lg:flex lg:w-3/5 bg-zinc-100 dark:bg-[#0a0a0f] relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-500/20 rounded-full blur-3xl animate-pulse" />
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-zinc-500/20 rounded-full blur-3xl animate-pulse" />
         </div>
         <div className="relative z-10 flex flex-col items-center justify-center w-full p-12">
           <h2 className="text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-4">Voira</h2>
@@ -129,13 +129,13 @@ export default function ResetPassword() {
           className="w-full max-w-md"
         >
           <div className="mb-8 flex items-center justify-between">
-            <Link to={createPageUrl('Landing')} className="text-2xl font-semibold">
+            <Link to={createPageUrl('Landing')} className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
               Voira
             </Link>
             <ThemeToggle showLabel={false} />
           </div>
 
-          <h1 className="text-3xl font-bold mb-2">Set a new password</h1>
+          <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">Set a new password</h1>
           <p className="text-zinc-600 dark:text-zinc-500 mb-6">
             Enter a new password to update your account.
           </p>
@@ -157,12 +157,12 @@ export default function ResetPassword() {
 
           {status === 'success' ? (
             <div className="space-y-4">
-              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 text-green-600">
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-sm text-emerald-600 dark:text-emerald-400">
                 Your password was updated successfully.
               </div>
               <Link
                 to={createPageUrl('Auth')}
-                className="w-full h-12 inline-flex items-center justify-center rounded-md border bg-white text-zinc-900"
+                className="w-full h-12 inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 Return to sign in
               </Link>
@@ -170,14 +170,14 @@ export default function ResetPassword() {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
               <div>
-                <Label>New Password</Label>
+                <Label className="text-zinc-800 dark:text-zinc-300">New Password</Label>
                 <div className="relative">
                   <Input
                     type={visible ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="pr-10"
+                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100 pr-10"
                   />
                   <button
                     type="button"
@@ -190,12 +190,13 @@ export default function ResetPassword() {
               </div>
 
               <div>
-                <Label>Confirm Password</Label>
+                <Label className="text-zinc-800 dark:text-zinc-300">Confirm Password</Label>
                 <Input
                   type={visible ? 'text' : 'password'}
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
                   required
+                  className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100"
                 />
               </div>
 
@@ -208,13 +209,13 @@ export default function ResetPassword() {
               <Button
                 type="submit"
                 disabled={sessionLoading || status === 'saving' || !recoveryReady}
-                className="w-full h-12 bg-gradient-to-r from-violet-600 to-violet-500 text-white"
+                className="w-full h-12 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 {status === 'saving' ? 'Saving…' : 'Set new password'}
               </Button>
 
               <div className="text-center">
-                <Link to={createPageUrl('Auth')} className="text-sm underline">
+                <Link to={createPageUrl('Auth')} className="text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white underline">
                   Back to sign in
                 </Link>
               </div>
