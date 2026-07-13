@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Outlet } from 'react-router-dom';
-import TopNav from '@/components/navigation/TopNav';
+import FloatingAppNav from '@/components/navigation/FloatingAppNav';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function Layout({ children, currentPageName }) {
@@ -117,7 +117,7 @@ export default function Layout({ children, currentPageName }) {
         </main>
       ) : (
         <>
-          <TopNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} isAdmin={isAdmin} />
+          <FloatingAppNav currentPageName={currentPageName} isAuthenticated={isAuthenticated} isAdmin={isAdmin} />
           <main className="min-h-screen">
             {children || <Outlet />}
             {/* {!import.meta.env.PROD && <AuthDebug />} */}
