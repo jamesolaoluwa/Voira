@@ -319,7 +319,7 @@ export default function RefineDraft() {
                 size="lg"
                 onClick={handleStartRecording}
                 disabled={isProcessing}
-                className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 <Mic className="w-5 h-5 mr-2" />
                 Record Changes
@@ -355,7 +355,7 @@ export default function RefineDraft() {
             size="lg"
             onClick={handleRefine}
             disabled={isProcessing || (!existingDraft && !uploadedFile)}
-            className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 px-12 h-14 text-lg"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 px-12 h-14 text-lg"
           >
             {isProcessing ? (
               <>

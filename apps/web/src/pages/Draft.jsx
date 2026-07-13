@@ -881,7 +881,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
           </p>
           <Button
             onClick={() => navigate(createPageUrl('Speak') + '?type=application')}
-            className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Mic className="w-4 h-4 mr-2" />
             Start Recording
@@ -966,7 +966,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
               <Button
                 onClick={handleSaveDraftChanges}
                 disabled={isSavingDraft}
-                className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 {isSavingDraft ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -988,7 +988,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
               </Button>
               <Button
                 onClick={handleSave}
-                className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 <Save className="w-4 h-4 mr-2" />
                 Save to Library
@@ -1112,7 +1112,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                       <Button
                         onClick={() => handleRegenerate('initial')}
                         disabled={isRegenerating}
-                        className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                        className="bg-primary text-primary-foreground hover:bg-primary/90"
                       >
                         {isRegenerating && regenerateSource === 'initial' ? (
                           <>
@@ -1248,7 +1248,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                   <div className="text-4xl font-bold text-zinc-900 dark:text-zinc-100">{draft.alignment.score}%</div>
                   <div className="flex-1 h-3 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
                     <motion.div
-                      className="h-full bg-zinc-900 dark:bg-white rounded-full"
+                      className="h-full bg-primary rounded-full"
                       initial={{ width: 0 }}
                       animate={{ width: `${draft.alignment.score}%` }}
                       transition={{ duration: 0.8, ease: 'easeOut' }}
@@ -1398,7 +1398,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
             <Button 
               onClick={handleApplyRefinement}
               disabled={isApplyingRefinement || !selectedText}
-              className="w-full bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-white/90 text-white dark:text-zinc-900 border border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground border border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isApplyingRefinement ? (
                 <>

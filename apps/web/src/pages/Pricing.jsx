@@ -25,7 +25,7 @@ const billingToggleActiveClass =
   'bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-white/10';
 
 const primaryCtaClass =
-  'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90';
+  'bg-primary text-primary-foreground hover:bg-primary/90';
 
 export default function Pricing() {
   const [billingCycle, setBillingCycle] = useState('monthly');

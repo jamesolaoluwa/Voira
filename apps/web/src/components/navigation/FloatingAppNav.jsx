@@ -111,7 +111,7 @@ export default function FloatingAppNav({
                       {active && (
                         <motion.span
                           layoutId="floatingActiveNav"
-                          className="absolute inset-x-3 -bottom-0.5 h-0.5 rounded-full bg-zinc-900 dark:bg-white"
+                          className="absolute inset-x-3 -bottom-0.5 h-0.5 rounded-full bg-primary"
                           transition={{ type: 'spring', stiffness: 500, damping: 35 }}
                         />
                       )}

@@ -353,7 +353,7 @@ export default function Settings() {
           </div>
           
           <Link to={createPageUrl('Pricing')}>
-            <Button className="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">
+            <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
               <Crown className="w-4 h-4 mr-2" />
               Upgrade Plan
             </Button>
@@ -455,7 +455,7 @@ export default function Settings() {
           <Button 
             onClick={saveSettings}
             disabled={isSaving || isLoading}
-            className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 px-8 disabled:opacity-50"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 disabled:opacity-50"
           >
             {isSaving ? (
               <>

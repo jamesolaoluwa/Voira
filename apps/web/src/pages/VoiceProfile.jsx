@@ -482,7 +482,7 @@ export default function VoiceProfile() {
           <Button 
             onClick={handleSaveProfile}
             disabled={isSaving || isLoading}
-            className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 px-8 disabled:opacity-50"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 disabled:opacity-50"
           >
             {isSaving ? (
               <>

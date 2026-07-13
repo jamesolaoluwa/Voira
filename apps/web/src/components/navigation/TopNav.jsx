@@ -132,7 +132,7 @@ export default function TopNav({ currentPageName, isAuthenticated = true, isAdmi
                     </Button>
                   </Link>
                   <Link to={createPageUrl('Auth')}>
-                    <Button className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">
+                    <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
                       Get Started
                     </Button>
                   </Link>
@@ -191,7 +191,7 @@ export default function TopNav({ currentPageName, isAuthenticated = true, isAdmi
                     </Button>
                   </Link>
                   <Link to={createPageUrl('Auth')} onClick={() => setMobileMenuOpen(false)}>
-                    <Button className="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">
+                    <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
                       Get Started
                     </Button>
                   </Link>

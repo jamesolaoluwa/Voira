@@ -85,7 +85,7 @@ export default function BadgeNotification({ badge, isOpen, onClose }) {
                 
                 <Button
                   onClick={onClose}
-                  className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   Awesome!
                 </Button>

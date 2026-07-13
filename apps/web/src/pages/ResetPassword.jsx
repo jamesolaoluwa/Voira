@@ -162,7 +162,7 @@ export default function ResetPassword() {
               </div>
               <Link
                 to={createPageUrl('Auth')}
-                className="w-full h-12 inline-flex items-center justify-center rounded-md bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                className="w-full h-12 inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 Return to sign in
               </Link>
@@ -209,7 +209,7 @@ export default function ResetPassword() {
               <Button
                 type="submit"
                 disabled={sessionLoading || status === 'saving' || !recoveryReady}
-                className="w-full h-12 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 disabled:opacity-50"
+                className="w-full h-12 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 {status === 'saving' ? 'Saving…' : 'Set new password'}
               </Button>

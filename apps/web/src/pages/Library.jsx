@@ -534,7 +534,7 @@ export default function Library() {
                 size="sm"
                 onClick={() => setActiveFilter(filter)}
                 className={activeFilter === filter 
-                  ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 border-transparent' 
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 border-transparent' 
                   : 'border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5'}
               >
                 {filter}

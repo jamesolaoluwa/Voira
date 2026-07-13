@@ -8,7 +8,8 @@ Colors are stored as HSL channel triplets in CSS variables and consumed via `hsl
 
 ### App theme (global)
 
-- Brand accent: `#5B5CF6` -> `--accent / --primary: 239 84% 67%`.
+- Brand accent: cyan `hsl(185 100% 50%)` dark / `hsl(185 100% 42%)` light -> `--accent` / `--primary`.
+  (Previously violet `#5B5CF6`; replaced to avoid AI-palette gradients while keeping a clear brand color.)
 - Light: `--background: 0 0% 100%`, `--foreground: 0 0% 9%`, `--muted-foreground: 0 0% 45%`, `--border: 0 0% 90%`.
 - Dark: `--background: 0 0% 0%` (pure black), `--foreground: 240 6% 96%` (off-white), `--muted-foreground: 0 0% 60%`, translucent borders/surfaces (`0 0% 100% / 0.08`, `/ 0.03`).
 - Full shadcn token set present: card, popover, primary, secondary, muted, accent, destructive, input, ring, surface, chart-1..5, sidebar-*.

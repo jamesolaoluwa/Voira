@@ -4,8 +4,8 @@
 
 /* ---------------------------------------------------------------------------
    Design tokens & typography (single source of truth).
-   Brand accent: #5B5CF6. Dark: pure black #000, off-white text #F5F5F7.
-   Layout.jsx may override these for app shell; landing uses these tokens.
+   Brand accent: cyan hsl(185 100% 50%). Dark: pure black #000, off-white text.
+   Layout.jsx mirrors these for the app shell; landing uses these tokens.
    --------------------------------------------------------------------------- */
 @layer base {
   :root {
@@ -25,19 +25,19 @@
     --border: 0 0% 90%;
     --card: 0 0% 100%;
     --card-foreground: 0 0% 9%;
-    --accent: 239 84% 67%;
+    --accent: 185 100% 42%;
     --accent-foreground: 0 0% 100%;
     --surface: 0 0% 98%;
     --popover: 0 0% 100%;
     --popover-foreground: 0 0% 9%;
-    --primary: 239 84% 67%;
+    --primary: 185 100% 42%;
     --primary-foreground: 0 0% 100%;
     --secondary: 0 0% 96%;
     --secondary-foreground: 0 0% 9%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
     --input: 0 0% 90%;
-    --ring: 239 84% 67%;
+    --ring: 185 100% 42%;
     --radius: 0.5rem;
     --chart-1: 12 76% 61%;
     --chart-2: 173 58% 39%;
@@ -63,19 +63,19 @@
     --border: 0 0% 100% / 0.08;
     --card: 0 0% 100% / 0.03;
     --card-foreground: 240 6% 96%;
-    --accent: 239 84% 67%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 185 100% 50%;
+    --accent-foreground: 0 0% 0%;
     --surface: 0 0% 100% / 0.03;
     --popover: 0 0% 6%;
     --popover-foreground: 240 6% 96%;
-    --primary: 239 84% 67%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 185 100% 50%;
+    --primary-foreground: 0 0% 0%;
     --secondary: 0 0% 12%;
     --secondary-foreground: 240 6% 96%;
     --destructive: 0 63% 31%;
     --destructive-foreground: 0 0% 98%;
     --input: 0 0% 100% / 0.08;
-    --ring: 239 84% 67%;
+    --ring: 185 100% 50%;
     --radius: 0.5rem;
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;

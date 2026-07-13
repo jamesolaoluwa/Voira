@@ -72,7 +72,7 @@ export default function SessionNamingModal({
             <Button
               onClick={handleSave}
               disabled={!sessionName.trim()}
-              className="flex-1 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+              className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Save className="w-4 h-4 mr-2" />
               Save Session

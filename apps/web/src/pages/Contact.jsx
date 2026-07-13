@@ -98,7 +98,7 @@ export default function Contact() {
 
               <Button
                 type="submit"
-                className="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 <Send className="w-4 h-4 mr-2" />
                 Send Message

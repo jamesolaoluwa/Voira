@@ -98,11 +98,11 @@ export default function Profile() {
             <div className="relative">
               <Avatar className="w-24 h-24">
                 <AvatarImage src={avatar} />
-                <AvatarFallback className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 text-2xl">
+                <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
                   {displayName.split(' ').map(n => n[0]).join('')}
                 </AvatarFallback>
               </Avatar>
-              <button className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 flex items-center justify-center text-xs transition-colors">
+              <button className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center text-xs transition-colors">
                 ✎
               </button>
             </div>
@@ -112,7 +112,7 @@ export default function Profile() {
               <p className="text-zinc-600 dark:text-zinc-500 mb-3">{email}</p>
               <Badge className={`${
                 plan === 'Premium' 
-                  ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900' 
+                  ? 'bg-primary text-primary-foreground' 
                   : 'bg-zinc-300 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400'
               }`}>
                 {plan === 'Premium' && <Crown className="w-3 h-3 mr-1" />}
@@ -138,7 +138,7 @@ export default function Profile() {
             </div>
             {!isAdmin && plan === 'Free' && (
               <Link to={createPageUrl('Pricing')}>
-                <Button className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">
+                <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
                   <Crown className="w-4 h-4 mr-2" />
                   Upgrade to Premium
                 </Button>
@@ -153,7 +153,7 @@ export default function Profile() {
 
             <div className="bg-zinc-100 dark:bg-[#1a1a24]/50 rounded-xl p-4 border border-zinc-200 dark:border-transparent">
               <div className="flex items-center gap-2 mb-2">
-                <Calendar className="w-4 h-4 text-zinc-700 dark:text-zinc-300" />
+                <Calendar className="w-4 h-4 text-primary" />
                 <span className="text-xs text-zinc-600 dark:text-zinc-500">Resets</span>
               </div>
               <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{resetDate}</p>
@@ -161,7 +161,7 @@ export default function Profile() {
 
             <div className="bg-zinc-100 dark:bg-[#1a1a24]/50 rounded-xl p-4 border border-zinc-200 dark:border-transparent">
               <div className="flex items-center gap-2 mb-2">
-                <Crown className="w-4 h-4 text-zinc-700 dark:text-zinc-300" />
+                <Crown className="w-4 h-4 text-primary" />
                 <span className="text-xs text-zinc-600 dark:text-zinc-500">Plan</span>
               </div>
               <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{plan}</p>
@@ -188,8 +188,8 @@ export default function Profile() {
                   transition={{ delay: 0.3 + index * 0.1 }}
                   className="bg-white dark:bg-[hsl(var(--card))] rounded-xl border border-zinc-200 dark:border-white/5 p-5"
                 >
-                  <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-white/10 flex items-center justify-center mb-3">
-                    <Icon className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
+                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-3">
+                    <Icon className="w-5 h-5 text-primary" />
                   </div>
                   <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">{stat.value}</p>
                   <p className="text-xs text-zinc-600 dark:text-zinc-500">{stat.label}</p>
@@ -216,8 +216,8 @@ export default function Profile() {
                     whileTap={{ scale: 0.98 }}
                     className="w-full bg-white dark:bg-[hsl(var(--card))] hover:bg-zinc-50 dark:hover:bg-[hsl(var(--card))]/80 rounded-xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-4 flex items-center gap-3 transition-colors"
                   >
-                    <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-white/10 flex items-center justify-center">
-                      <Icon className="w-5 h-5 text-zinc-700 dark:text-zinc-300" />
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <Icon className="w-5 h-5 text-primary" />
                     </div>
                     <span className="text-zinc-800 dark:text-zinc-300 font-medium">{action.label}</span>
                   </motion.button>

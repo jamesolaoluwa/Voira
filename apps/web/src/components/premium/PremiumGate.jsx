@@ -26,7 +26,7 @@ export default function PremiumGate({
           <Link to={createPageUrl('Pricing')}>
             <Button
               size="sm"
-              className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 shadow-lg"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg"
             >
               <Crown className="w-4 h-4 mr-2" />
               Upgrade for {feature}
@@ -58,7 +58,7 @@ export default function PremiumGate({
       
       <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
         <Link to={createPageUrl('Pricing')}>
-          <Button className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">
+          <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
             <Sparkles className="w-4 h-4 mr-2" />
             Upgrade to Premium
           </Button>

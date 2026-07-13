@@ -69,7 +69,7 @@ const feedbackMetrics = [
 ];
 
 const primaryCtaClass =
-  'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90';
+  'bg-primary text-primary-foreground hover:bg-primary/90';
 
 const inputClass =
   'bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100';
@@ -677,7 +677,7 @@ export default function Practice() {
                             </div>
                             <div className="h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
                               <motion.div
-                                className="h-full rounded-full bg-zinc-900 dark:bg-white"
+                                className="h-full rounded-full bg-primary"
                                 initial={{ width: 0 }}
                                 animate={{ width: `${percentage}%` }}
                                 transition={{ duration: 0.8, delay: metric.delay + 0.2, ease: 'easeOut' }}

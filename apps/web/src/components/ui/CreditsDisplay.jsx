@@ -41,7 +41,7 @@ export default function CreditsDisplay({
   if (compact) {
     return (
       <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
-        <Zap className={`w-3 h-3 ${isLow ? 'text-amber-400' : 'text-zinc-600 dark:text-zinc-400'}`} />
+        <Zap className={`w-3 h-3 ${isLow ? 'text-amber-400' : 'text-primary'}`} />
         <span className="text-xs text-zinc-600 dark:text-zinc-400">
           {credits} / {total}
         </span>
@@ -53,7 +53,7 @@ export default function CreditsDisplay({
     <div>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <Zap className={`w-4 h-4 ${isLow ? 'text-amber-400' : 'text-zinc-400'}`} />
+          <Zap className={`w-4 h-4 ${isLow ? 'text-amber-400' : 'text-primary'}`} />
           <span className="text-sm text-zinc-400">Credits</span>
         </div>
         <span className="text-sm font-medium text-zinc-300">
@@ -68,7 +68,7 @@ export default function CreditsDisplay({
           className={`h-full ${
             isLow 
               ? 'bg-gradient-to-r from-amber-500 to-amber-400' 
-              : 'bg-zinc-600 dark:bg-zinc-400'
+              : 'bg-primary'
           }`}
         />
       </div>

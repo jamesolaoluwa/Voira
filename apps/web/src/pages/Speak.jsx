@@ -1342,7 +1342,7 @@ export default function Speak() {
                     <Button
                       size="sm"
                       onClick={handleResumeSession}
-                      className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 text-xs h-8"
+                      className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs h-8"
                     >
                       Resume
                     </Button>
@@ -1687,7 +1687,7 @@ export default function Speak() {
                 size="lg"
                 onClick={handleStart}
                 disabled={recordingState === 'starting' || isTranscribing || isGenerating || !canStartRecording}
-                className="h-16 px-10 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 rounded-2xl text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-16 px-10 bg-primary text-primary-foreground hover:bg-primary/90 rounded-2xl text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {recordingState === 'starting' ? (
                   <>
@@ -1732,7 +1732,7 @@ export default function Speak() {
                 size="lg"
                 onClick={handleFinish}
                 disabled={isTranscribing || isGenerating}
-                className="h-14 px-8 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 rounded-2xl disabled:opacity-50"
+                className="h-14 px-8 bg-primary text-primary-foreground hover:bg-primary/90 rounded-2xl disabled:opacity-50"
               >
                 <Square className="w-4 h-4 mr-2" />
                 Finish
@@ -1888,7 +1888,7 @@ export default function Speak() {
                 <Button
                   onClick={handleSaveDraft}
                   disabled={isSavingDraft}
-                  className="flex-1 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
+                  className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   {isSavingDraft ? (
                     <>

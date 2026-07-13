@@ -23,20 +23,20 @@ export default function Layout({ children, currentPageName }) {
             --card-foreground: 0 0% 9%;
             --popover: 0 0% 100%;
             --popover-foreground: 0 0% 9%;
-            --primary: 239 84% 67%;
+            --primary: 185 100% 42%;
             --primary-foreground: 0 0% 100%;
             --secondary: 0 0% 96%;
             --secondary-foreground: 0 0% 9%;
             --muted: 0 0% 96%;
             --muted-foreground: 0 0% 45%;
-            --accent: 239 84% 67%;
+            --accent: 185 100% 42%;
             --accent-foreground: 0 0% 100%;
             --surface: 0 0% 98%;
             --destructive: 0 84% 60%;
             --destructive-foreground: 0 0% 100%;
             --border: 0 0% 90%;
             --input: 0 0% 90%;
-            --ring: 239 84% 67%;
+            --ring: 185 100% 42%;
             --radius: 0.5rem;
           }
 
@@ -47,20 +47,20 @@ export default function Layout({ children, currentPageName }) {
             --card-foreground: 240 6% 96%;
             --popover: 0 0% 6%;
             --popover-foreground: 240 6% 96%;
-            --primary: 239 84% 67%;
-            --primary-foreground: 0 0% 100%;
+            --primary: 185 100% 50%;
+            --primary-foreground: 0 0% 0%;
             --secondary: 0 0% 12%;
             --secondary-foreground: 240 6% 96%;
             --muted: 0 0% 12%;
             --muted-foreground: 0 0% 60%;
-            --accent: 239 84% 67%;
-            --accent-foreground: 0 0% 100%;
+            --accent: 185 100% 50%;
+            --accent-foreground: 0 0% 0%;
             --surface: 0 0% 100% / 0.03;
             --destructive: 0 63% 31%;
             --destructive-foreground: 0 0% 98%;
             --border: 0 0% 100% / 0.08;
             --input: 0 0% 100% / 0.08;
-            --ring: 239 84% 67%;
+            --ring: 185 100% 50%;
             --radius: 0.5rem;
           }
           
@@ -80,7 +80,7 @@ export default function Layout({ children, currentPageName }) {
           }
           
           ::selection {
-            background: rgba(91, 92, 246, 0.25);
+            background: hsl(185 100% 50% / 0.3);
           }
           
           ::-webkit-scrollbar {
