@@ -45,7 +45,7 @@ const typeLabels = {
   application: 'Application Essay',
   interview: 'Interview Response',
   free: 'Free Speak',
-  refine: 'Refine Draft',
+  refine: 'Refine a Draft',
 };
 
 /**

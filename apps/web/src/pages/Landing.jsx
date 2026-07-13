@@ -15,9 +15,8 @@ import { useScramble } from 'use-scramble';
 import {
   ArrowRight,
   GraduationCap,
-  Award,
+  RefreshCw,
   Mic,
-  Megaphone,
   FileText,
 } from 'lucide-react';
 
@@ -31,51 +30,38 @@ const FEATURE_TABS = [
     icon: <FileText className="h-auto w-4 shrink-0" />,
     label: 'Applications',
     content: {
-      badge: 'College & Graduate',
-      title: 'Personal statements in your own voice.',
-      description: 'Talk through your story. Voira writes a first draft for your application essay so you are not starting from a blank page.',
+      badge: 'College & Scholarships',
+      title: 'Application essays in your own voice.',
+      description: 'Speak about your experience. Voira turns it into a first draft for your college and scholarship applications.',
       icon: <GraduationCap className="h-16 w-16 text-accent/30" />,
       imageSrc: "/assets/voira-media/Anna'sAvatar.jpg",
       imageAlt: 'Anna',
     },
   },
   {
-    value: 'scholarships',
-    icon: <Award className="h-auto w-4 shrink-0" />,
-    label: 'Scholarships',
+    value: 'refine',
+    icon: <RefreshCw className="h-auto w-4 shrink-0" />,
+    label: 'Refine a Draft',
     content: {
-      badge: 'Financial Aid',
-      title: 'Simpler scholarship essays.',
-      description: 'Explain your goals out loud. Voira turns that into a clear, short essay you can adjust.',
-      icon: <Award className="h-16 w-16 text-accent/30" />,
-      imageSrc: "/assets/voira-media/AnnaScholarship.jpg",
-      imageAlt: 'Anna',
+      badge: 'Editing',
+      title: 'Polish a draft you already have.',
+      description: 'Already written something? Talk it through and Voira tightens the draft while keeping how you sound.',
+      icon: <RefreshCw className="h-16 w-16 text-accent/30" />,
+      imageSrc: '/assets/voira-media/AnnaScholarship.jpg',
+      imageAlt: 'Reviewing a draft',
     },
   },
   {
-    value: 'interviews',
+    value: 'practice',
     icon: <Mic className="h-auto w-4 shrink-0" />,
-    label: 'Interviews',
+    label: 'Practice',
     content: {
-      badge: 'Prep & Practice',
-      title: 'Prepare clear interview answers.',
-      description: 'Practice questions by speaking. Voira gives you a written answer you can refine before you use it.',
+      badge: 'Interviews & Prep',
+      title: 'Practice out loud before it counts.',
+      description: 'Rehearse interviews, speeches, and presentations out loud. Voira gives you feedback and a clean written version.',
       icon: <Mic className="h-16 w-16 text-accent/30" />,
-      imageSrc: "/assets/voira-media/JakeUsingVoira.jpg",
-      imageAlt: 'Jake using Voira',
-    },
-  },
-  {
-    value: 'speeches',
-    icon: <Megaphone className="h-auto w-4 shrink-0" />,
-    label: 'Speeches',
-    content: {
-      badge: 'Speaking',
-      title: 'Speech outlines that sound like you.',
-      description: 'Talk through your idea out loud. Voira turns your voice into a clear outline and draft you can practice and refine—whether it’s a TED-style talk, a class presentation, or a prepared speech.',
-      icon: <Megaphone className="h-16 w-16 text-accent/30" />,
-      imageSrc: '/assets/voira-media/BenGivingTalk.png',
-      imageAlt: 'Giving a speech',
+      imageSrc: '/assets/voira-media/JakeUsingVoira.jpg',
+      imageAlt: 'Practicing out loud',
     },
   },
 ];
@@ -118,8 +104,8 @@ const STUDENT_SECTION = {
   posterSrc: "/assets/voira-media/Anna'sAvatar.jpg",
   bgColor: '#BDB7A9',
   title: 'Voira for students',
-  date: 'Essays, prompts, and applications',
-  scrollToExpand: 'Scroll to see how Voira helps with school work.',
+  date: 'Applications, essays, and interview prep',
+  scrollToExpand: 'Scroll to see how Voira helps with school.',
 };
 
 const PROFESSIONAL_SECTION = {
@@ -129,16 +115,16 @@ const PROFESSIONAL_SECTION = {
   background:
     'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1920&q=80',
   title: 'Voira for early professionals',
-  date: 'Interviews, emails, and pitches',
+  date: 'Interviews, speeches, and drafts',
   scrollToExpand: 'Scroll to see how Voira helps at work.',
 };
 
-/* ─── Built for [scramble] heading — runs once in this order: essays, prompts, interviews, then everything applications ──────── */
+/* ─── Built for [scramble] heading — runs once in this order: applications, interviews, speeches, then everything you say ──────── */
 const BUILT_FOR_PHRASES = [
-  'essays',
-  'prompts',
+  'applications',
   'interviews',
-  'everything applications.',
+  'speeches',
+  'everything you say.',
 ];
 
 function BuiltForScrambleHeading() {
@@ -252,8 +238,8 @@ export default function Landing() {
               Talk first. Edit later.
             </h2>
             <p className="text-lg max-w-xl text-white/70 leading-relaxed">
-              You speak normally. Voira turns it into a clear draft for essays, forms, and emails.
-              It keeps your style and cuts out filler words.
+              You speak normally. Voira turns what you say into a clear draft — for applications, interviews, and the drafts you already have.
+              It keeps your voice and cuts the filler.
             </p>
           </MotionDiv>
         </div>
@@ -340,7 +326,7 @@ export default function Landing() {
         <div className="relative z-10">
           <FeatureTabs
             heading={<BuiltForScrambleHeading />}
-            description="Use Voira for college applications, scholarships, interviews, and early career steps."
+            description="Use Voira for applications, interviews, speeches, and the drafts you already have."
             tabs={FEATURE_TABS}
             className="pt-10 pb-12 sm:pt-14 sm:pb-20 lg:pt-16 lg:pb-24"
           />
@@ -348,11 +334,13 @@ export default function Landing() {
 
         {/* ── Final CTA — typography-led ─────────────────────────── */}
         <div className="relative z-10 mx-auto max-w-4xl px-5 sm:px-8 lg:px-12 pt-24 pb-24 sm:pt-32 sm:pb-28 lg:pt-40 lg:pb-32">
+          {/* Scale-settle (not a slide) — an "arrival" beat distinct from the
+              hero's fade-rise, the Talk-first crossfade, and the testimonial stagger. */}
           <MotionDiv
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, scale: 0.96 }}
+            whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true, amount: 0.3 }}
-            transition={{ duration: 0.9, ease: SMOOTH }}
+            transition={{ duration: 1, ease: SMOOTH }}
             className="text-center"
           >
             <h2 className="font-heading text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-white leading-[1.05]">

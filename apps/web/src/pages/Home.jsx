@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { motion } from 'framer-motion';
-import { GraduationCap, Briefcase, MessageSquare, RefreshCw, Mic, Loader2 } from 'lucide-react';
+import { GraduationCap, RefreshCw, Mic, Loader2 } from 'lucide-react';
 import { auth } from '@/components/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 import useSessionStore from '@/stores/useSessionStore';
@@ -12,31 +12,19 @@ const features = [
   {
     icon: GraduationCap,
     title: 'Application Essay',
-    description: 'Craft compelling essays for college and scholarship applications',
+    description: 'Speak about your experience. Voira turns it into a first draft for your college and scholarship applications.',
     href: 'Speak?type=application',
   },
   {
-    icon: Briefcase,
-    title: 'Interview Response',
-    description: 'Prepare polished answers for job and program interviews',
-    href: 'Speak?type=interview',
-  },
-  {
-    icon: MessageSquare,
-    title: 'Free Speak',
-    description: 'Express yourself freely and let Voira refine your thoughts',
-    href: 'Speak?type=free',
-  },
-  {
     icon: RefreshCw,
-    title: 'Refine Existing Draft',
-    description: 'Improve and polish your existing written content',
+    title: 'Refine a Draft',
+    description: 'Already have something written? Talk it through and Voira tightens the draft while keeping how you sound.',
     href: 'RefineDraft',
   },
   {
     icon: Mic,
-    title: 'Practice Mode',
-    description: 'Rehearse interviews with real-time feedback and coaching',
+    title: 'Practice',
+    description: 'Rehearse interviews, speeches, and presentations out loud. Get feedback, then turn your answer into a clean draft.',
     href: 'Practice',
   },
 ];
@@ -141,7 +129,7 @@ export default function Home() {
           What do you want to do today?
         </h1>
         <p className="text-zinc-600 dark:text-zinc-500 text-lg">
-          Choose a mode to start expressing yourself naturally
+          Pick where you want to start
         </p>
       </motion.div>
       
