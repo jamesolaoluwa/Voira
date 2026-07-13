@@ -25,7 +25,7 @@ export default function BadgeNotification({ badge, isOpen, onClose }) {
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
             className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md"
           >
-            <div className="bg-white dark:bg-[hsl(var(--card))] rounded-3xl border border-violet-400 dark:border-violet-500/30 shadow-xl dark:shadow-none p-8 relative overflow-hidden">
+            <div className="bg-white dark:bg-[hsl(var(--card))] rounded-3xl border border-zinc-200 dark:border-white/10 shadow-xl dark:shadow-none p-8 relative overflow-hidden">
               {/* Animated glow */}
               <motion.div
                 animate={{ 
@@ -33,7 +33,7 @@ export default function BadgeNotification({ badge, isOpen, onClose }) {
                   opacity: [0.3, 0.5, 0.3],
                 }}
                 transition={{ duration: 2, repeat: Infinity }}
-                className="absolute inset-0 bg-gradient-to-br from-violet-500/20 to-teal-500/20 blur-2xl"
+                className="absolute inset-0 bg-zinc-500/10 blur-2xl"
               />
               
               <button
@@ -51,9 +51,9 @@ export default function BadgeNotification({ badge, isOpen, onClose }) {
                     scale: [1, 1.1, 1]
                   }}
                   transition={{ duration: 0.5, delay: 0.2 }}
-                  className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-violet-500/30 to-teal-500/30 flex items-center justify-center"
+                  className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-zinc-100 dark:bg-white/10 flex items-center justify-center"
                 >
-                  <Award className="w-12 h-12 text-violet-600 dark:text-violet-400" />
+                  <Award className="w-12 h-12 text-zinc-600 dark:text-zinc-400" />
                 </motion.div>
                 
                 <motion.h2
@@ -69,7 +69,7 @@ export default function BadgeNotification({ badge, isOpen, onClose }) {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.4 }}
-                  className="text-lg text-violet-700 dark:text-violet-400 font-semibold mb-2"
+                  className="text-lg text-zinc-700 dark:text-zinc-300 font-semibold mb-2"
                 >
                   {badge?.title}
                 </motion.p>
@@ -85,7 +85,7 @@ export default function BadgeNotification({ badge, isOpen, onClose }) {
                 
                 <Button
                   onClick={onClose}
-                  className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   Awesome!
                 </Button>

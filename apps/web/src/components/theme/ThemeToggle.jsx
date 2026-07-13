@@ -22,12 +22,12 @@ export default function ThemeToggle({ showLabel = false }) {
           className="absolute top-1 left-1 w-4 h-4 rounded-full flex items-center justify-center"
           animate={{
             x: isDark ? 0 : 16,
-            backgroundColor: isDark ? '#8B5CF6' : '#f59e0b'
+            backgroundColor: isDark ? 'hsl(185, 100%, 50%)' : '#f59e0b'
           }}
           transition={{ type: 'spring', stiffness: 500, damping: 30 }}
         >
           {isDark ? (
-            <Moon className="w-3 h-3 text-white" />
+            <Moon className="w-3 h-3 text-black" />
           ) : (
             <Sun className="w-3 h-3 text-white" />
           )}

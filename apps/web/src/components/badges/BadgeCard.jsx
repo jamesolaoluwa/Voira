@@ -27,24 +27,20 @@ const badgeIcons = {
 };
 
 const colorStyles = {
-  // Keep the same light-mode appearance (white bg, soft border/shadow)
-  // but ensure a solid dark card background, subtle dark border and no shadow in dark mode.
-  violet: 'bg-white border border-zinc-200 shadow-sm text-violet-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-violet-400 dark:shadow-none',
-  teal: 'bg-white border border-zinc-200 shadow-sm text-teal-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-teal-400 dark:shadow-none',
+  zinc: 'bg-white border border-zinc-200 shadow-sm text-zinc-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-zinc-400 dark:shadow-none',
   amber: 'bg-white border border-zinc-200 shadow-sm text-amber-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-amber-400 dark:shadow-none',
-  rose: 'bg-white border border-zinc-200 shadow-sm text-rose-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-rose-400 dark:shadow-none',
   emerald: 'bg-white border border-zinc-200 shadow-sm text-emerald-600 dark:bg-[hsl(var(--card))] dark:border-white/5 dark:text-emerald-400 dark:shadow-none',
 };
 
 export default function BadgeCard({ badge, size = 'default', showDate = true }) {
   const Icon = badgeIcons[badge.badge_type] || Award;
-  const colorClass = colorStyles[badge.icon_color] || colorStyles.violet;
+  const colorClass = colorStyles[badge.icon_color] || colorStyles.zinc;
   
   if (size === 'compact') {
     return (
       <motion.div
         whileHover={{ scale: 1.05, y: -2 }}
-        className={`group relative bg-gradient-to-br ${colorClass} rounded-xl border p-3 cursor-pointer`}
+        className={`group relative ${colorClass} rounded-xl p-3 cursor-pointer`}
       >
         <div className="flex items-center gap-2">
           <Icon className="w-4 h-4" />

@@ -45,7 +45,7 @@ const typeLabels = {
   application: 'Application Essay',
   interview: 'Interview Response',
   free: 'Free Speak',
-  refine: 'Refine Draft',
+  refine: 'Refine a Draft',
 };
 
 /**
@@ -153,9 +153,21 @@ const clearPersistedSession = () => {
 export default function Speak() {
   const navigate = useNavigate();
   const location = useLocation();
-  const urlParams = new URLSearchParams(window.location.search);
-  const type = urlParams.get('type') || 'free';
-  
+  const urlParams = new URLSearchParams(location.search);
+  const rawType = urlParams.get('type');
+
+  // Free Speak and Interview Response are merged into Practice (Phase 2).
+  // Bare /speak also redirects — Application Essay requires ?type=application.
+  const shouldRedirectToPractice =
+    !rawType || rawType === 'free' || rawType === 'interview';
+  const type = rawType === 'refine' ? 'refine' : 'application';
+
+  useEffect(() => {
+    if (shouldRedirectToPractice) {
+      navigate(createPageUrl('Practice'), { replace: true });
+    }
+  }, [shouldRedirectToPractice, navigate]);
+
   const { user: authUser, session, isLoading: authLoading, isAdmin, refreshUser } = useAuth();
   const [lastProfileRefresh, setLastProfileRefresh] = useState(0);
   
@@ -1298,6 +1310,11 @@ export default function Speak() {
       // Live transcript will be cleared when component unmounts or new recording starts
     };
   }, []);
+
+  // Hooks must run unconditionally; redirect UI gate stays after them.
+  if (shouldRedirectToPractice) {
+    return null;
+  }
   
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10 flex flex-col">
@@ -1328,7 +1345,7 @@ export default function Speak() {
                     <Button
                       size="sm"
                       onClick={handleResumeSession}
-                      className="bg-violet-600 hover:bg-violet-700 text-white text-xs h-8"
+                      className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs h-8"
                     >
                       Resume
                     </Button>
@@ -1639,7 +1656,7 @@ export default function Speak() {
               </div>
             )}
             <div className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
-              <div className="w-2 h-2 rounded-full bg-teal-400" />
+              <div className="w-2 h-2 rounded-full bg-zinc-400 dark:bg-zinc-500" />
               <span className="text-xs text-zinc-700 dark:text-zinc-400">Confidence: {confidenceLevel}%</span>
             </div>
           </motion.div>
@@ -1654,7 +1671,7 @@ export default function Speak() {
               exit={{ opacity: 0, y: -10 }}
               className="flex items-center gap-2 mb-8 px-6 py-3 bg-white dark:bg-[#1a1a24] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none"
             >
-              <Clock className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+              <Clock className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
               <span className="text-2xl font-mono text-zinc-900 dark:text-zinc-100">{formatTime(duration)}</span>
             </motion.div>
           )}
@@ -1673,7 +1690,7 @@ export default function Speak() {
                 size="lg"
                 onClick={handleStart}
                 disabled={recordingState === 'starting' || isTranscribing || isGenerating || !canStartRecording}
-                className="h-16 px-10 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white rounded-2xl text-lg shadow-lg shadow-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-16 px-10 bg-primary text-primary-foreground hover:bg-primary/90 rounded-2xl text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {recordingState === 'starting' ? (
                   <>
@@ -1700,7 +1717,7 @@ export default function Speak() {
                 size="lg"
                 variant="outline"
                 onClick={handlePause}
-                className={`h-14 w-14 rounded-2xl border-white/10 ${audioIsPaused ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-300'}`}
+                className={`h-14 w-14 rounded-2xl border-white/10 ${audioIsPaused ? 'bg-zinc-200 dark:bg-white/10 text-zinc-900 dark:text-zinc-100' : 'text-zinc-300'}`}
                 title={audioIsPaused ? 'Resume recording' : 'Pause recording'}
               >
                 {audioIsPaused ? <Play className="w-5 h-5" /> : <Pause className="w-5 h-5" />}
@@ -1709,7 +1726,7 @@ export default function Speak() {
                 size="lg"
                 variant="outline"
                 onClick={handleSaveDraftClick}
-                className="h-14 w-14 rounded-2xl border-white/10 text-zinc-300 hover:text-violet-400 hover:border-violet-500/30"
+                className="h-14 w-14 rounded-2xl border-white/10 text-zinc-300 hover:text-zinc-100 hover:border-zinc-400 dark:hover:border-white/20"
                 title="Save as draft"
               >
                 <Save className="w-5 h-5" />
@@ -1718,7 +1735,7 @@ export default function Speak() {
                 size="lg"
                 onClick={handleFinish}
                 disabled={isTranscribing || isGenerating}
-                className="h-14 px-8 bg-gradient-to-r from-teal-600 to-teal-500 hover:from-teal-500 hover:to-teal-400 text-white rounded-2xl disabled:opacity-50"
+                className="h-14 px-8 bg-primary text-primary-foreground hover:bg-primary/90 rounded-2xl disabled:opacity-50"
               >
                 <Square className="w-4 h-4 mr-2" />
                 Finish
@@ -1727,7 +1744,7 @@ export default function Speak() {
           )}
           {(recordingState === 'processing' || recordingState === 'finished') && (
             <div className="flex items-center gap-3 px-6 py-3 bg-white dark:bg-[hsl(var(--card))] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
-              <Loader2 className="w-5 h-5 animate-spin text-violet-600 dark:text-violet-400" />
+              <Loader2 className="w-5 h-5 animate-spin text-zinc-600 dark:text-zinc-400" />
               <span className="text-zinc-700 dark:text-zinc-300">
                 {isTranscribing ? 'Transcribing...' : isGenerating ? 'Processing...' : 'Processing complete'}
               </span>
@@ -1874,7 +1891,7 @@ export default function Speak() {
                 <Button
                   onClick={handleSaveDraft}
                   disabled={isSavingDraft}
-                  className="flex-1 bg-violet-600 hover:bg-violet-700 text-white"
+                  className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   {isSavingDraft ? (
                     <>

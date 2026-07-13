@@ -1,12 +1,13 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 
-export default function ScoreCard({ label, value, maxValue = 100, color = 'violet', delay = 0 }) {
+export default function ScoreCard({ label, value, maxValue = 100, color = 'zinc', delay = 0 }) {
   const percentage = (value / maxValue) * 100;
   
   const colorClasses = {
-    violet: 'from-violet-500 to-violet-600',
-    teal: 'from-teal-500 to-teal-600',
+    zinc: 'bg-zinc-600 dark:bg-zinc-400',
+    violet: 'bg-zinc-600 dark:bg-zinc-400',
+    teal: 'bg-zinc-600 dark:bg-zinc-400',
     amber: 'from-amber-500 to-amber-600',
     rose: 'from-rose-500 to-rose-600',
   };
@@ -25,7 +26,7 @@ export default function ScoreCard({ label, value, maxValue = 100, color = 'viole
       </div>
       <div className="h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
         <motion.div
-          className={`h-full rounded-full bg-gradient-to-r ${colorClasses[color]}`}
+          className={`h-full rounded-full ${colorClasses[color]?.startsWith('bg-') ? colorClasses[color] : `bg-gradient-to-r ${colorClasses[color]}`}`}
           initial={{ width: 0 }}
           animate={{ width: `${percentage}%` }}
           transition={{ duration: 0.8, delay: delay + 0.2, ease: 'easeOut' }}

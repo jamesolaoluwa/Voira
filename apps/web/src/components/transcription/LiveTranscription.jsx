@@ -50,7 +50,7 @@ export default function LiveTranscription({
         <p className={`leading-relaxed ${transcript && transcript.length > 0 ? 'text-zinc-800 dark:text-zinc-300' : 'text-zinc-600 dark:text-zinc-500 italic'}`} aria-live="polite">
           {displayText || placeholder}
           {transcript && transcript.length > 0 && (
-            <span className="inline-block w-0.5 h-5 bg-violet-600 dark:bg-violet-400 ml-1 align-middle animate-pulse" />
+            <span className="inline-block w-0.5 h-5 bg-primary ml-1 align-middle animate-pulse" />
           )}
         </p>
       )}

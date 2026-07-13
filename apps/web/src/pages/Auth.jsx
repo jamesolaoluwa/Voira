@@ -5,8 +5,7 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
-import ThemeToggle from '@/components/theme/ThemeToggle';
+import Orb from '@/components/ui/Orb';
 import { auth } from '@/components/services/api';
 import { Loader2 } from 'lucide-react';
 import { Eye, EyeOff } from 'lucide-react';
@@ -41,9 +40,7 @@ export default function Auth() {
 
   // Redirect when session is established (handles both email login and OAuth)
   useEffect(() => {
-    console.log('[Auth] useEffect - authLoading:', authLoading, 'session:', !!session);
     if (!authLoading && session) {
-      console.log('[Auth] Session detected, redirecting to /home');
       navigate('/home', { replace: true });
     }
   }, [session, authLoading, navigate]);
@@ -170,36 +167,30 @@ export default function Auth() {
   return (
     <div className="min-h-screen flex">
       {/* Left Side: Visual / Animation */}
-      <div className="hidden lg:flex lg:w-3/5 bg-zinc-100 dark:bg-[#0a0a0f] relative overflow-hidden">
-        {/* Ambient background effects */}
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-500/20 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-teal-500/20 rounded-full blur-3xl animate-pulse" 
-               style={{ animationDelay: '1s' }} />
+      <div className="hidden lg:flex lg:w-3/5 bg-black relative overflow-hidden">
+        {/* WebGL Orb — full-bleed background */}
+        <div className="absolute inset-0 z-0">
+          <Orb
+            hue={0}
+            hoverIntensity={0.52}
+            rotateOnHover
+            forceHoverState={false}
+            backgroundColor="#000000"
+          />
         </div>
 
-        {/* Central animated element */}
-        <div className="relative z-10 flex flex-col items-center justify-center w-full p-12">
-          {/* Voice Visualizer */}
+        {/* Brand Section — centered within the orb */}
+        <div className="relative z-10 flex flex-col items-center justify-center w-full p-12 pointer-events-none">
           <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 1, ease: 'easeOut' }}
-          >
-            <VoiceVisualizer size={320} isActive={true} amplitude={0.4} />
-          </motion.div>
-
-          {/* Brand Section */}
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, delay: 0.5, ease: 'easeOut' }}
-            className="mt-16 flex flex-col items-center"
+            className="flex flex-col items-center text-center"
           >
-            <h2 className="text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-4">Voira</h2>
-            
+            <h2 className="text-4xl font-bold text-white mb-3 tracking-tight">Voira</h2>
+
             {/* Animated Tagline with Letter Stagger */}
-            <div className="text-xl text-zinc-700 dark:text-zinc-400">
+            <div className="text-lg text-white/70">
               {'Your voice, refined.'.split('').map((char, i) => (
                 <motion.span
                   key={i}
@@ -239,7 +230,6 @@ export default function Auth() {
               />
               <span className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Voira</span>
             </Link>
-            <ThemeToggle showLabel={false} />
           </div>
 
           <div className="mb-8">
@@ -263,7 +253,7 @@ export default function Auth() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Enter your name"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100"
                     required
                   />
                 </div>
@@ -277,7 +267,7 @@ export default function Auth() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="user@example.com"
-                  className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                  className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100"
                   required
                 />
               </div>
@@ -291,7 +281,7 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100 pr-10"
+                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100 pr-10"
                     required
                   />
                   <button
@@ -322,14 +312,14 @@ export default function Auth() {
               {/* Forgot password link is shown on sign-in only and will toggle the forgotMode */}
               {!isSignUp && (
                 <div className="text-sm text-right">
-                  <button type="button" onClick={() => setForgotMode(true)} className="text-violet-500 hover:underline">Forgot password?</button>
+                  <button type="button" onClick={() => setForgotMode(true)} className="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:underline">Forgot password?</button>
                 </div>
               )}
 
               <Button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-12 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white text-base disabled:opacity-50"
+                className="w-full h-12 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 text-base disabled:opacity-50"
               >
                 {isLoading ? (
                   <>
@@ -382,7 +372,7 @@ export default function Auth() {
             // Forgot-password UI is rendered outside the form so it cannot affect sign-in form behavior
             <div className="space-y-2">
               {forgotSent ? (
-                <div className="text-sm text-teal-600">Check your email for a reset link.</div>
+                <div className="text-sm text-emerald-600 dark:text-emerald-400">Check your email for a reset link.</div>
               ) : (
                 <>
                   <Input
@@ -391,11 +381,11 @@ export default function Auth() {
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
                     placeholder="your@email.com"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100"
                   />
                   <div className="flex gap-2 justify-end">
                     <button type="button" onClick={() => { setForgotMode(false); setForgotEmail(''); setError(''); }} className="text-sm text-zinc-600">Cancel</button>
-                    <button type="button" onClick={handleForgotSend} className="px-4 py-2 rounded-md bg-violet-600 text-white hover:opacity-90">Send reset</button>
+                    <button type="button" onClick={handleForgotSend} className="px-4 py-2 rounded-md bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">Send reset</button>
                   </div>
                 </>
               )}
@@ -423,12 +413,12 @@ export default function Auth() {
                 {isSignUp ? (
                   <>
                     Already have an account?{' '}
-                    <span className="text-violet-400 font-medium">Sign in</span>
+                    <span className="text-zinc-900 dark:text-white font-semibold underline">Sign in</span>
                   </>
                 ) : (
                   <>
                     Don't have an account?{' '}
-                    <span className="text-violet-400 font-medium">Sign up</span>
+                    <span className="text-zinc-900 dark:text-white font-semibold underline">Sign up</span>
                   </>
                 )}
               </button>
