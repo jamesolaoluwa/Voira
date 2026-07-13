@@ -35,6 +35,11 @@ export default function EtherealShadowFilter({
 
   useEffect(() => {
     if (!feColorMatrixRef.current || !animationEnabled) return;
+    // Respect reduced-motion: leave the filter static rather than looping.
+    if (typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      return;
+    }
     if (hueRotateAnimationRef.current) hueRotateAnimationRef.current.stop();
     hueRotateMotionValue.set(0);
     hueRotateAnimationRef.current = animate(hueRotateMotionValue, 360, {
