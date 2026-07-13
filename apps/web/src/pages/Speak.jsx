@@ -158,18 +158,16 @@ export default function Speak() {
 
   // Free Speak and Interview Response are merged into Practice (Phase 2).
   // Bare /speak also redirects — Application Essay requires ?type=application.
+  const shouldRedirectToPractice =
+    !rawType || rawType === 'free' || rawType === 'interview';
+  const type = rawType === 'refine' ? 'refine' : 'application';
+
   useEffect(() => {
-    if (!rawType || rawType === 'free' || rawType === 'interview') {
+    if (shouldRedirectToPractice) {
       navigate(createPageUrl('Practice'), { replace: true });
     }
-  }, [rawType, navigate]);
+  }, [shouldRedirectToPractice, navigate]);
 
-  if (!rawType || rawType === 'free' || rawType === 'interview') {
-    return null;
-  }
-
-  const type = 'application';
-  
   const { user: authUser, session, isLoading: authLoading, isAdmin, refreshUser } = useAuth();
   const [lastProfileRefresh, setLastProfileRefresh] = useState(0);
   
@@ -1312,6 +1310,11 @@ export default function Speak() {
       // Live transcript will be cleared when component unmounts or new recording starts
     };
   }, []);
+
+  // Hooks must run unconditionally; redirect UI gate stays after them.
+  if (shouldRedirectToPractice) {
+    return null;
+  }
   
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10 flex flex-col">
