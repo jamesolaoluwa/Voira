@@ -153,8 +153,22 @@ const clearPersistedSession = () => {
 export default function Speak() {
   const navigate = useNavigate();
   const location = useLocation();
-  const urlParams = new URLSearchParams(window.location.search);
-  const type = urlParams.get('type') || 'free';
+  const urlParams = new URLSearchParams(location.search);
+  const rawType = urlParams.get('type');
+
+  // Free Speak and Interview Response are merged into Practice (Phase 2).
+  // Bare /speak also redirects — Application Essay requires ?type=application.
+  useEffect(() => {
+    if (!rawType || rawType === 'free' || rawType === 'interview') {
+      navigate(createPageUrl('Practice'), { replace: true });
+    }
+  }, [rawType, navigate]);
+
+  if (!rawType || rawType === 'free' || rawType === 'interview') {
+    return null;
+  }
+
+  const type = 'application';
   
   const { user: authUser, session, isLoading: authLoading, isAdmin, refreshUser } = useAuth();
   const [lastProfileRefresh, setLastProfileRefresh] = useState(0);

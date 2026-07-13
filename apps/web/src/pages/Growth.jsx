@@ -116,8 +116,8 @@ export default function Growth() {
           <p className="text-zinc-600 dark:text-zinc-500 mb-6 max-w-md mx-auto">
             Start recording to track your speaking growth over time. Your progress will appear here.
           </p>
-          <Link to={createPageUrl('Speak')}>
-            <Button className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400">
+          <Link to={createPageUrl('Practice')}>
+            <Button className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">
               <Mic className="w-4 h-4 mr-2" />
               Start Recording
             </Button>

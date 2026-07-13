@@ -24,7 +24,7 @@ const features = [
   {
     icon: Mic,
     title: 'Practice',
-    description: 'Rehearse interviews, speeches, and presentations out loud. Get feedback, then turn your answer into a clean draft.',
+    description: 'Rehearse interviews, speeches, and presentations out loud. Get real-time feedback on clarity, pace, and filler words.',
     href: 'Practice',
   },
 ];

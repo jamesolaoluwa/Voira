@@ -566,8 +566,14 @@ export default function Draft() {
    */
   const handleContinueRecording = () => {
     if (!currentRecording) return;
-    
-    navigate(createPageUrl('Speak') + `?type=${currentRecording.type || 'free'}`, {
+
+    const legacyPracticeTypes = ['free', 'interview', 'practice'];
+    if (legacyPracticeTypes.includes(currentRecording.type)) {
+      navigate(createPageUrl('Practice'));
+      return;
+    }
+
+    navigate(createPageUrl('Speak') + '?type=application', {
       state: {
         resumeFromDraft: true,
         draftId: currentRecording.id,
@@ -874,7 +880,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
             {loadError || 'No session data found. Please record a new session.'}
           </p>
           <Button
-            onClick={() => navigate(createPageUrl('Speak'))}
+            onClick={() => navigate(createPageUrl('Speak') + '?type=application')}
             className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
           >
             <Mic className="w-4 h-4 mr-2" />
@@ -897,7 +903,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => navigate(createPageUrl(isDraftMode ? 'Library' : 'Speak'))}
+            onClick={() => navigate(createPageUrl(isDraftMode ? 'Library' : 'Home'))}
             className="text-zinc-400 hover:text-white"
           >
             <ArrowLeft className="w-5 h-5" />

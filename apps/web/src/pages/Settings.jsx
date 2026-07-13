@@ -165,7 +165,7 @@ export default function Settings() {
               <div className="flex-1">
                 <Label className="text-base font-medium text-zinc-800 dark:text-zinc-200">Enable pause tracking</Label>
                 <p className="text-sm text-zinc-600 dark:text-zinc-500 mt-2 leading-relaxed">
-                  See how often you use thinking pauses during Application, Interview, and Free Speak sessions.
+                  See how often you use thinking pauses during Application Essay sessions.
                 </p>
               </div>
               <Switch
@@ -180,20 +180,12 @@ export default function Settings() {
               <p className="font-medium text-zinc-700 dark:text-zinc-300 mb-4">How each mode works:</p>
               <div className="grid gap-3">
                 <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-violet-500 w-28 shrink-0">Practice</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Always tracks pauses to help you improve (great for learning!)</span>
+                  <span className="font-semibold text-zinc-900 dark:text-zinc-100 w-28 shrink-0">Practice</span>
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Always tracks pauses to help you improve</span>
                 </div>
                 <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-teal-500 w-28 shrink-0">Application</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled • Output is automatically polished</span>
-                </div>
-                <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-amber-500 w-28 shrink-0">Interview</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled • Keeps your natural voice</span>
-                </div>
-                <div className="flex items-center gap-4 p-3 rounded-lg bg-white/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
-                  <span className="font-semibold text-zinc-500 w-28 shrink-0">Free Speak</span>
-                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled • Keeps your natural voice</span>
+                  <span className="font-semibold text-zinc-900 dark:text-zinc-100 w-28 shrink-0">Application</span>
+                  <span className="text-sm text-zinc-600 dark:text-zinc-400">Tracks if enabled; output is automatically polished</span>
                 </div>
               </div>
             </div>
