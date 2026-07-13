@@ -863,7 +863,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
   if (isLoading) {
     return (
       <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-violet-400 animate-spin" />
+        <Loader2 className="w-8 h-8 text-zinc-600 dark:text-zinc-400 animate-spin" />
       </div>
     );
   }
@@ -881,7 +881,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
           </p>
           <Button
             onClick={() => navigate(createPageUrl('Speak') + '?type=application')}
-            className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+            className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
           >
             <Mic className="w-4 h-4 mr-2" />
             Start Recording
@@ -918,11 +918,11 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                     onBlur={() => setIsEditingName(false)}
                     onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)}
                     autoFocus
-                    className="text-2xl lg:text-3xl font-bold bg-transparent border-b border-violet-500 focus:outline-none"
+                    className="text-2xl lg:text-3xl font-bold bg-transparent border-b border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 focus:outline-none"
                   />
                 ) : (
                   <h1 
-                    className="text-2xl lg:text-3xl font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer hover:text-violet-500 transition-colors"
+                    className="text-2xl lg:text-3xl font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
                     onClick={() => setIsEditingName(true)}
                     title="Click to rename"
                   >
@@ -951,7 +951,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
               <Button
                 variant="outline"
                 onClick={handleContinueRecording}
-                className="border-teal-500/30 text-teal-400 hover:bg-teal-500/10"
+                className="border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5"
               >
                 <Mic className="w-4 h-4 mr-2" />
                 Continue Recording
@@ -966,7 +966,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
               <Button
                 onClick={handleSaveDraftChanges}
                 disabled={isSavingDraft}
-                className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+                className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
               >
                 {isSavingDraft ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -988,7 +988,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
               </Button>
               <Button
                 onClick={handleSave}
-                className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+                className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
               >
                 <Save className="w-4 h-4 mr-2" />
                 Save to Library
@@ -1002,20 +1002,20 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
         {/* Main Content */}
         <div className="lg:col-span-2">
           <Tabs defaultValue="draft" className="w-full">
-            <TabsList className="bg-zinc-100 dark:bg-[#1a1a24] border border-zinc-200 dark:border-white/5 p-1 mb-6">
-              <TabsTrigger value="draft" className="data-[state=active]:bg-violet-500/20 data-[state=active]:text-violet-700 dark:data-[state=active]:text-violet-300">
+            <TabsList className="bg-zinc-100 dark:bg-[#1a1a24] border border-zinc-300 dark:border-white/10 p-1 mb-6">
+              <TabsTrigger value="draft" className="data-[state=active]:bg-zinc-100 dark:data-[state=active]:bg-white/10 data-[state=active]:text-zinc-900 dark:data-[state=active]:text-white">
                 <Sparkles className="w-4 h-4 mr-2" />
                 Draft
               </TabsTrigger>
-              <TabsTrigger value="structure" className="data-[state=active]:bg-violet-500/20 data-[state=active]:text-violet-700 dark:data-[state=active]:text-violet-300">
+              <TabsTrigger value="structure" className="data-[state=active]:bg-zinc-100 dark:data-[state=active]:bg-white/10 data-[state=active]:text-zinc-900 dark:data-[state=active]:text-white">
                 <ListTree className="w-4 h-4 mr-2" />
                 Structure
               </TabsTrigger>
-              <TabsTrigger value="themes" className="data-[state=active]:bg-violet-500/20 data-[state=active]:text-violet-700 dark:data-[state=active]:text-violet-300">
+              <TabsTrigger value="themes" className="data-[state=active]:bg-zinc-100 dark:data-[state=active]:bg-white/10 data-[state=active]:text-zinc-900 dark:data-[state=active]:text-white">
                 <Tags className="w-4 h-4 mr-2" />
                 Key Themes
               </TabsTrigger>
-              <TabsTrigger value="alignment" className="data-[state=active]:bg-violet-500/20 data-[state=active]:text-violet-700 dark:data-[state=active]:text-violet-300">
+              <TabsTrigger value="alignment" className="data-[state=active]:bg-zinc-100 dark:data-[state=active]:bg-white/10 data-[state=active]:text-zinc-900 dark:data-[state=active]:text-white">
                 <Target className="w-4 h-4 mr-2" />
                 Alignment
               </TabsTrigger>
@@ -1031,12 +1031,12 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                 {/* Users can highlight text here to select sections for refinement */}
                 <div 
                   ref={refinedContentRef}
-                  className={`bg-white dark:bg-[#1a1a24] rounded-2xl border-2 border-violet-400 dark:border-violet-500/30 shadow-lg dark:shadow-violet-500/5 p-6 ${isExpanded ? 'min-h-[400px]' : ''}`}
+                  className={`bg-white dark:bg-[#1a1a24] rounded-2xl border-2 border-zinc-300 dark:border-white/10 shadow-lg dark:shadow-none p-6 ${isExpanded ? 'min-h-[400px]' : ''}`}
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
-                      <Sparkles className="w-5 h-5 text-violet-500" />
-                      <h3 className="text-lg font-semibold text-violet-700 dark:text-violet-300">After (Refined)</h3>
+                      <Sparkles className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                      <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">After (Refined)</h3>
                     </div>
                     <div className="flex items-center gap-2">
                       {/* Selection indicator */}
@@ -1044,13 +1044,13 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                         <motion.div
                           initial={{ opacity: 0, scale: 0.9 }}
                           animate={{ opacity: 1, scale: 1 }}
-                          className="flex items-center gap-1.5 px-2 py-1 bg-violet-500/10 border border-violet-500/30 rounded-lg"
+                          className="flex items-center gap-1.5 px-2 py-1 bg-zinc-100 dark:bg-white/10 border border-zinc-300 dark:border-white/10 rounded-lg"
                         >
-                          <MousePointerClick className="w-3 h-3 text-violet-400" />
-                          <span className="text-xs text-violet-400">Text selected</span>
+                          <MousePointerClick className="w-3 h-3 text-zinc-600 dark:text-zinc-400" />
+                          <span className="text-xs text-zinc-700 dark:text-zinc-300">Text selected</span>
                           <button 
                             onClick={clearSelection}
-                            className="ml-1 text-violet-400 hover:text-violet-300"
+                            className="ml-1 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
                           >
                             ×
                           </button>
@@ -1060,7 +1060,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                         variant="ghost"
                         size="icon"
                         onClick={() => setIsExpanded(!isExpanded)}
-                        className="text-zinc-400 hover:text-violet-400"
+                        className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
                       >
                         {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                       </Button>
@@ -1086,9 +1086,9 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                         <>
                           {draft.refined.substring(0, animatedRange.start)}
                           <motion.span
-                            initial={{ backgroundColor: 'rgba(139, 92, 246, 0.3)', scale: 1.02 }}
+                            initial={{ backgroundColor: 'rgba(24, 24, 27, 0.2)', scale: 1.02 }}
                             animate={{ 
-                              backgroundColor: ['rgba(139, 92, 246, 0.4)', 'rgba(139, 92, 246, 0.1)', 'rgba(139, 92, 246, 0)'],
+                              backgroundColor: ['rgba(24, 24, 27, 0.3)', 'rgba(24, 24, 27, 0.1)', 'rgba(24, 24, 27, 0)'],
                               scale: [1.02, 1.01, 1]
                             }}
                             transition={{ 
@@ -1112,7 +1112,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                       <Button
                         onClick={() => handleRegenerate('initial')}
                         disabled={isRegenerating}
-                        className="bg-violet-500 hover:bg-violet-600 text-white"
+                        className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
                       >
                         {isRegenerating && regenerateSource === 'initial' ? (
                           <>
@@ -1141,15 +1141,15 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                   </div>
                   
                   {/* Strongest Moment - COMPUTED FROM REAL TRANSCRIPT */}
-                  <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-teal-400/30 dark:border-teal-500/20 shadow-sm dark:shadow-none p-6">
+                  <div className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-300 dark:border-white/10 shadow-sm dark:shadow-none p-6">
                     <div className="flex items-center gap-2 mb-4">
-                      <Sparkles className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                      <Sparkles className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
                       <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-300">Your Strongest Moment</h3>
                     </div>
                     {draft.strongestMoment ? (
                       <>
                         <p className="text-zinc-700 dark:text-zinc-300 text-sm leading-relaxed">
-                          <span className="bg-teal-500/20 text-teal-700 dark:text-teal-300 px-1 rounded">
+                          <span className="bg-zinc-200 dark:bg-white/10 text-zinc-800 dark:text-zinc-200 px-1 rounded">
                             {draft.strongestMoment.text}
                           </span>
                         </p>
@@ -1223,7 +1223,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                     {draft.themes.map((theme, index) => (
                       <Badge 
                         key={index}
-                        className="px-4 py-2 bg-violet-500/20 text-violet-700 dark:text-violet-300 text-sm"
+                        className="px-4 py-2 bg-zinc-100 dark:bg-white/10 text-zinc-700 dark:text-zinc-300 text-sm border border-zinc-200 dark:border-white/10"
                       >
                         {theme}
                       </Badge>
@@ -1245,10 +1245,10 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
               >
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-6">Question Alignment</h3>
                 <div className="flex items-center gap-6 mb-6">
-                  <div className="text-4xl font-bold text-teal-600 dark:text-teal-400">{draft.alignment.score}%</div>
+                  <div className="text-4xl font-bold text-zinc-900 dark:text-zinc-100">{draft.alignment.score}%</div>
                   <div className="flex-1 h-3 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
                     <motion.div
-                      className="h-full bg-gradient-to-r from-teal-500 to-teal-400 rounded-full"
+                      className="h-full bg-zinc-900 dark:bg-white rounded-full"
                       initial={{ width: 0 }}
                       animate={{ width: `${draft.alignment.score}%` }}
                       transition={{ duration: 0.8, ease: 'easeOut' }}
@@ -1278,7 +1278,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                   onClick={() => setSelectedTone(option.value)}
                   className={`w-full p-3 rounded-xl text-left transition-all ${
                     selectedTone === option.value
-                      ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300 border border-violet-500/30'
+                      ? 'bg-zinc-100 dark:bg-white/10 text-zinc-900 dark:text-white border border-zinc-300 dark:border-white/10'
                       : 'bg-zinc-50 dark:bg-[#13131a] text-zinc-700 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 border border-transparent'
                   }`}
                 >
@@ -1313,7 +1313,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
             className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none p-6"
           >
             <div className="flex items-center gap-2 mb-3">
-              <Wand2 className="w-4 h-4 text-violet-500" />
+              <Wand2 className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
               <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">Refine a Section</h3>
             </div>
             
@@ -1329,13 +1329,13 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
                   initial={{ opacity: 0, y: -5 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -5 }}
-                  className="mb-4 p-3 bg-violet-500/10 border border-violet-500/20 rounded-lg"
+                  className="mb-4 p-3 bg-zinc-100 dark:bg-white/10 border border-zinc-300 dark:border-white/10 rounded-lg"
                 >
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-medium text-violet-400">Selected text:</span>
+                    <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Selected text:</span>
                     <button 
                       onClick={clearSelection}
-                      className="text-xs text-violet-400 hover:text-violet-300"
+                      className="text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
                     >
                       Clear
                     </button>
@@ -1398,7 +1398,7 @@ ${draft.referenceText ? '\nNote: Use reference material only to inform tone and 
             <Button 
               onClick={handleApplyRefinement}
               disabled={isApplyingRefinement || !selectedText}
-              className="w-full bg-violet-500/20 hover:bg-violet-500/30 text-violet-700 dark:text-violet-300 border border-violet-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-white/90 text-white dark:text-zinc-900 border border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isApplyingRefinement ? (
                 <>
