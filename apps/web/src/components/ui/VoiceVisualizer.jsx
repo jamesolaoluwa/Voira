@@ -72,7 +72,7 @@ export default function VoiceVisualizer({ isActive = false, amplitude = 0, size 
         style={{
           width: size * 0.7,
           height: size * 0.7,
-          background: 'linear-gradient(135deg, #8B5CF6 0%, #14B8A6 100%)',
+          background: 'linear-gradient(135deg, #3f3f46 0%, #18181b 100%)',
         }}
         animate={{
           scale: isActive ? [1, 1.05, 1] : 1,

@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,7 +24,7 @@ export default function SessionNamingModal({
       <DialogContent className="bg-white dark:bg-[#1a1a24] border-zinc-200 dark:border-white/10 max-w-md">
         <DialogHeader>
           <DialogTitle className="text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-            <Save className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+            <Save className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
             Name Your Session
           </DialogTitle>
         </DialogHeader>
@@ -53,7 +52,7 @@ export default function SessionNamingModal({
                   <button
                     key={idx}
                     onClick={() => setSessionName(name)}
-                    className="text-xs px-3 py-1 rounded-full bg-violet-500/10 text-violet-700 dark:text-violet-400 hover:bg-violet-500/20 border border-violet-500/20 transition-colors"
+                    className="text-xs px-3 py-1 rounded-full bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-white/10 transition-colors"
                   >
                     {name}
                   </button>
@@ -73,7 +72,7 @@ export default function SessionNamingModal({
             <Button
               onClick={handleSave}
               disabled={!sessionName.trim()}
-              className="flex-1 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+              className="flex-1 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
             >
               <Save className="w-4 h-4 mr-2" />
               Save Session

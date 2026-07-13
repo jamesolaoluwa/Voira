@@ -21,6 +21,11 @@ import { STRIPE_PRICES, isStripeConfigured, DEFAULT_USER_CREDITS, PRO_USER_CREDI
 import { useToast } from '@/components/ui/use-toast';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
+const billingToggleActiveClass =
+  'bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-white/10';
+
+const primaryCtaClass =
+  'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90';
 
 export default function Pricing() {
   const [billingCycle, setBillingCycle] = useState('monthly');
@@ -176,7 +181,7 @@ export default function Pricing() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0f] p-6 lg:p-10">
+    <div className="min-h-screen bg-zinc-50 dark:bg-[#0D0D12] p-6 lg:p-10">
       <div className="max-w-5xl mx-auto">
         {/* Header */}
         <motion.div
@@ -203,7 +208,7 @@ export default function Pricing() {
             onClick={() => setBillingCycle('monthly')}
             className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
               billingCycle === 'monthly'
-                ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300 border border-violet-500/30'
+                ? billingToggleActiveClass
                 : 'text-zinc-600 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300'
             }`}
           >
@@ -213,12 +218,12 @@ export default function Pricing() {
             onClick={() => setBillingCycle('yearly')}
             className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
               billingCycle === 'yearly'
-                ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300 border border-violet-500/30'
+                ? billingToggleActiveClass
                 : 'text-zinc-600 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300'
             }`}
           >
             Yearly
-            <span className="ml-2 text-xs text-teal-400">Save 17%</span>
+            <span className="ml-2 text-xs text-zinc-600 dark:text-zinc-400">Save 17%</span>
           </button>
         </motion.div>
 
@@ -229,7 +234,7 @@ export default function Pricing() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="bg-white dark:bg-gradient-to-br dark:from-[#1a1a24] dark:to-[#13131a] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-md dark:shadow-none p-8"
+            className="bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-md dark:shadow-none p-8"
           >
             <div className="mb-6">
               <h3 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">Free</h3>
@@ -239,7 +244,7 @@ export default function Pricing() {
                 <span className="text-zinc-600 dark:text-zinc-500">/ month</span>
               </div>
               {currentPlan === 'free' && (
-                <Badge className="bg-teal-500/20 text-teal-400 border-teal-500/30">
+                <Badge className="bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-white/10">
                   Current Plan
                 </Badge>
               )}
@@ -268,16 +273,16 @@ export default function Pricing() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="relative bg-gradient-to-br from-violet-500/10 to-purple-500/10 rounded-2xl border border-violet-500/30 p-8 shadow-xl shadow-violet-500/10"
+            className="relative bg-white dark:bg-[#1a1a24] rounded-2xl border border-zinc-300 dark:border-white/10 shadow-md dark:shadow-none p-8"
           >
             {!isProUser && (
-              <Badge className="absolute top-4 right-4 bg-gradient-to-r from-violet-500 to-purple-500 text-white">
+              <Badge className={`absolute top-4 right-4 ${primaryCtaClass}`}>
                 <Sparkles className="w-3 h-3 mr-1" />
                 Recommended
               </Badge>
             )}
             {isProUser && (
-              <Badge className="absolute top-4 right-4 bg-teal-500/20 text-teal-400 border-teal-500/30">
+              <Badge className="absolute top-4 right-4 bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-white/10">
                 <CheckCircle className="w-3 h-3 mr-1" />
                 Active
               </Badge>
@@ -285,15 +290,15 @@ export default function Pricing() {
 
             <div className="mb-6">
               <h3 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1 flex items-center gap-2">
-                <Crown className="w-6 h-6 text-violet-600 dark:text-violet-400" />
+                <Crown className="w-6 h-6 text-zinc-600 dark:text-zinc-400" />
                 Pro
               </h3>
-              <p className="text-sm text-zinc-700 dark:text-zinc-500 mb-4">{plans.premium.subtitle}</p>
+              <p className="text-sm text-zinc-600 dark:text-zinc-500 mb-4">{plans.premium.subtitle}</p>
               <div className="flex items-baseline gap-2 mb-4">
                 <span className="text-4xl font-bold text-zinc-900 dark:text-zinc-100">
                   ${billingCycle === 'monthly' ? plans.premium.price.monthly : plans.premium.price.yearly}
                 </span>
-                <span className="text-zinc-700 dark:text-zinc-500">
+                <span className="text-zinc-600 dark:text-zinc-500">
                   / {billingCycle === 'monthly' ? 'month' : 'year'}
                 </span>
               </div>
@@ -307,8 +312,8 @@ export default function Pricing() {
 
             <ul className="space-y-3 mb-8">
               {plans.premium.features.map((feature, index) => (
-                <li key={index} className="flex items-start gap-3 text-zinc-800 dark:text-zinc-300 text-sm">
-                  <Check className="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" />
+                <li key={index} className="flex items-start gap-3 text-zinc-700 dark:text-zinc-400 text-sm">
+                  <Check className="w-5 h-5 text-zinc-500 dark:text-zinc-400 shrink-0 mt-0.5" />
                   <span>{feature}</span>
                 </li>
               ))}
@@ -319,7 +324,7 @@ export default function Pricing() {
                 onClick={handleManageSubscription}
                 disabled={isLoading}
                 variant="outline"
-                className="w-full h-12 border-violet-500/30 text-violet-400 hover:bg-violet-500/10 mb-3"
+                className="w-full h-12 border-zinc-300 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-white/5 mb-3"
               >
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -332,7 +337,7 @@ export default function Pricing() {
               <Button
                 onClick={handleUpgrade}
                 disabled={isLoading}
-                className="w-full h-12 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white mb-3"
+                className={`w-full h-12 ${primaryCtaClass} mb-3`}
               >
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -342,7 +347,7 @@ export default function Pricing() {
                 Upgrade to Pro
               </Button>
             )}
-            <p className="text-xs text-center text-zinc-600 dark:text-zinc-600">{plans.premium.footnote}</p>
+            <p className="text-xs text-center text-zinc-500 dark:text-zinc-600">{plans.premium.footnote}</p>
           </motion.div>
         </div>
 
@@ -361,7 +366,7 @@ export default function Pricing() {
 
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                <TrendingUp className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
                 <span className="text-sm text-zinc-600 dark:text-zinc-500">Sessions Used</span>
               </div>
               <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{usage.sessionsUsed}</p>

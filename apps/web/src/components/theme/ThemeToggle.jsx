@@ -22,7 +22,7 @@ export default function ThemeToggle({ showLabel = false }) {
           className="absolute top-1 left-1 w-4 h-4 rounded-full flex items-center justify-center"
           animate={{
             x: isDark ? 0 : 16,
-            backgroundColor: isDark ? '#8B5CF6' : '#f59e0b'
+            backgroundColor: isDark ? '#52525b' : '#f59e0b'
           }}
           transition={{ type: 'spring', stiffness: 500, damping: 30 }}
         >

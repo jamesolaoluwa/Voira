@@ -16,7 +16,7 @@ export default function CreditsDisplay({
     if (compact) {
       return (
         <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
-          <Zap className={`w-3 h-3 text-violet-600 dark:text-violet-400`} />
+          <Zap className="w-3 h-3 text-zinc-600 dark:text-zinc-400" />
           <span className="text-xs text-zinc-600 dark:text-zinc-400">Unlimited</span>
         </div>
       );
@@ -26,7 +26,7 @@ export default function CreditsDisplay({
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <Zap className={`w-4 h-4 text-violet-400`} />
+            <Zap className="w-4 h-4 text-zinc-400" />
             <span className="text-sm text-zinc-400">Credits</span>
           </div>
           <span className="text-sm font-medium px-3 py-0.5 rounded-full bg-zinc-50 dark:bg-transparent text-zinc-700 dark:text-zinc-300">Unlimited</span>
@@ -41,7 +41,7 @@ export default function CreditsDisplay({
   if (compact) {
     return (
       <div className="inline-flex w-max items-center gap-2 px-3 py-1.5 bg-white dark:bg-[hsl(var(--card))] rounded-full border border-zinc-200 dark:border-white/5 shadow-sm dark:shadow-none">
-        <Zap className={`w-3 h-3 ${isLow ? 'text-amber-400' : 'text-violet-600 dark:text-violet-400'}`} />
+        <Zap className={`w-3 h-3 ${isLow ? 'text-amber-400' : 'text-zinc-600 dark:text-zinc-400'}`} />
         <span className="text-xs text-zinc-600 dark:text-zinc-400">
           {credits} / {total}
         </span>
@@ -53,7 +53,7 @@ export default function CreditsDisplay({
     <div>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <Zap className={`w-4 h-4 ${isLow ? 'text-amber-400' : 'text-violet-400'}`} />
+          <Zap className={`w-4 h-4 ${isLow ? 'text-amber-400' : 'text-zinc-400'}`} />
           <span className="text-sm text-zinc-400">Credits</span>
         </div>
         <span className="text-sm font-medium text-zinc-300">
@@ -68,7 +68,7 @@ export default function CreditsDisplay({
           className={`h-full ${
             isLow 
               ? 'bg-gradient-to-r from-amber-500 to-amber-400' 
-              : 'bg-gradient-to-r from-violet-500 to-purple-500'
+              : 'bg-zinc-600 dark:bg-zinc-400'
           }`}
         />
       </div>

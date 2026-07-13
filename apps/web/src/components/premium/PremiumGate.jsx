@@ -26,7 +26,7 @@ export default function PremiumGate({
           <Link to={createPageUrl('Pricing')}>
             <Button
               size="sm"
-              className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 shadow-lg"
+              className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 shadow-lg"
             >
               <Crown className="w-4 h-4 mr-2" />
               Upgrade for {feature}
@@ -41,14 +41,14 @@ export default function PremiumGate({
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-gradient-to-br from-violet-100 to-teal-100 dark:from-violet-500/10 dark:to-teal-500/10 rounded-2xl border border-violet-300 dark:border-violet-500/20 p-8 text-center"
+      className="bg-zinc-50 dark:bg-zinc-900/50 rounded-2xl border border-zinc-200 dark:border-white/10 p-8 text-center"
     >
-      <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-violet-500/20 to-teal-500/20 flex items-center justify-center">
-        <Lock className="w-8 h-8 text-violet-600 dark:text-violet-400" />
+      <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+        <Lock className="w-8 h-8 text-zinc-600 dark:text-zinc-400" />
       </div>
       
       <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2 flex items-center justify-center gap-2">
-        <Crown className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+        <Crown className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
         Premium Feature
       </h3>
       
@@ -58,7 +58,7 @@ export default function PremiumGate({
       
       <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
         <Link to={createPageUrl('Pricing')}>
-          <Button className="bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400">
+          <Button className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">
             <Sparkles className="w-4 h-4 mr-2" />
             Upgrade to Premium
           </Button>

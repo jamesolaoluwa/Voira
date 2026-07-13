@@ -53,8 +53,8 @@ export default function Contact() {
         >
           {submitted ? (
             <div className="text-center py-12">
-              <div className="w-16 h-16 rounded-full bg-teal-500/20 flex items-center justify-center mx-auto mb-4">
-                <Mail className="w-8 h-8 text-teal-400" />
+              <div className="w-16 h-16 rounded-full bg-zinc-500/20 flex items-center justify-center mx-auto mb-4">
+                <Mail className="w-8 h-8 text-zinc-600 dark:text-zinc-400" />
               </div>
               <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Message Sent!</h3>
               <p className="text-zinc-600 dark:text-zinc-500">We'll get back to you as soon as possible.</p>
@@ -68,7 +68,7 @@ export default function Contact() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
-                  className="mt-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10"
+                  className="mt-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100"
                 />
               </div>
 
@@ -80,7 +80,7 @@ export default function Contact() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  className="mt-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10"
+                  className="mt-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100"
                 />
               </div>
 
@@ -92,13 +92,13 @@ export default function Contact() {
                   onChange={(e) => setMessage(e.target.value)}
                   required
                   rows={6}
-                  className="mt-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10 resize-none"
+                  className="mt-2 bg-zinc-50 dark:bg-[#13131a] border-zinc-300 dark:border-white/10 text-zinc-900 dark:text-zinc-100 resize-none"
                 />
               </div>
 
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400"
+                className="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90"
               >
                 <Send className="w-4 h-4 mr-2" />
                 Send Message
