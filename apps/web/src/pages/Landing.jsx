@@ -1,8 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { motion, useScroll, useTransform } from 'framer-motion';
-import { Button } from '@/components/ui/button';
+import { motion } from 'framer-motion';
 import VoiceVisualizer from '@/components/ui/VoiceVisualizer';
 import Container from '@/components/layout/Container';
 import { MotionDiv } from '@/components/ui/Motion';
@@ -21,7 +20,6 @@ import {
   Mic,
   Megaphone,
   FileText,
-  Sparkles,
 } from 'lucide-react';
 
 /* ─── Animation presets (slower, smoother) ───────────────────────────── */
@@ -29,39 +27,6 @@ const SMOOTH = [0.22, 1, 0.36, 1];
 
 /* ─── Dark palette — black base for hero and scenes ──────────────────── */
 const PURPLE_DARK = '#000000';
-const PURPLE_MID = '#110C24';
-
-/* ─── Feature scenes — full-viewport background with text overlay ────── */
-const FEATURE_SCENES = [
-  {
-    id: 'college',
-    headline: 'Personal statements\nfrom what you say',
-    description: 'Talk about your experience out loud. Voira removes filler words and turns it into a clear personal statement.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1920&q=80',
-  },
-  {
-    id: 'scholarships',
-    headline: 'Scholarship essays\nfrom your voice',
-    description: 'Explain why you need support in your own words. Voira turns that into a clear draft you can edit.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1920&q=80',
-  },
-  {
-    id: 'interviews',
-    headline: 'Practice interview answers\nby speaking',
-    description: 'Practice common questions by speaking. Voira writes a clean version you can review and adjust.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=1920&q=80',
-  },
-  {
-    id: 'career',
-    headline: 'Cover letters and pitches\nfrom your voice',
-    description: 'Record a short cover letter or pitch. Voira turns it into a simple, direct message for recruiters.',
-    cta: 'Try Now',
-    bgImage: 'https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=1920&q=80',
-  },
-];
 
 /* ─── Feature tabs data ──────────────────────────────────────────────── */
 const FEATURE_TABS = [
@@ -248,93 +213,6 @@ function BuiltForScrambleHeading() {
       )}
       {needsPeriod ? '.' : ''}
     </span>
-  );
-}
-
-/* ─── Full-viewport cinematic feature scene with strong parallax ──────── */
-function CinematicScene({ scene }) {
-  const ref = useRef(null);
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ['start end', 'end start'],
-  });
-
-  // Background moves at ~40% of scroll speed — strong visible parallax depth
-  const bgY = useTransform(scrollYProgress, [0, 1], ['-15%', '15%']);
-  // Zoom: starts zoomed-in, settles at center, slightly zooms again on exit
-  const bgScale = useTransform(scrollYProgress, [0, 0.4, 0.6, 1], [1.2, 1.05, 1.05, 1.15]);
-  // Content slides up slightly as user scrolls (counter-parallax for depth)
-  const contentY = useTransform(scrollYProgress, [0, 0.5, 1], [60, 0, -40]);
-  // Content fades in as it enters center, fades out as it leaves
-  const contentOpacity = useTransform(scrollYProgress, [0, 0.25, 0.5, 0.75, 1], [0, 1, 1, 1, 0]);
-
-  return (
-    <section ref={ref} className="relative w-full h-screen overflow-hidden" style={{ background: PURPLE_DARK }}>
-      {/* Background image — parallax layer (taller than viewport for shift room) */}
-      <motion.div
-        className="absolute -inset-x-0 -top-[15%] -bottom-[15%] z-0 will-change-transform"
-        style={{ y: bgY, scale: bgScale }}
-      >
-        <img
-          src={scene.bgImage}
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-        />
-        {/* Overlays — seamless blending */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/55 to-black/20" />
-        <div className="absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-[#0A0515] to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-[#0A0515] to-transparent" />
-        <div className="absolute inset-0 bg-[#5B5CF6]/[0.04] mix-blend-overlay" />
-      </motion.div>
-
-      {/* Content — counter-parallax (moves opposite to bg for depth) */}
-      <motion.div
-        className="relative z-10 flex h-screen items-center will-change-transform"
-        style={{ y: contentY, opacity: contentOpacity }}
-      >
-        <div className="w-full max-w-7xl mx-auto px-5 sm:px-8 lg:px-12">
-          <div className="max-w-xl lg:max-w-2xl">
-            <MotionDiv
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.9, ease: SMOOTH }}
-            >
-              <h3 className="font-heading text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold tracking-tight text-white leading-[1.1] mb-6 whitespace-pre-line">
-                {scene.headline}
-              </h3>
-            </MotionDiv>
-            <MotionDiv
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.9, ease: SMOOTH, delay: 0.1 }}
-            >
-              <p className="text-base sm:text-lg lg:text-xl text-white/65 leading-relaxed mb-10 max-w-lg">
-                {scene.description}
-              </p>
-            </MotionDiv>
-            <MotionDiv
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.7, ease: SMOOTH, delay: 0.2 }}
-            >
-              <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-                <Button
-                  size="lg"
-                  className="h-11 px-8 bg-accent text-white hover:bg-accent/90 transition-colors duration-300"
-                >
-                  {scene.cta}
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </Link>
-            </MotionDiv>
-          </div>
-        </div>
-      </motion.div>
-    </section>
   );
 }
 
