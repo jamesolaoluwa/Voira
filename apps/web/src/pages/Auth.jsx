@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Orb from '@/components/ui/Orb';
-import ThemeToggle from '@/components/theme/ThemeToggle';
 import { auth } from '@/components/services/api';
 import { Loader2 } from 'lucide-react';
 import { Eye, EyeOff } from 'lucide-react';
@@ -41,9 +40,7 @@ export default function Auth() {
 
   // Redirect when session is established (handles both email login and OAuth)
   useEffect(() => {
-    console.log('[Auth] useEffect - authLoading:', authLoading, 'session:', !!session);
     if (!authLoading && session) {
-      console.log('[Auth] Session detected, redirecting to /home');
       navigate('/home', { replace: true });
     }
   }, [session, authLoading, navigate]);
@@ -233,7 +230,6 @@ export default function Auth() {
               />
               <span className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Voira</span>
             </Link>
-            <ThemeToggle showLabel={false} />
           </div>
 
           <div className="mb-8">
@@ -257,7 +253,7 @@ export default function Auth() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Enter your name"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100"
                     required
                   />
                 </div>
@@ -271,7 +267,7 @@ export default function Auth() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="user@example.com"
-                  className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                  className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100"
                   required
                 />
               </div>
@@ -285,7 +281,7 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100 pr-10"
+                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100 pr-10"
                     required
                   />
                   <button
@@ -316,14 +312,14 @@ export default function Auth() {
               {/* Forgot password link is shown on sign-in only and will toggle the forgotMode */}
               {!isSignUp && (
                 <div className="text-sm text-right">
-                  <button type="button" onClick={() => setForgotMode(true)} className="text-violet-500 hover:underline">Forgot password?</button>
+                  <button type="button" onClick={() => setForgotMode(true)} className="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:underline">Forgot password?</button>
                 </div>
               )}
 
               <Button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-12 bg-gradient-to-r from-violet-600 to-violet-500 hover:from-violet-500 hover:to-violet-400 text-white text-base disabled:opacity-50"
+                className="w-full h-12 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90 text-base disabled:opacity-50"
               >
                 {isLoading ? (
                   <>
@@ -376,7 +372,7 @@ export default function Auth() {
             // Forgot-password UI is rendered outside the form so it cannot affect sign-in form behavior
             <div className="space-y-2">
               {forgotSent ? (
-                <div className="text-sm text-teal-600">Check your email for a reset link.</div>
+                <div className="text-sm text-emerald-600 dark:text-emerald-400">Check your email for a reset link.</div>
               ) : (
                 <>
                   <Input
@@ -385,11 +381,11 @@ export default function Auth() {
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
                     placeholder="your@email.com"
-                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-violet-500/50 text-zinc-900 dark:text-zinc-100"
+                    className="bg-white dark:bg-[#1a1a24] border-zinc-300 dark:border-white/10 focus:border-zinc-900/40 dark:focus:border-white/40 text-zinc-900 dark:text-zinc-100"
                   />
                   <div className="flex gap-2 justify-end">
                     <button type="button" onClick={() => { setForgotMode(false); setForgotEmail(''); setError(''); }} className="text-sm text-zinc-600">Cancel</button>
-                    <button type="button" onClick={handleForgotSend} className="px-4 py-2 rounded-md bg-violet-600 text-white hover:opacity-90">Send reset</button>
+                    <button type="button" onClick={handleForgotSend} className="px-4 py-2 rounded-md bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white/90">Send reset</button>
                   </div>
                 </>
               )}
@@ -417,12 +413,12 @@ export default function Auth() {
                 {isSignUp ? (
                   <>
                     Already have an account?{' '}
-                    <span className="text-violet-400 font-medium">Sign in</span>
+                    <span className="text-zinc-900 dark:text-white font-semibold underline">Sign in</span>
                   </>
                 ) : (
                   <>
                     Don't have an account?{' '}
-                    <span className="text-violet-400 font-medium">Sign up</span>
+                    <span className="text-zinc-900 dark:text-white font-semibold underline">Sign up</span>
                   </>
                 )}
               </button>

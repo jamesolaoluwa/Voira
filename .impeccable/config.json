@@ -2,8 +2,7 @@
   "detector": {
     "ignoreRules": [],
     "ignoreFiles": [
-      "apps/web/index.html",
-      "apps/web/src/pages/Auth.jsx"
+      "apps/web/index.html"
     ],
     "ignoreValues": [
       {
