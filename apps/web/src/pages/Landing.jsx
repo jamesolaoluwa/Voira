@@ -10,7 +10,6 @@ import EtherealShadowFilter from '@/components/ui/EtherealShadowFilter';
 import LandingHero from '@/components/landing/LandingHero';
 import { FeatureTabs } from '@/components/ui/FeatureTabs';
 import { TestimonialSection } from '@/components/ui/TestimonialSection';
-import { ArcGalleryHero } from '@/components/ui/ArcGalleryHero';
 import { ScrollExpandMedia } from '@/components/ui/ScrollExpandMedia';
 import { useScramble } from 'use-scramble';
 import {
@@ -114,21 +113,6 @@ const TESTIMONIALS = [
     role: 'Job Seeker',
     imageSrc: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=80',
   },
-];
-
-const APPLICATION_IMAGES = [
-  'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1523580846011-d3a5bc25702b?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1513258496099-48168024aec0?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1526498460520-4c246339dccb?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1545239351-1141bd82e8a6?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1553877522-43269d4ea984?auto=format&fit=crop&w=800&q=80',
 ];
 
 const STUDENT_SECTION = {
@@ -365,21 +349,18 @@ export default function Landing() {
           />
         </div>
 
-        {/* ── Final CTA with arc gallery ─────────────────────────── */}
-        <div className="relative z-10 mx-auto max-w-5xl px-5 sm:px-8 lg:px-12 pt-16 pb-24 sm:pt-20 sm:pb-28 lg:pt-24 lg:pb-32">
-          <ArcGalleryHero images={APPLICATION_IMAGES} className="mb-4 sm:mb-2 lg:mb-0" />
+        {/* ── Final CTA — typography-led ─────────────────────────── */}
+        <div className="relative z-10 mx-auto max-w-4xl px-5 sm:px-8 lg:px-12 pt-24 pb-24 sm:pt-32 sm:pb-28 lg:pt-40 lg:pb-32">
           <MotionDiv
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, amount: 0.3 }}
             transition={{ duration: 0.9, ease: SMOOTH }}
-            className="text-center -mt-10 sm:-mt-14 lg:-mt-16 transform sm:translate-x-4 lg:translate-x-6"
+            className="text-center"
           >
-            <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-snug">
-              Ready to work on your
-            </h2>
-            <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-snug mt-2">
-              next application?
+            <h2 className="font-heading text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-white leading-[1.05]">
+              Ready to work on your{' '}
+              <span className="font-display-landing font-normal italic text-white/90">next application?</span>
             </h2>
             <p className="mt-6 text-xl sm:text-2xl font-medium text-accent">
               Use Voira to talk first, then edit the draft.

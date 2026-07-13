@@ -157,24 +157,6 @@
     @apply text-muted-foreground;
   }
 
-  /* ArcGalleryHero animations */
-  @keyframes arc-fade-in-up {
-    from {
-      opacity: 0;
-      transform: translate(-50%, 60%);
-    }
-    to {
-      opacity: 1;
-      transform: translate(-50%, 50%);
-    }
-  }
-
-  .arc-animate-fade-in-up {
-    animation-name: arc-fade-in-up;
-    animation-duration: 0.8s;
-    animation-timing-function: ease-out;
-  }
-
   /* GradientButton (default style; do not use variant) */
   .gradient-button {
     @apply relative appearance-none cursor-pointer;
