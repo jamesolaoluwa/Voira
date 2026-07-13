@@ -15,8 +15,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import useAudioRecorder from '@/components/recording/AudioRecorder';
 import { 
   Briefcase, 
-  GraduationCap, 
-  Users,
   Megaphone,
   ChevronRight,
   Mic,
@@ -41,10 +39,8 @@ import {
 } from '@/components/ui/select';
 
 const scenarios = [
-  { id: 'interview', icon: Briefcase, label: 'Job Interview' },
-  { id: 'scholarship', icon: GraduationCap, label: 'Scholarship' },
-  { id: 'behavioral', icon: Users, label: 'Behavioral' },
-  { id: 'presentation', icon: Megaphone, label: 'Speech & Presentation' },
+  { id: 'interview', icon: Briefcase, label: 'Interviews' },
+  { id: 'presentation', icon: Megaphone, label: 'Speeches & Presentation' },
 ];
 
 const sampleQuestions = {
@@ -52,13 +48,8 @@ const sampleQuestions = {
     "Tell me about a time you faced a significant challenge at work.",
     "Why are you interested in this position?",
     "What's your greatest professional achievement?",
-  ],
-  scholarship: [
     "How will this scholarship help you achieve your goals?",
     "Describe a moment that shaped who you are today.",
-    "What impact do you want to make in your community?",
-  ],
-  behavioral: [
     "Describe a situation where you had to work with a difficult team member.",
     "Tell me about a time you failed and what you learned.",
     "Give an example of when you showed leadership.",
@@ -174,6 +165,7 @@ export default function Practice() {
   
   const handleSelectScenario = (scenario) => {
     setSelectedScenario(scenario);
+    setQuestionPurpose(scenario);
     setCurrentQuestion(sampleQuestions[scenario][0]);
     setShowFeedback(false);
     setShowActionBar(false);
@@ -502,11 +494,8 @@ export default function Practice() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="interview">Job Interview</SelectItem>
-                        <SelectItem value="application">Application Essay</SelectItem>
-                        <SelectItem value="scholarship">Scholarship</SelectItem>
-                        <SelectItem value="behavioral">Behavioral</SelectItem>
-                        <SelectItem value="presentation">Speech & Presentation</SelectItem>
+                        <SelectItem value="interview">Interviews</SelectItem>
+                        <SelectItem value="presentation">Speeches & Presentation</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

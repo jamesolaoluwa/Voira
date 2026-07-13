@@ -58,7 +58,7 @@ const FEATURE_TABS = [
     content: {
       badge: 'Interviews & Prep',
       title: 'Practice out loud before it counts.',
-      description: 'Rehearse interviews, speeches, and presentations out loud. Voira gives you feedback on clarity, pace, and filler words.',
+      description: 'Rehearse interviews or speeches and presentations out loud. Voira gives you feedback on clarity, pace, and filler words.',
       icon: <Mic className="h-16 w-16 text-accent/30" />,
       imageSrc: '/assets/voira-media/JakeUsingVoira.jpg',
       imageAlt: 'Practicing out loud',
