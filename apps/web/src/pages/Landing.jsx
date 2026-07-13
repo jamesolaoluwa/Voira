@@ -24,9 +24,6 @@ import {
 /* ─── Animation presets (slower, smoother) ───────────────────────────── */
 const SMOOTH = [0.22, 1, 0.36, 1];
 
-/* ─── Dark palette — black base for hero and scenes ──────────────────── */
-const PURPLE_DARK = '#000000';
-
 /* ─── Feature tabs data ──────────────────────────────────────────────── */
 const FEATURE_TABS = [
   {
@@ -225,13 +222,13 @@ export default function Landing() {
   }, []);
 
   return (
-    <div className="min-h-screen overflow-x-hidden" style={{ background: PURPLE_DARK, color: '#F5F5F7' }}>
+    <div className="min-h-screen overflow-x-hidden bg-black text-zinc-100">
 
       {/* ═══ 1. HERO — cinematic looping video ════════════════════════ */}
       <LandingHero />
 
       {/* ═══ 2. TALK FIRST — voice visualizer intro ═══════════════════ */}
-      <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
+      <section className="relative w-full overflow-hidden bg-black">
         <div className="relative z-10 py-24 sm:py-32 lg:py-40">
           {/* Calm opacity crossfade (no rise) — a reflective beat, distinct
               from the hero's fade-rise and the CTA's upward reveal. */}
@@ -254,7 +251,7 @@ export default function Landing() {
             <h2 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-5 text-white">
               Talk first. Edit later.
             </h2>
-            <p className="text-lg max-w-xl text-white/50 leading-relaxed">
+            <p className="text-lg max-w-xl text-white/70 leading-relaxed">
               You speak normally. Voira turns it into a clear draft for essays, forms, and emails.
               It keeps your style and cuts out filler words.
             </p>
@@ -315,7 +312,7 @@ export default function Landing() {
       </ScrollExpandMedia>
 
       {/* ═══ 4–6. TESTIMONIALS → FEATURE TABS → CTA → FOOTER ═══ */}
-      <section className="relative w-full overflow-hidden" style={{ background: PURPLE_DARK }}>
+      <section className="relative w-full overflow-hidden bg-black">
         {/* Shared ethereal effects — darker, black-focused background */}
         <EtherealShadowFilter
           color="rgba(0, 0, 0, 0.6)"
@@ -373,14 +370,12 @@ export default function Landing() {
             transition={{ duration: 0.7, ease: SMOOTH, delay: 0.15 }}
             className="text-center mt-10"
           >
-            <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-              <button
-                type="button"
-                className="inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl bg-white px-10 text-base font-medium text-zinc-900 transition-all duration-300 hover:bg-white/90"
-              >
-                Get Started
-                <ArrowRight className="h-4 w-4" />
-              </button>
+            <Link
+              to={createPageUrl('Auth') + '?signup=true'}
+              className="inline-flex h-12 items-center gap-2 rounded-xl bg-white px-10 text-base font-medium text-zinc-900 no-underline transition-all duration-300 hover:bg-white/90"
+            >
+              Get Started
+              <ArrowRight className="h-4 w-4" />
             </Link>
           </MotionDiv>
         </div>

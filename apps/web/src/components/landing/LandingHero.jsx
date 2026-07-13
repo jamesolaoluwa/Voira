@@ -153,15 +153,17 @@ export default function LandingHero() {
             />
           </Link>
           <div className="flex items-center gap-3">
-            <Link to={createPageUrl('Auth')} className="no-underline">
-              <button className="h-10 cursor-pointer rounded-xl border border-white/[0.15] bg-white/[0.08] px-6 text-sm font-medium text-white/90 backdrop-blur-md transition-all duration-300 hover:bg-white/[0.14] hover:text-white">
-                Login
-              </button>
+            <Link
+              to={createPageUrl('Auth')}
+              className="inline-flex h-10 items-center rounded-xl border border-white/[0.15] bg-white/[0.08] px-6 text-sm font-medium text-white/90 no-underline backdrop-blur-md transition-all duration-300 hover:bg-white/[0.14] hover:text-white"
+            >
+              Login
             </Link>
-            <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-              <button className="h-10 cursor-pointer rounded-xl bg-white px-6 text-sm font-medium text-zinc-900 transition-all duration-300 hover:bg-white/90">
-                Sign up
-              </button>
+            <Link
+              to={createPageUrl('Auth') + '?signup=true'}
+              className="inline-flex h-10 items-center rounded-xl bg-white px-6 text-sm font-medium text-zinc-900 no-underline transition-all duration-300 hover:bg-white/90"
+            >
+              Sign up
             </Link>
           </div>
         </div>
@@ -176,14 +178,12 @@ export default function LandingHero() {
           Voira turns what you say into writing that still sounds like you.
         </p>
         <div className="animate-fade-rise-delay-2 mt-10">
-          <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
-            <button
-              type="button"
-              className="inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl border border-white/[0.15] bg-white/[0.08] px-8 text-base font-medium text-white/90 backdrop-blur-md transition-all duration-300 hover:bg-white/[0.14] hover:text-white"
-            >
-              Get Started
-              <ArrowRight className="h-4 w-4" />
-            </button>
+          <Link
+            to={createPageUrl('Auth') + '?signup=true'}
+            className="inline-flex h-12 items-center gap-2 rounded-xl border border-white/[0.15] bg-white/[0.08] px-8 text-base font-medium text-white/90 no-underline backdrop-blur-md transition-all duration-300 hover:bg-white/[0.14] hover:text-white"
+          >
+            Get Started
+            <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
       </div>
