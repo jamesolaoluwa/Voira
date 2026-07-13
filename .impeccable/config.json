@@ -2,11 +2,7 @@
   "detector": {
     "ignoreRules": [],
     "ignoreFiles": [
-      "apps/web/index.html",
-      "apps/web/src/pages/Home.jsx",
-      "apps/web/src/pages/Speak.jsx",
-      "apps/web/src/pages/Draft.jsx",
-      "apps/web/src/pages/Settings.jsx"
+      "apps/web/index.html"
     ],
     "ignoreValues": [
       {
