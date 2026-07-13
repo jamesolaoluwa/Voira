@@ -1,115 +1,191 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { useReducedMotion } from 'framer-motion';
 import { createPageUrl } from '@/utils';
-import Container from '@/components/layout/Container';
+import { ArrowRight } from 'lucide-react';
 
-export const HERO_VIDEO_SRC =
-  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260314_131748_f2ca2a28-fed7-44c8-b9a9-bd9acdd5ec31.mp4';
+/* Template hero clip for now. Swap for the Anna Pixar-themed video later. */
+const HERO_VIDEO_URL =
+  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4';
 
-const HERO_NAVY = 'hsl(201, 100%, 13%)';
+const FADE_MS = 500;
+const FADE_OUT_LEAD_S = 0.55; // begin fade-out this many seconds before the end
 
+/**
+ * Full-screen cinematic hero: a muted, autoplaying background video that loops
+ * with a custom JS crossfade (no CSS transitions) so the loop seam is invisible.
+ * Falls back to a static first frame under prefers-reduced-motion.
+ */
 export default function LandingHero() {
   const videoRef = useRef(null);
-  const prefersReducedMotion = useReducedMotion();
+  const rafRef = useRef(null);
+  const fadingOutRef = useRef(false);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
-    if (prefersReducedMotion) {
+    if (!video) return undefined;
+
+    const prefersReduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // Reduced motion: hold a static frame, no loop churn, no fades.
+    if (prefersReduced) {
+      video.style.opacity = '1';
       video.pause();
-    } else {
-      video.play().catch(() => {});
+      try {
+        video.currentTime = 0;
+      } catch {
+        /* currentTime can throw before metadata loads; ignore */
+      }
+      return undefined;
     }
-  }, [prefersReducedMotion]);
+
+    const cancelFade = () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+
+    // Fade opacity to `target` over FADE_MS, resuming from the current opacity.
+    const fadeTo = (target) => {
+      cancelFade();
+      const from = parseFloat(video.style.opacity || '0');
+      const start = performance.now();
+      const step = (now) => {
+        const t = Math.min((now - start) / FADE_MS, 1);
+        video.style.opacity = String(from + (target - from) * t);
+        if (t < 1) {
+          rafRef.current = requestAnimationFrame(step);
+        } else {
+          rafRef.current = null;
+        }
+      };
+      rafRef.current = requestAnimationFrame(step);
+    };
+
+    const startPlayback = () => {
+      video.style.opacity = '0';
+      fadingOutRef.current = false;
+      const p = video.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      fadeTo(1);
+    };
+
+    const handleTimeUpdate = () => {
+      const { duration, currentTime } = video;
+      if (!duration || Number.isNaN(duration)) return;
+      if (duration - currentTime <= FADE_OUT_LEAD_S && !fadingOutRef.current) {
+        fadingOutRef.current = true;
+        fadeTo(0);
+      }
+    };
+
+    const handleEnded = () => {
+      video.style.opacity = '0';
+      setTimeout(() => {
+        try {
+          video.currentTime = 0;
+        } catch {
+          /* ignore */
+        }
+        startPlayback();
+      }, 100);
+    };
+
+    video.style.opacity = '0';
+    if (video.readyState >= 2) {
+      startPlayback();
+    } else {
+      video.addEventListener('loadeddata', startPlayback, { once: true });
+    }
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    video.addEventListener('ended', handleEnded);
+
+    return () => {
+      cancelFade();
+      video.removeEventListener('loadeddata', startPlayback);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+      video.removeEventListener('ended', handleEnded);
+    };
+  }, []);
 
   return (
-    <section
-      className="relative min-h-screen w-full overflow-hidden"
-      style={{ backgroundColor: HERO_NAVY }}
-      aria-label="Voira hero"
-    >
-      {/* Background video */}
-      <div className="absolute inset-0 z-0" aria-hidden="true">
-        {!prefersReducedMotion && (
-          <video
-            ref={videoRef}
-            autoPlay
-            loop
-            muted
-            playsInline
-            className="absolute inset-0 h-full w-full object-cover"
-            poster="/assets/voira-media/Anna'sAvatar.jpg"
-          >
-            <source src={HERO_VIDEO_SRC} type="video/mp4" />
-          </video>
-        )}
-        {/* Scrim for text contrast (WCAG AA over variable video frames) */}
-        <div className="absolute inset-0 bg-[hsl(201,100%,13%)]/40" />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/20 to-[hsl(201,100%,13%)]/80" />
-      </div>
+    <section className="relative min-h-screen overflow-hidden bg-black">
+      {/* Background video — decorative, shifted down so the lower framing shows */}
+      <video
+        ref={videoRef}
+        src={HERO_VIDEO_URL}
+        muted
+        autoPlay
+        playsInline
+        preload="auto"
+        aria-hidden="true"
+        style={{ opacity: 0 }}
+        className="pointer-events-none absolute inset-0 h-full w-full translate-y-[17%] object-cover"
+      />
 
-      {/* Glass nav */}
-      <header className="absolute inset-x-0 top-0 z-30">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-12">
-          <Link
-            to={createPageUrl('Landing')}
-            className="group flex items-center gap-2 no-underline"
-          >
+      {/* Scrim — keeps text >= AA over any video frame. Linear wash plus a
+          centered radial pool behind the hero copy so contrast never depends
+          on a specific (possibly bright) video frame. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/45 to-black/80"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(60% 45% at 50% 52%, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 70%)',
+        }}
+      />
+
+      {/* Nav */}
+      <header className="relative z-20">
+        <div className="mx-auto flex h-16 w-full items-center justify-between px-5 sm:px-8 lg:px-12">
+          <Link to={createPageUrl('Landing')} className="group flex items-center">
             <img
               src="/assets/VoiraLogoMain.png"
-              alt=""
-              className="h-10 w-10 object-contain transition-transform duration-normal ease-smooth group-hover:scale-105"
+              alt="Voira"
+              className="h-14 w-14 object-contain transition-transform duration-normal ease-smooth group-hover:scale-105"
             />
-            <span className="font-display-landing text-xl text-white tracking-tight">
-              Voira
-            </span>
           </Link>
-
-          <nav className="flex items-center gap-2 sm:gap-3" aria-label="Primary">
-            <Link
-              to={createPageUrl('Auth')}
-              className="hidden rounded-xl px-4 py-2 text-sm font-medium text-white/80 transition-colors duration-300 hover:text-white sm:inline-block"
-            >
-              Login
+          <div className="flex items-center gap-3">
+            <Link to={createPageUrl('Auth')} className="no-underline">
+              <button className="h-10 cursor-pointer rounded-xl border border-white/[0.15] bg-white/[0.08] px-6 text-sm font-medium text-white/90 backdrop-blur-md transition-all duration-300 hover:bg-white/[0.14] hover:text-white">
+                Login
+              </button>
             </Link>
-            <Link
-              to={createPageUrl('Auth') + '?signup=true'}
-              className="liquid-glass rounded-xl px-4 py-2 text-sm font-medium text-white transition-all duration-300 hover:bg-white/10 no-underline"
-            >
-              Get Started
+            <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
+              <button className="h-10 cursor-pointer rounded-xl bg-white px-6 text-sm font-medium text-zinc-900 transition-all duration-300 hover:bg-white/90">
+                Sign up
+              </button>
             </Link>
-          </nav>
+          </div>
         </div>
       </header>
 
-      {/* Hero copy */}
-      <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-5 py-24 sm:px-8">
-        <Container size="wide" className="text-center">
-          <h1
-            className="font-display-landing animate-fade-rise mx-auto max-w-4xl text-balance text-[clamp(2.75rem,6vw,5.5rem)] leading-[1.05] tracking-[-0.03em] text-white"
-          >
-            Say it{' '}
-            <em className="text-white/55 not-italic">out loud.</em>
-          </h1>
-          <p className="animate-fade-rise-delay mx-auto mt-6 max-w-xl text-balance text-lg leading-relaxed text-white/75 sm:text-xl">
-            Voira turns spoken thoughts into polished writing that still sounds like you.
-          </p>
-          <div className="animate-fade-rise-delay-2 mt-10 flex flex-wrap items-center justify-center gap-4">
-            <Link
-              to={createPageUrl('Auth') + '?signup=true'}
-              className="liquid-glass inline-flex h-12 items-center rounded-xl px-8 text-base font-medium text-white transition-all duration-300 hover:bg-white/10 no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+      {/* Hero content */}
+      <div className="relative z-10 flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center px-6 text-center">
+        <h1 className="font-display-landing animate-fade-rise text-5xl leading-[1.05] tracking-tight text-white [text-shadow:0_2px_24px_rgba(0,0,0,0.5)] sm:text-6xl lg:text-7xl xl:text-8xl">
+          Say it out loud.
+        </h1>
+        <p className="animate-fade-rise-delay mt-6 max-w-xl text-base leading-relaxed text-white/90 [text-shadow:0_1px_12px_rgba(0,0,0,0.6)] sm:text-lg">
+          Voira turns what you say into writing that still sounds like you.
+        </p>
+        <div className="animate-fade-rise-delay-2 mt-10">
+          <Link to={createPageUrl('Auth') + '?signup=true'} className="no-underline">
+            <button
+              type="button"
+              className="inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl border border-white/[0.15] bg-white/[0.08] px-8 text-base font-medium text-white/90 backdrop-blur-md transition-all duration-300 hover:bg-white/[0.14] hover:text-white"
             >
               Get Started
-            </Link>
-            <Link
-              to={createPageUrl('Auth')}
-              className="inline-flex h-12 items-center rounded-xl px-6 text-base font-medium text-white/70 transition-colors duration-300 hover:text-white no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
-            >
-              Sign in
-            </Link>
-          </div>
-        </Container>
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </Link>
+        </div>
       </div>
     </section>
   );
