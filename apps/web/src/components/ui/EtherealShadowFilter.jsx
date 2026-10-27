@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useId, useEffect } from 'react';
+import React, { useRef, useId, useEffect, useState } from 'react';
 import { animate, useMotionValue } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
@@ -26,19 +26,33 @@ export default function EtherealShadowFilter({
 }) {
   const id = `shadowoverlay-${useId().replace(/:/g, '')}`;
   const animationEnabled = animation && animation.scale > 0;
+  const rootRef = useRef(null);
   const feColorMatrixRef = useRef(null);
   const hueRotateMotionValue = useMotionValue(180);
   const hueRotateAnimationRef = useRef(null);
+  const [inView, setInView] = useState(false);
 
   const displacementScale = animation ? mapRange(animation.scale, 1, 100, 20, 100) : 0;
   const animationDuration = animation ? mapRange(animation.speed, 1, 100, 1000, 50) : 1;
 
   useEffect(() => {
-    if (!feColorMatrixRef.current || !animationEnabled) return;
+    if (!enabled) return undefined;
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const io = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { rootMargin: '40% 0px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!inView || !feColorMatrixRef.current || !animationEnabled) return undefined;
     // Respect reduced-motion: leave the filter static rather than looping.
     if (typeof window !== 'undefined'
       && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      return;
+      return undefined;
     }
     if (hueRotateAnimationRef.current) hueRotateAnimationRef.current.stop();
     hueRotateMotionValue.set(0);
@@ -54,12 +68,13 @@ export default function EtherealShadowFilter({
     return () => {
       if (hueRotateAnimationRef.current) hueRotateAnimationRef.current.stop();
     };
-  }, [animationEnabled, animationDuration, hueRotateMotionValue]);
+  }, [inView, animationEnabled, animationDuration, hueRotateMotionValue]);
 
   if (!enabled) return null;
 
   return (
     <div
+      ref={rootRef}
       aria-hidden
       className={cn('pointer-events-none absolute inset-0 z-0 overflow-hidden', className)}
       style={{ position: 'absolute', width: '100%', height: '100%', ...style }}
