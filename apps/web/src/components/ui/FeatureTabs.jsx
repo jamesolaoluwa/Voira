@@ -90,6 +90,10 @@ export function FeatureTabs({
                     <img
                       src={tab.content.imageSrc}
                       alt={tab.content.imageAlt || ''}
+                      width={448}
+                      height={336}
+                      loading="lazy"
+                      decoding="async"
                       className="h-full w-full object-cover object-center"
                     />
                   ) : (

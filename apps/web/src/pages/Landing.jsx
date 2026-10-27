@@ -73,28 +73,28 @@ const TESTIMONIALS = [
     quote: 'Voira turned a messy voice note into a personal statement that worked. It still sounded like me.',
     name: 'Sarah M.',
     role: 'College Freshman',
-    imageSrc: 'https://images.unsplash.com/photo-1581403341630-a6e0b9d2d257?auto=format&fit=crop&w=900&q=80',
+    imageSrc: 'https://images.unsplash.com/photo-1581403341630-a6e0b9d2d257?auto=format&fit=crop&w=640&q=80',
   },
   {
     id: 2,
     quote: 'I used to stall when writing scholarship essays. Now I talk through my ideas and Voira gives me a draft to edit.',
     name: 'Marcus J.',
     role: 'Scholarship Recipient',
-    imageSrc: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=900&q=80',
+    imageSrc: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=640&q=80',
   },
   {
     id: 3,
     quote: 'Interview prep felt stressful before. Practicing out loud with Voira gave me clear answers I could take into the room.',
     name: 'Priya K.',
     role: 'Software Intern',
-    imageSrc: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=900&q=80',
+    imageSrc: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=640&q=80',
   },
   {
     id: 4,
     quote: 'Speaking for three minutes gave me a cleaner cover letter than anything I had typed on my own.',
     name: 'David L.',
     role: 'Job Seeker',
-    imageSrc: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=80',
+    imageSrc: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=640&q=80',
   },
 ];
 

@@ -66,6 +66,10 @@ export function TestimonialSection({ title, subtitle, testimonials = [] }) {
                   <img
                     src={t.imageSrc}
                     alt={t.name}
+                    width={640}
+                    height={380}
+                    loading="lazy"
+                    decoding="async"
                     className="h-[380px] w-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
                   />
                 ) : (

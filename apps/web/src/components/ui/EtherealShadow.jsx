@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -14,6 +14,21 @@ export default function EtherealShadow({
   className,
   ...props
 }) {
+  const rootRef = useRef(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const io = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { rootMargin: '40% 0px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [enabled]);
+
   if (!enabled) return null;
 
   const opacityClasses = {
@@ -36,8 +51,11 @@ export default function EtherealShadow({
     ? `radial-gradient(circle, ${withAlpha(0.15)} 0%, transparent 65%)`
     : 'radial-gradient(circle, hsl(var(--accent) / 0.15) 0%, transparent 65%)';
 
+  const playState = inView ? 'running' : 'paused';
+
   return (
     <div
+      ref={rootRef}
       aria-hidden
       className={cn(
         'pointer-events-none overflow-hidden z-0',
@@ -52,15 +70,15 @@ export default function EtherealShadow({
           override it (inline `animation` can't be beaten by a media query). */}
       <div
         className="ethereal-orb-1 absolute -top-1/4 -left-1/4 w-[80vw] max-w-[800px] h-[80vw] max-h-[800px] rounded-full"
-        style={{ background: orb1, filter: 'blur(32px)' }}
+        style={{ background: orb1, filter: 'blur(32px)', animationPlayState: playState }}
       />
       <div
         className="ethereal-orb-2 absolute top-1/2 -right-1/4 w-[60vw] max-w-[600px] h-[60vw] max-h-[600px] rounded-full"
-        style={{ background: orb2, filter: 'blur(40px)' }}
+        style={{ background: orb2, filter: 'blur(40px)', animationPlayState: playState }}
       />
       <div
         className="ethereal-orb-3 absolute -bottom-1/4 left-1/3 w-[50vw] max-w-[500px] h-[50vw] max-h-[500px] rounded-full"
-        style={{ background: orb3, filter: 'blur(44px)' }}
+        style={{ background: orb3, filter: 'blur(44px)', animationPlayState: playState }}
       />
       <style>{`
         .ethereal-orb-1 { animation: ethereal-float-1 40s ease-in-out infinite; }

@@ -1,56 +1,44 @@
-import Layout from "./Layout.jsx";
-
-import VoiceProfile from "./VoiceProfile";
-
-import RefineDraft from "./RefineDraft";
-
-import Growth from "./Growth";
-
-import Library from "./Library";
-
-import Practice from "./Practice";
-import AuthGate from '@/components/AuthGate';
-
-import Pricing from "./Pricing";
-
-import Profile from "./Profile";
-
-import Draft from "./Draft";
-
-import Settings from "./Settings";
-
-import Speak from "./Speak";
-
-import Auth from "./Auth";
-import { useAuth } from '@/contexts/AuthContext';
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 
-import Home from "./Home";
-
-import Landing from "./Landing";
-
-import Privacy from "./Privacy";
-
-import Terms from "./Terms";
-
-import Contact from "./Contact";
-import ResetPassword from './ResetPassword';
-
-// Legacy Admin page (self-management) - keeping for backwards compatibility
-import Admin from "./Admin";
-// New Admin Dashboard pages
-import { 
-  AdminLayout, 
-  AdminDashboard, 
-  AdminUsers, 
-  AdminSessions, 
-  AdminDrafts, 
-  AdminAuditLog 
-} from "./admin/index";
+import { useAuth } from '@/contexts/AuthContext';
+import AuthGate from '@/components/AuthGate';
 import AdminGuard from '@/components/AdminGuard';
 
-import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
+// Landing is the default/public entry point — keep it eager so the most common
+// first paint doesn't wait on an extra lazy chunk round-trip.
+import Landing from "./Landing";
+
+// Everything else is code-split so a landing visitor never downloads the whole
+// app (admin dashboard, recharts, etc.). Each page has a default export.
+const Layout = lazy(() => import("./Layout.jsx"));
+const VoiceProfile = lazy(() => import("./VoiceProfile"));
+const RefineDraft = lazy(() => import("./RefineDraft"));
+const Growth = lazy(() => import("./Growth"));
+const Library = lazy(() => import("./Library"));
+const Practice = lazy(() => import("./Practice"));
+const Pricing = lazy(() => import("./Pricing"));
+const Profile = lazy(() => import("./Profile"));
+const Draft = lazy(() => import("./Draft"));
+const Settings = lazy(() => import("./Settings"));
+const Speak = lazy(() => import("./Speak"));
+const Auth = lazy(() => import("./Auth"));
+const Home = lazy(() => import("./Home"));
+const Privacy = lazy(() => import("./Privacy"));
+const Terms = lazy(() => import("./Terms"));
+const Contact = lazy(() => import("./Contact"));
+const ResetPassword = lazy(() => import('./ResetPassword'));
+
+// Legacy Admin page (self-management) - keeping for backwards compatibility
+const Admin = lazy(() => import("./Admin"));
+// New Admin Dashboard pages
+const AdminLayout = lazy(() => import("./admin/AdminLayout"));
+const AdminDashboard = lazy(() => import("./admin/AdminDashboard"));
+const AdminUsers = lazy(() => import("./admin/AdminUsers"));
+const AdminSessions = lazy(() => import("./admin/AdminSessions"));
+const AdminDrafts = lazy(() => import("./admin/AdminDrafts"));
+const AdminAuditLog = lazy(() => import("./admin/AdminAuditLog"));
 
 const PAGES = {
     
@@ -120,50 +108,45 @@ function PagesContent() {
     const currentPage = _getCurrentPage(location.pathname);
 
     return (
-        <Routes>
-            {/* Public routes - no Layout, no AuthGate */}
-            <Route path="/" element={<LandingOrHome />} />
-            <Route path="/landing" element={<Landing />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/privacy" element={<Privacy />} />
-            <Route path="/terms" element={<Terms />} />
-            <Route path="/contact" element={<Contact />} />
+        <Suspense fallback={null}>
+            <Routes>
+                {/* Public routes - no Layout, no AuthGate */}
+                <Route path="/" element={<LandingOrHome />} />
+                <Route path="/landing" element={<Landing />} />
+                <Route path="/auth" element={<Auth />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/privacy" element={<Privacy />} />
+                <Route path="/terms" element={<Terms />} />
+                <Route path="/contact" element={<Contact />} />
 
-            {/* Protected routes - wrapped with Layout which renders TopNav and AuthDebug; AuthGate prevents unauthenticated access */}
-            <Route element={<Layout currentPageName={currentPage} />}>
-                <Route path="/home" element={<AuthGate><Home /></AuthGate>} />
-                <Route path="/voiceprofile" element={<AuthGate><VoiceProfile /></AuthGate>} />
-                <Route path="/growth" element={<AuthGate><Growth /></AuthGate>} />
-                <Route path="/library" element={<AuthGate><Library /></AuthGate>} />
-                <Route path="/practice" element={<AuthGate><Practice /></AuthGate>} />
-                <Route path="/profile" element={<AuthGate><Profile /></AuthGate>} />
-                <Route path="/settings" element={<AuthGate><Settings /></AuthGate>} />
-                <Route path="/speak" element={<AuthGate><Speak /></AuthGate>} />
-                <Route path="/refinedraft" element={<AuthGate><RefineDraft /></AuthGate>} />
-                <Route path="/draft" element={<AuthGate><Draft /></AuthGate>} />
-                <Route path="/pricing" element={<Pricing />} />
-                {/* Legacy admin self-management page */}
-                <Route path="/admin-self" element={<AdminGuard><Admin /></AdminGuard>} />
-            </Route>
-            
-            {/* Admin Dashboard - separate layout, admin-only */}
-            <Route path="/admin" element={<AdminGuard><AdminLayout /></AdminGuard>}>
-                <Route index element={<AdminDashboard />} />
-                <Route path="users" element={<AdminUsers />} />
-                <Route path="sessions" element={<AdminSessions />} />
-                <Route path="drafts" element={<AdminDrafts />} />
-                <Route path="audit" element={<AdminAuditLog />} />
-            </Route>
-        </Routes>
+                {/* Protected routes - wrapped with Layout which renders TopNav and AuthDebug; AuthGate prevents unauthenticated access */}
+                <Route element={<Layout currentPageName={currentPage} />}>
+                    <Route path="/home" element={<AuthGate><Home /></AuthGate>} />
+                    <Route path="/voiceprofile" element={<AuthGate><VoiceProfile /></AuthGate>} />
+                    <Route path="/growth" element={<AuthGate><Growth /></AuthGate>} />
+                    <Route path="/library" element={<AuthGate><Library /></AuthGate>} />
+                    <Route path="/practice" element={<AuthGate><Practice /></AuthGate>} />
+                    <Route path="/profile" element={<AuthGate><Profile /></AuthGate>} />
+                    <Route path="/settings" element={<AuthGate><Settings /></AuthGate>} />
+                    <Route path="/speak" element={<AuthGate><Speak /></AuthGate>} />
+                    <Route path="/refinedraft" element={<AuthGate><RefineDraft /></AuthGate>} />
+                    <Route path="/draft" element={<AuthGate><Draft /></AuthGate>} />
+                    <Route path="/pricing" element={<Pricing />} />
+                    {/* Legacy admin self-management page */}
+                    <Route path="/admin-self" element={<AdminGuard><Admin /></AdminGuard>} />
+                </Route>
+
+                {/* Admin Dashboard - separate layout, admin-only */}
+                <Route path="/admin" element={<AdminGuard><AdminLayout /></AdminGuard>}>
+                    <Route index element={<AdminDashboard />} />
+                    <Route path="users" element={<AdminUsers />} />
+                    <Route path="sessions" element={<AdminSessions />} />
+                    <Route path="drafts" element={<AdminDrafts />} />
+                    <Route path="audit" element={<AdminAuditLog />} />
+                </Route>
+            </Routes>
+        </Suspense>
     );
-}
-
-function AuthRoute() {
-    const { user, session, isLoading } = useAuth();
-    if (isLoading) return null;
-    if (user || session) return <Navigate to="/home" replace />;
-    return <Auth />;
 }
 
 export default function Pages() {

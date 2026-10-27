@@ -6,6 +6,7 @@ import { ArrowRight } from 'lucide-react';
 /* Template hero clip for now. Swap for the Anna Pixar-themed video later. */
 const HERO_VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4';
+const HERO_POSTER_URL = '/assets/voira-media/hero-poster.jpg';
 
 const FADE_MS = 500;
 const FADE_OUT_LEAD_S = 0.55; // begin fade-out this many seconds before the end
@@ -117,10 +118,11 @@ export default function LandingHero() {
       <video
         ref={videoRef}
         src={HERO_VIDEO_URL}
+        poster={HERO_POSTER_URL}
         muted
         autoPlay
         playsInline
-        preload="auto"
+        preload="metadata"
         aria-hidden="true"
         style={{ opacity: 0 }}
         className="pointer-events-none absolute inset-0 h-full w-full translate-y-[17%] object-cover"
@@ -149,6 +151,9 @@ export default function LandingHero() {
             <img
               src="/assets/VoiraLogoMain.png"
               alt="Voira"
+              width={56}
+              height={56}
+              decoding="async"
               className="h-14 w-14 object-contain transition-transform duration-normal ease-smooth group-hover:scale-105"
             />
           </Link>
