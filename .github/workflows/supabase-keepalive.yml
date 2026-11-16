@@ -1,0 +1,86 @@
+name: Supabase Keep-Alive
+
+# Free-tier Supabase projects are paused after ~7 days with no activity.
+# This sends one tiny, read-only request to the REST API on a schedule so the
+# project registers regular traffic and stays active. It does NOT modify data.
+#
+# NOTE: `schedule` only runs on the repository's default branch, so this file
+# must be merged to the default branch (main) for the cron to fire. GitHub also
+# disables scheduled workflows after 60 days of no repo activity.
+
+on:
+  schedule:
+    # Every 5 days at 06:17 UTC (days 1,6,11,16,21,26). Max gap stays under the
+    # ~7-day inactivity window. The odd minute avoids top-of-hour load. Use the
+    # "Run workflow" button (workflow_dispatch) any time for a manual ping.
+    - cron: '17 6 */5 * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping Supabase REST API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send keep-alive query
+        env:
+          # URL is public (project ref), so fall back to the known project if
+          # the secret is unset. The anon key must come from a secret.
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://mxkssrtjtueyknywdcpj.supabase.co' }}
+          SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_ANON_KEY}" ]; then
+            echo "::error::VITE_SUPABASE_ANON_KEY secret is not set. Add it in repo Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          # Read-only: select a single id with limit=1. RLS may return an empty
+          # array, which is fine — the request still executes a query in Postgres
+          # and counts as project activity.
+          URL="${SUPABASE_URL}/rest/v1/user_profiles?select=id&limit=1"
+
+          echo "Pinging ${SUPABASE_URL}/rest/v1/user_profiles ..."
+
+          attempt=1
+          max_attempts=3
+          while [ "${attempt}" -le "${max_attempts}" ]; do
+            code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' \
+              --max-time 30 \
+              -H "apikey: ${SUPABASE_ANON_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+              -H "Accept: application/json" \
+              "${URL}") || code="000"
+
+            echo "Attempt ${attempt}: HTTP ${code}"
+
+            # 2xx means PostgREST reached the database and ran the query.
+            if [ "${code}" -ge 200 ] && [ "${code}" -lt 300 ]; then
+              echo "Keep-alive succeeded (HTTP ${code})."
+              exit 0
+            fi
+
+            # 401/404 are configuration problems, not transient — fail fast.
+            if [ "${code}" = "401" ] || [ "${code}" = "404" ]; then
+              echo "::error::Unexpected HTTP ${code}. Response:"
+              cat /tmp/body.txt || true
+              echo
+              echo "::error::Check the anon key, project URL, and that 'user_profiles' exists in the exposed schema."
+              exit 1
+            fi
+
+            echo "Transient failure (HTTP ${code}); retrying in 15s..."
+            sleep 15
+            attempt=$((attempt + 1))
+          done
+
+          echo "::error::Keep-alive failed after ${max_attempts} attempts. The project may be paused — restore it from the Supabase dashboard."
+          cat /tmp/body.txt || true
+          exit 1
