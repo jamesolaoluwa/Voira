@@ -1,0 +1,72 @@
+# Local stack for Voira: FastAPI backend, the built web app behind nginx, and
+# Valkey so the rate limiter runs on its real backend instead of the in-memory
+# fallback. Supabase stays in the cloud; point apps/api/.env and the web build
+# args at your project.
+#
+#   docker compose up --build
+#   web   -> http://localhost:8080
+#   api   -> http://localhost:8000
+#   redis -> localhost:6379
+#
+# The Voira v1 inference server is NOT a service here. mlx needs Apple Silicon
+# and Metal, which Docker on macOS does not expose, so it runs directly on the
+# host. To use it, start it on the host (see apps/api/inference_server.py) and
+# set VOIRA_MODEL_ENABLED=true with VOIRA_MODEL_URL=http://host.docker.internal:8090
+# in apps/api/.env. Left unset, the backend uses the OpenAI fallback path.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile
+    image: voira-api:local
+    env_file:
+      # Create this from your backend secrets before running. Marked optional
+      # so `docker compose config` works on a fresh clone without it.
+      - path: apps/api/.env
+        required: false
+    environment:
+      # Reach the Valkey service by its compose name.
+      REDIS_URL: redis://redis:6379/0
+      ENV: development
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Public build-time values only (anon key, publishable keys, URLs), not secrets.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_TRANSCRIPTION_WS_URL: ${VITE_TRANSCRIPTION_WS_URL:-}
+        VITE_STRIPE_PUBLISHABLE_KEY: ${VITE_STRIPE_PUBLISHABLE_KEY:-}
+        VITE_STRIPE_PRICE_ID_MONTHLY: ${VITE_STRIPE_PRICE_ID_MONTHLY:-}
+        VITE_STRIPE_PRICE_ID_YEARLY: ${VITE_STRIPE_PRICE_ID_YEARLY:-}
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+    image: voira-web:local
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  redis:
+    image: valkey/valkey:8-alpine
+    # Match the production Key Value eviction policy; no persistence by design.
+    command: ["valkey-server", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
