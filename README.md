@@ -374,4 +374,4 @@ SECURITY.md       Security policy (kept at repo root for GitHub)
 
 ## Environment variables
 
-Most of the environment variables are confidential, so I am choosing to leave it out of this readme.
+Most of the environment variables are confidential, so I am choosing to leave them out of this readme.
