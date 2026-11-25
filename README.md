@@ -1,6 +1,6 @@
 # Voira
 
-Voira is a voice-first writing coach. A user speaks a response to a prompt, the system transcribes the audio in real time, and it refines that spoken draft into written prose that preserves the speaker's wording. The stack covers authentication, billing, live audio streaming, a fine-tuned language model, an admin console, and the free-tier infrastructure that keeps those pieces running.
+I started the Voira project in the winter of 2025. And since then, it has been a bliss of building and seeing how far this project has come and the impact it has made. In simple words, Voira is a voice-first writing coach. A user speaks a response to a prompt, the system transcribes the audio in real time, and it refines that spoken draft into written prose that preserves the speaker's wording and tone. The stack covers authentication, billing, live audio streaming, a fine-tuned language model, an admin console, and the free-tier infrastructure that keeps those pieces running.
 
 The differentiator is the model path, not the transcription alone. Essay-style sessions run through a LoRA fine-tune trained to adapt across the kinds of writing users bring to the product. That pipeline is described under [The refinement pipeline](#the-refinement-pipeline).
 
@@ -158,7 +158,7 @@ WebSocket auth uses the ticket flow above, so no long-lived JWT sits in a URL or
 
 ## Keeping it reliable on a budget
 
-Most of the operational work is about surviving free and near-free tiers without lying to users about outcomes.
+Since Voira is still in its early stages, most of my operational work is about surviving free and near-free tiers, although I also bear in mind the better application of system design concepts, which would obviously take more cost and scale.
 
 Credits are reserved, then refunded on failure. An operation that costs a credit decrements atomically up front, which closes the race where two concurrent requests both see one credit left and both proceed. On failure, timeout, or `asyncio.CancelledError` (client disconnect), the credit is refunded out of band. Users are not charged for failures and cannot double-spend by clicking twice.
 
@@ -258,7 +258,7 @@ curl -X POST https://voira-api.onrender.com/billing/create-checkout-session \
 
 ## Decisions and trade-offs
 
-Each of these is a fork where a different choice would have produced a different system.
+What would be a talk about the core design architecture of Voira without talking about some difficult decisions and trade-offs I had to make? Each of these is a fork where a different choice would have produced a different system.
 
 ### Supabase instead of raw cloud instances
 
@@ -361,7 +361,9 @@ infra/
   Dockerfile      Backend image
   k8s/            Kubernetes manifests for local clusters
 docs/
+  architecture/   Audits, architecture notes, analytics writeups
   history/        Implementation log, migration notes, phase plans
+  llm/            Refinement and prompt-caching notes
   ops/            Production setup notes
 tests/            Backend pytest suite (at the repo root, by design)
 docker-compose.yml
@@ -370,4 +372,4 @@ SECURITY.md       Security policy (kept at repo root for GitHub)
 
 ## Environment variables
 
-Configuration is supplied entirely through environment variables, split by trust level. The frontend reads `apps/web/.env`, which holds public, build-time values only. The backend reads `apps/api/.env`, which holds the privileged credentials: the Supabase service-role key, the transcription and model provider keys, the billing secrets, and runtime settings such as the allowed CORS origins and the cache URL. A committed `.env.example` sits next to each and documents the shape without carrying real values, so nothing sensitive is ever committed. Copy each example to `.env` and fill it in. In production the backend refuses to start when a required secret is missing, which turns a misconfigured deploy into a fast failure instead of a quiet half-broken one.
+Most of the environment variables are confidential, so I am choosing to leave it out of this readme.

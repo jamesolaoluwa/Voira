@@ -35,7 +35,11 @@ Claude.md
 .agents/
 terse.md
 claudecontext/
-.cursor/settings.json
+# Local AI / editor tooling — keep off the public repo
+.cursor/
+.codex/
+.impeccable/
+AGENTS.md
 .env
 output.md
 .env.*
@@ -54,25 +58,5 @@ voira-monorepo@1.0.0
 # Kubernetes: the real secret is created from secret.example.yaml and never committed.
 infra/k8s/secret.yaml
 
-# impeccable-ignore-start
-# Ephemeral output, runtime state, and per-dev overrides.
-# Unanchored: .impeccable may sit at the repo root or under a nested
-# workspace (apps/web/.impeccable/...); anchored patterns would miss it.
-# Shared artifacts stay tracked: config.json, live/config.json,
-# design.json, critique/*.md.
-.impeccable/config.local.json
-.impeccable/hook.cache.json
-.impeccable/hook.pending.json
-.impeccable/*.png
-.impeccable/live/server.json
-.impeccable/live/sessions/
-.impeccable/live/previews/
-.impeccable/live/annotations/
-.impeccable/live/cache/
-.impeccable/live/manual-edit-apply-transaction.json
-.impeccable/live/manual-edit-events.jsonl
-.impeccable/live/manual-edit-evidence/
-.impeccable/live/pending-manual-edits.json
-.impeccable/live/deferred-svelte-component-accepts.json
-.impeccable/live/*.png
-# impeccable-ignore-end
+# Nested impeccable dirs under apps/ (root .impeccable/ is ignored above)
+**/.impeccable/
