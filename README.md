@@ -1,3 +1,5 @@
+Author: Olaoluwa David James-Owolabi
+
 # Voira
 
 I started the Voira project in the winter of 2025. And since then, it has been a bliss of building and seeing how far this project has come and the impact it has made. In simple words, Voira is a voice-first writing coach. A user speaks a response to a prompt, the system transcribes the audio in real time, and it refines that spoken draft into written prose that preserves the speaker's wording and tone. The stack covers authentication, billing, live audio streaming, a fine-tuned language model, an admin console, and the free-tier infrastructure that keeps those pieces running.
