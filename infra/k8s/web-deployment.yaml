@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voira-web
+  namespace: voira
+  labels:
+    app: voira-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: voira-web
+  template:
+    metadata:
+      labels:
+        app: voira-web
+    spec:
+      containers:
+        - name: web
+          # Built locally from apps/web/Dockerfile. The API URL is baked in at
+          # build time, so build with the ingress host for the API:
+          #   docker build -t voira-web:local \
+          #     --build-arg VITE_API_BASE_URL=http://api.voira.local \
+          #     --build-arg VITE_SUPABASE_URL=... \
+          #     --build-arg VITE_SUPABASE_ANON_KEY=... \
+          #     -f apps/web/Dockerfile .
+          #   kind load docker-image voira-web:local --name voira
+          image: voira-web:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

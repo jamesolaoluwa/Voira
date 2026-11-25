@@ -1,0 +1,18 @@
+# Non-secret runtime config for the backend. Secrets live in secret.yaml,
+# created from secret.example.yaml (never commit the real one).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: voira-api-config
+  namespace: voira
+data:
+  ENV: "development"
+  PORT: "8000"
+  LOG_LEVEL: "INFO"
+  # Reach Valkey by its in-cluster service name.
+  REDIS_URL: "redis://voira-redis:6379/0"
+  # For a local cluster, allow the web host served by the ingress.
+  CORS_ORIGINS: "http://voira.local"
+  # Keep the model off by default on a Linux cluster; the backend falls back
+  # to the OpenAI path. See the README for the GPU-node route.
+  VOIRA_MODEL_ENABLED: "false"
