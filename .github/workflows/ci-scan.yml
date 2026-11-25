@@ -119,6 +119,11 @@ jobs:
         run: npm install
 
       - name: Run CI build scan
+        # The frontend build inlines the public anon key. Pass the same secret
+        # here so the scanner can ignore that token instead of labeling it a
+        # service-role key. The secret is not printed.
+        env:
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run ci:scan
 
   # ==========================================================================

@@ -28,12 +28,15 @@ const patterns = [
 ];
 
 // Supabase service role pattern: detect JWT-like long tokens starting with 'eyJ'.
-// To avoid false-positives on the anon key, we'll collect any anon keys present in repo .env files
-// (e.g. VITE_SUPABASE_ANON_KEY) and ignore matches equal to those values.
+// To avoid false-positives on the anon key, ignore the public anon key from the
+// environment (CI injects VITE_SUPABASE_ANON_KEY at build time) and from repo .env files.
 const serviceRoleRe = /eyJ[A-Za-z0-9._-]{80,}/i; // heuristic: long JWT-like token
 
-// Collect anon keys from .env files to whitelist them in the scan
+// Collect anon keys to whitelist them in the scan
 const anonKeys = new Set();
+if (process.env.VITE_SUPABASE_ANON_KEY) {
+  anonKeys.add(process.env.VITE_SUPABASE_ANON_KEY.trim());
+}
 const envFiles = ['.env', '.env.local', '.env.production', '.env.development'];
 envFiles.forEach(f => {
   const p = path.resolve(root, f);
