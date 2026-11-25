@@ -1168,7 +1168,7 @@ export default function Speak() {
         recording = await sessions.createSessionDraft(payload);
       } catch (error) {
         // Handle backend errors (e.g., insufficient credits)
-        if (error.message?.includes('Insufficient credits') || error.message?.includes('402')) {
+        if (error.status === 402 || error.message?.includes('Insufficient credits')) {
           toast({ 
             title: 'Insufficient Credits', 
             description: 'You have run out of credits. Please upgrade to Premium or wait for your monthly reset.',

@@ -82,10 +82,9 @@ class DeepgramStreamingProvider:
         endpointing = DEFAULT_ENDPOINTING_MS  # Fixed value for now
 
         try:
-            # Build Deepgram WebSocket URL with query parameters
-            # Note: Deepgram WebSocket auth uses query param with token=API_KEY
+            # Auth via Authorization header (not query token) so the key
+            # is not captured in proxy or access logs.
             params = {
-                "token": settings.deepgram_api_key,  # API key in query param
                 "model": model,
                 "language": language,
                 "smart_format": "true",
@@ -109,9 +108,10 @@ class DeepgramStreamingProvider:
                 f"Deepgram config: encoding={actual_encoding}, sample_rate={actual_sample_rate} Hz, channels={actual_channels}, language={language}, model={model}"
             )
             logger.info(
-                f"Deepgram WebSocket URL: {DEEPGRAM_WS_URL}?token=***&model={model}&language={language}&encoding={actual_encoding}&sample_rate={actual_sample_rate}&channels={actual_channels}&smart_format=true&punctuate=true&interim_results=true&vad_events=true&endpointing={endpointing}"
+                f"Deepgram WebSocket URL: {DEEPGRAM_WS_URL}?model={model}&language={language}&encoding={actual_encoding}&sample_rate={actual_sample_rate}&channels={actual_channels}&smart_format=true&punctuate=true&interim_results=true&vad_events=true&endpointing={endpointing}"
             )
-            self._ws = await websockets.connect(ws_url)
+            headers = {"Authorization": f"Token {settings.deepgram_api_key}"}
+            self._ws = await websockets.connect(ws_url, additional_headers=headers)
             self._connected = True
             logger.info("Connected to Deepgram streaming service")
 
