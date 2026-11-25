@@ -1,0 +1,21 @@
+# Keep build contexts small and keep local secrets/artifacts out of images.
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Never ship local environment files into an image layer.
+**/.env
+**/.env.*
+!**/.env.example
+
+.git
+.github
+*.md
+!README.md
+
+# Local model artifacts and large assets.
+**/.voira
+**/*.mlx

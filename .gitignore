@@ -41,6 +41,8 @@ output.md
 .env.*
 .env.local
 .env.production
+# Keep committed example templates (real .env files stay ignored above)
+!.env.example
 logs/
 supabase/.temp/
 LOCAL_DEV_STARTUP.md
@@ -48,6 +50,9 @@ LOCAL_DEV_STARTUP.md
 # Stale npm artifacts
 npm
 voira-monorepo@1.0.0
+
+# Kubernetes: the real secret is created from secret.example.yaml and never committed.
+infra/k8s/secret.yaml
 
 # impeccable-ignore-start
 # Ephemeral output, runtime state, and per-dev overrides.
