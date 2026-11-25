@@ -189,14 +189,13 @@ export default function Practice() {
     setIsGeneratingFeedback(true);
     
     try {
-      // Stop and get final blob
-      const finalBlob = await stopRecording();
+      const { blob: finalBlob, hasAudioChunks } = await stopRecording();
       
       // Freeze raw transcript
       const frozenRawTranscript = rawTranscript || liveTranscript || '';
       
       // Validate recording
-      if (!finalBlob || finalBlob.size === 0 || duration < 2) {
+      if (!finalBlob || finalBlob.size === 0 || !hasAudioChunks || duration < 2) {
         toast({ title: 'Recording too short', description: 'Please record at least 2 seconds.' });
         setIsGeneratingFeedback(false);
         setRecordingState('idle');

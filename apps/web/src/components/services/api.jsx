@@ -146,7 +146,7 @@ export const sessions = {
         highlights: highlights || [],
       });
     } catch (error) {
-      if (error.message?.includes('402') || error.message?.includes('Insufficient credits')) {
+      if (error.status === 402 || error.message?.includes('Insufficient credits')) {
         throw error;
       }
       throw error;
