@@ -148,4 +148,4 @@ jobs:
       - name: Deployment placeholder
         run: |
           echo "Deployment step — configure your deployment platform"
-          echo "See PRODUCTION_SETUP.md for deployment instructions"
+          echo "See docs/ops/PRODUCTION_SETUP.md for deployment instructions"
