@@ -1,8 +1,12 @@
 name: Supabase Keep-Alive
 
-# Free-tier Supabase projects are paused after ~7 days with no activity.
-# This sends one tiny, read-only request to the REST API on a schedule so the
-# project registers regular traffic and stays active. It does NOT modify data.
+# Free-plan Supabase projects pause when a rolling 7-day window has too little
+# database activity. Supabase does not publish the exact count; their docs say
+# a few real queries against a table each day is what usually keeps a project
+# active. One ping every few days is not enough, and endpoints that never touch
+# a table (auth health, REST root, constant RPCs) do not count.
+#
+# This sends one tiny, read-only SELECT four times a day. It does NOT modify data.
 #
 # NOTE: `schedule` only runs on the repository's default branch, so this file
 # must be merged to the default branch (main) for the cron to fire. GitHub also
@@ -10,10 +14,14 @@ name: Supabase Keep-Alive
 
 on:
   schedule:
-    # Every 5 days at 06:17 UTC (days 1,6,11,16,21,26). Max gap stays under the
-    # ~7-day inactivity window. The odd minute avoids top-of-hour load. Use the
-    # "Run workflow" button (workflow_dispatch) any time for a manual ping.
-    - cron: '17 6 */5 * *'
+    # Every 6 hours (01:17, 07:17, 13:17, 19:17 UTC). Four real table reads per
+    # day, spread out so a delayed or skipped run still leaves activity in the
+    # window. The odd minute avoids top-of-hour load. Use the "Run workflow"
+    # button (workflow_dispatch) any time for a manual ping.
+    - cron: '17 1 * * *'
+    - cron: '17 7 * * *'
+    - cron: '17 13 * * *'
+    - cron: '17 19 * * *'
   workflow_dispatch: {}
 
 permissions:
