@@ -1,10 +1,10 @@
 # Voira
 
-Voira is a voice-first writing coach. A user speaks their response to a prompt, Voira transcribes the audio in real time, and it refines that spoken draft into clean written prose that keeps the speaker's own wording. The system is a complete product: authentication, billing, live audio streaming, a fine-tuned language model, an admin console, and the infrastructure that keeps all of it running on free-tier services.
+Voira is a voice-first writing coach. A user speaks a response to a prompt, the system transcribes the audio in real time, and it refines that spoken draft into written prose that preserves the speaker's wording. The stack covers authentication, billing, live audio streaming, a fine-tuned language model, an admin console, and the free-tier infrastructure that keeps those pieces running.
 
-Generative AI has made it easy to hand writing off entirely, and a lot of people, students especially, are losing the habit of working their own ideas into shape on the page. Voira is built around the opposite premise: you talk through what you actually think, and it helps you turn that into your own writing instead of something a model made up for you. What sets it apart from tools that bolt speech-to-text onto a chatbot is the core model and the way it was trained, a LoRA fine-tune aimed at adapting to the different kinds of writing people bring to it. That training is covered in the architecture section below.
+The differentiator is the model path, not the transcription alone. Essay-style sessions run through a LoRA fine-tune trained to adapt across the kinds of writing users bring to the product. That pipeline is described under [The refinement pipeline](#the-refinement-pipeline).
 
-This README is the long version. It covers how the system is put together, the decisions I made, and the ones I deliberately avoided. Where a choice carried a real cost, I have tried to say so rather than pretend there was an obvious right answer.
+This README covers system architecture, the decisions behind it, and the trade-offs those decisions carry.
 
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
@@ -17,13 +17,13 @@ Live app: [heyvoira.com](https://heyvoira.com) · API: [voira-api.onrender.com](
 
 ## What it does
 
-You pick a mode (an application essay, an interview question, a free-form topic, or a practice run), record yourself talking it through, and watch the transcript stream in as you speak. When you stop, Voira refines the transcript into a draft and shows you an analysis next to it: filler-word count, pacing, a "strongest moment" highlight, and a before/after view. You can keep a voice profile of words you like and words you want to avoid, and the refinement honors it. Everything you save lands in a per-user library.
+The user picks a mode (application essay, interview question, free-form topic, or practice), records a spoken answer, and watches the transcript stream in while speaking. When recording stops, Voira refines the transcript into a draft and shows an analysis beside it: filler-word count, pacing, a strongest-moment highlight, and a before/after view. A voice profile of preferred and avoided words feeds into refinement. Saved work lands in a per-user library.
 
-The point of the product is the gap between how people talk and how they write. Plenty of people explain an idea clearly out loud and then freeze at a blank page. Voira records the clear spoken version and does the translation.
+The product is built around the gap between spoken clarity and written blank-page friction: capture the spoken version, then translate it into text without replacing the speaker's ideas.
 
 ## How the pieces fit together
 
-The system is a React app talking to a FastAPI backend, with Supabase holding identity and data, and three external services doing the specialized work: Deepgram for speech-to-text, OpenAI for language work, and Stripe for payments.
+The system is a React SPA talking to a FastAPI backend. Supabase holds identity and data. Specialized work goes to Deepgram (speech-to-text), OpenAI (language work), Stripe (payments), and an optional Voira v1 model endpoint.
 
 ```mermaid
 flowchart TB
@@ -66,15 +66,13 @@ flowchart TB
     spa -.->|"signed uploads"| storage
 ```
 
-A few things are worth saying about why the boxes are drawn this way.
+The browser talks to Supabase for two things only: login and reading the user's own rows. Anything that spends money or grants an entitlement goes through the FastAPI backend. That split is the security model.
 
-The browser talks to Supabase directly for two things only: logging in and reading the user's own rows. Every operation that costs money or grants an entitlement goes through the FastAPI backend instead. That split is the backbone of the security model, and I come back to it below.
-
-The backend is stateless. It holds no session in memory that it cannot rebuild from a JWT and the database, which is what lets it run as multiple Gunicorn workers behind Render and, later, as several replicas in Kubernetes without sticky sessions.
+The backend is stateless. It rebuilds request context from a JWT and the database, so it can run as multiple Gunicorn workers on Render or as multiple Kubernetes replicas without sticky sessions.
 
 ## The path of one live session
 
-Live transcription is the most interesting request in the system because it spans REST, WebSockets, and a third-party stream at once. Browsers cannot attach an `Authorization` header to a WebSocket, so I use a short-lived ticket: the client authenticates over normal HTTP to get a ticket, then opens the socket with it.
+Live transcription spans REST, WebSockets, and a third-party stream. Browsers cannot attach an `Authorization` header to a WebSocket, so the client first authenticates over HTTP to get a short-lived ticket, then opens the socket with that ticket.
 
 ```mermaid
 sequenceDiagram
@@ -100,11 +98,11 @@ sequenceDiagram
     A-->>C: { refined_text }
 ```
 
-The ticket carries its own expiry (`ws_ticket_ttl_seconds`, 60 seconds by default), the socket enforces an idle timeout (`ws_idle_timeout`, 5 minutes), and each inbound chunk is size-capped. A dropped or abandoned connection cannot sit open forever, and a client cannot stream unbounded audio into a free-tier box.
+The ticket expires after `ws_ticket_ttl_seconds` (60 seconds by default). The socket enforces an idle timeout (`ws_idle_timeout`, 5 minutes), and each inbound chunk is size-capped. Abandoned connections cannot sit open forever, and a client cannot stream unbounded audio into a free-tier box.
 
 ## The refinement pipeline
 
-I wanted Voira to be more than a generic transcription wrapper, so a lot of the work went into the user experience and the product thinking, not just the model. For essay-style sessions refinement runs a two-stage pipeline, and the second stage is my own fine-tuned model.
+Essay-style refinement is a two-stage pipeline. Stage two is a fine-tuned Voira v1 LoRA adapter rather than a generic transcription-to-chatbot handoff.
 
 ```mermaid
 flowchart LR
@@ -119,15 +117,15 @@ flowchart LR
     oai --> draft
 ```
 
-Stage one asks `gpt-4o-mini` to turn the spoken transcript into a structured outline. Stage two feeds that outline to Voira v1, a LoRA adapter (`ekomobng/voira-essay-lora-v1`) I trained on top of Llama 3.1 8B Instruct, which renders the outline into a finished essay.
+Stage one asks `gpt-4o-mini` to turn the spoken transcript into a structured outline. Stage two feeds that outline to Voira v1, a LoRA adapter (`ekomobng/voira-essay-lora-v1`) on Llama 3.1 8B Instruct, which renders the outline into a finished essay.
 
-In development the model runs as a separate local server using `mlx-lm`, fused and quantized to 4-bit so the 8B model fits in about 6 GB of RAM on an Apple Silicon Mac. It serves one generation at a time, because an 8B model on a laptop cannot handle concurrent requests without thrashing, and it runs the blocking generation off the event loop so health checks still answer while it works. In production the backend points `VOIRA_MODEL_URL` at a hosted endpoint (Hugging Face Inference Endpoints or Replicate) instead, and nothing else changes.
+In development the model runs as a separate local server using `mlx-lm`, fused and quantized to 4-bit so the 8B model fits in about 6 GB of RAM on Apple Silicon. It serves one generation at a time (an 8B model on a laptop cannot handle concurrent requests without thrashing) and runs blocking generation off the event loop so health checks still answer. In production the backend points `VOIRA_MODEL_URL` at a hosted endpoint (Hugging Face Inference Endpoints or Replicate); the client path does not change.
 
 Two reliability details matter more than the model itself:
 
-The backend health-probes the inference endpoint before it spends money on the stage-one OpenAI call. Without that probe, an unreachable model would still run (and bill) the outline step, then fail at stage two and fall back, paying OpenAI twice for one request. The probe makes the common failure cheap.
+The backend health-probes the inference endpoint before it spends money on the stage-one OpenAI call. Without that probe, an unreachable model would still bill the outline step, fail at stage two, and fall back, paying OpenAI twice for one request.
 
-The model was trained on a small dataset, so it sometimes starts echoing its outline scaffolding back out as filler once it runs out of learned content. The server watches the running output and stops the moment it sees that collapse signature, trims back to the last clean sentence, and hands back what is usable. If what remains is too short to be a real essay, the whole thing falls back to the direct OpenAI path. The feature flag (`VOIRA_MODEL_ENABLED`) can turn the model off entirely with no code change, and the user never sees a difference beyond the wording of the draft.
+The model was trained on a small dataset, so it can start echoing outline scaffolding once it runs out of learned content. The server watches the running output, stops on that collapse signature, trims to the last clean sentence, and returns what is usable. If the result is too short to be a real essay, the request falls back to the direct OpenAI path. The feature flag `VOIRA_MODEL_ENABLED` can disable the model with no code change.
 
 ## Data model
 
@@ -146,23 +144,23 @@ Ten tables in the public schema, all with Row Level Security enabled. Migrations
 | `admin_audit_log` | Immutable record of admin actions with IP and user agent | Backend only |
 | `stripe_webhook_events` | Idempotency claims for Stripe events | Backend only |
 
-The split in the "who can write" column is deliberate. Anything tied to money or privilege (`credits_ledger`, `admin_emails`, `stripe_webhook_events`) is unreachable from the browser even with a valid login. RLS lets a user read their own `recordings` and `drafts`, and nothing else.
+Anything tied to money or privilege (`credits_ledger`, `admin_emails`, `stripe_webhook_events`) is unreachable from the browser even with a valid login. RLS lets a user read their own `recordings` and `drafts`, and nothing else.
 
 ## How security is enforced
 
-The frontend ships with the Supabase anon key, which is public by design. The backend holds the service role key and is the only thing that can act across users. Every real authorization decision lives on the server.
+The frontend ships with the Supabase anon key, which is public by design. The backend holds the service role key and is the only component that can act across users. Authorization decisions live on the server.
 
-The clearest example is admin status. The browser never queries `admin_emails`. It calls `GET /admin/is-admin`, which returns `{ "isAdmin": true }` or `{ "isAdmin": false }` and nothing else. The admin list never leaves the server, so a user poking at the network tab learns only their own answer.
+Admin status is the clearest example. The browser never queries `admin_emails`. It calls `GET /admin/is-admin`, which returns `{ "isAdmin": true }` or `{ "isAdmin": false }` and nothing else. The admin list never leaves the server.
 
-RLS is a backstop. The backend makes the real authorization decision, and the database policies are there to catch anything that slips past it. If a query arrives without a valid auth context, Postgres returns an empty result instead of an error, so the backend treats empty data as a failure to prove ownership rather than as "no rows." Access is denied by default and allowed only where a policy explicitly grants it.
+RLS is a backstop. The backend makes the real authorization decision, and the database policies catch anything that slips past it. If a query arrives without a valid auth context, Postgres returns an empty result instead of an error, so the backend treats empty data as a failure to prove ownership rather than as "no rows." Access is denied by default and allowed only where a policy explicitly grants it.
 
-WebSocket auth uses the ticket flow described above, so no long-lived JWT ever sits in a URL or a log. Errors sent to clients are generic ("Transcription stream error") while the full detail goes to the logs and Sentry, so a stack trace never travels to the browser. The frontend is served with a strict set of headers (HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and a `Permissions-Policy` that allows the microphone and nothing else), defined in `apps/web/vercel.json`.
+WebSocket auth uses the ticket flow above, so no long-lived JWT sits in a URL or a log. Errors sent to clients are generic ("Transcription stream error") while full detail goes to logs and Sentry. The frontend is served with HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and a `Permissions-Policy` that allows the microphone and nothing else (`apps/web/vercel.json`).
 
 ## Keeping it reliable on a budget
 
-Most of the operational work went into surviving on free and near-free tiers without lying to users about what happened.
+Most of the operational work is about surviving free and near-free tiers without lying to users about outcomes.
 
-Credits are reserved, then refunded on failure. When you start an operation that costs a credit, the backend decrements atomically up front, which closes the race where two concurrent requests both see "one credit left" and both proceed. If the operation then fails or times out, the credit is refunded out of band, including on `asyncio.CancelledError` when a client disconnects mid-request. You are never charged for a failure, and you cannot double-spend by clicking twice.
+Credits are reserved, then refunded on failure. An operation that costs a credit decrements atomically up front, which closes the race where two concurrent requests both see one credit left and both proceed. On failure, timeout, or `asyncio.CancelledError` (client disconnect), the credit is refunded out of band. Users are not charged for failures and cannot double-spend by clicking twice.
 
 ```mermaid
 flowchart TD
@@ -174,19 +172,19 @@ flowchart TD
     refund --> error["Return error"]
 ```
 
-Rate limiting is Redis-backed and keyed per user. The in-memory limiter I started with did not share state across Gunicorn workers, so a user's real limit was the configured number times the worker count. Moving to Redis (Render's free Key Value, which is Valkey) made the limit mean what it says regardless of how many workers or replicas are running. Production refuses to start without `REDIS_URL`; development falls back to in-memory with a warning.
+Rate limiting is Redis-backed and keyed per user. An in-memory limiter does not share state across Gunicorn workers, so the effective limit becomes the configured number times the worker count. Redis (Render Key Value, which is Valkey) makes the limit mean what it says across workers and replicas. Production refuses to start without `REDIS_URL`; development falls back to in-memory with a warning.
 
-Stripe webhooks are idempotent. Stripe retries, so the handler claims each event id in `stripe_webhook_events` before doing any work and skips anything already claimed. A retried delivery is a no-op, and there is a full audit trail of what was processed.
+Stripe webhooks are idempotent. The handler claims each event id in `stripe_webhook_events` before doing work and skips anything already claimed. Retried deliveries are no-ops, with a full audit trail of what was processed.
 
-Timeouts are explicit and aligned. The OpenAI client has a per-attempt timeout and bounded retries, and the endpoint timeouts in the middleware match, so a hung upstream surfaces as a clean error and a refund rather than a worker tied up until the platform kills it.
+Timeouts are explicit and aligned. The OpenAI client has a per-attempt timeout and bounded retries; endpoint timeouts in middleware match, so a hung upstream surfaces as a clean error and a refund rather than a worker tied up until the platform kills it.
 
-The database is kept awake deliberately. Supabase pauses a free project after about a week of no database activity, which is what first took the app down. A scheduled GitHub Action now runs a tiny read-only query a few times a day so the project registers real activity and stays up. It is the cheapest possible fix, it lives in the repo, and it costs nothing.
+Supabase pauses a free project after about a week of no database activity. A scheduled GitHub Action runs a tiny read-only query a few times a day so the project registers activity and stays up.
 
-Health checks exist for probes. `GET /health` is a liveness check that always answers if the process is up; `GET /health/ready` verifies dependencies and returns 503 when something critical is down, which is what Kubernetes and the Docker `HEALTHCHECK` use to decide whether to send traffic. Errors across the app report to Sentry with environment-specific sampling.
+`GET /health` is a liveness check that answers if the process is up. `GET /health/ready` verifies dependencies and returns 503 when something critical is down; Kubernetes and the Docker `HEALTHCHECK` use that to decide whether to send traffic. Errors report to Sentry with environment-specific sampling.
 
 ## API reference
 
-Base URL in production is `https://voira-api.onrender.com`. Every endpoint except the health and version checks requires a Supabase JWT in the `Authorization: Bearer <token>` header. Credit-consuming endpoints return `402` when you are out of credits.
+Base URL in production is `https://voira-api.onrender.com`. Every endpoint except the health and version checks requires a Supabase JWT in the `Authorization: Bearer <token>` header. Credit-consuming endpoints return `402` when credits are exhausted.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -209,9 +207,7 @@ Base URL in production is `https://voira-api.onrender.com`. Every endpoint excep
 | POST | `/webhooks/stripe` | Stripe webhook receiver |
 | GET, POST | `/admin/*` | Admin console (users, credits, audit log, analytics) |
 
-A few representative calls follow.
-
-Current user and credit balance:
+Representative calls:
 
 ```bash
 curl https://voira-api.onrender.com/auth/me \
@@ -229,15 +225,11 @@ curl https://voira-api.onrender.com/auth/me \
 }
 ```
 
-Get a WebSocket ticket, then connect:
-
 ```bash
 curl -X POST https://voira-api.onrender.com/ws/ticket \
   -H "Authorization: Bearer $JWT"
 # { "ticket": "v1:...", "expires_in": 60 }
 ```
-
-Refine a transcript into a draft (costs one credit):
 
 ```bash
 curl -X POST https://voira-api.onrender.com/refine \
@@ -251,8 +243,6 @@ curl -X POST https://voira-api.onrender.com/refine \
   }'
 # { "refined_text": "The project I am proudest of ..." }
 ```
-
-Start a subscription checkout:
 
 ```bash
 curl -X POST https://voira-api.onrender.com/billing/create-checkout-session \
@@ -268,63 +258,43 @@ curl -X POST https://voira-api.onrender.com/billing/create-checkout-session \
 
 ## Decisions and trade-offs
 
-This is the part I actually care about. Each of these was a fork where a different choice would have produced a different system.
+Each of these is a fork where a different choice would have produced a different system.
 
 ### Supabase instead of raw cloud instances
 
-I could have stood up a Postgres instance, a container for an auth service, an object store, and the networking to connect them. I chose Supabase, which bundles Postgres, auth, storage, and row-level security behind one project.
+The alternative is a Postgres instance, a separate auth service, object storage, and the networking between them. Supabase bundles Postgres, auth, storage, and row-level security in one project.
 
-The win is that a solo developer gets managed Postgres, JWT auth with refresh handling, signed storage uploads, and a policy engine without operating any of it. RLS in particular let me push a real authorization boundary down into the database instead of trusting application code alone.
+The win is managed Postgres, JWT auth with refresh handling, signed storage uploads, and a policy engine without operating those pieces separately. RLS pushes an authorization boundary into the database instead of trusting application code alone.
 
-The cost is honest. I am tied to Supabase's auth model and its platform behavior, including the free-tier pause that bit me and forced the keep-alive job. Migrations are applied through Supabase rather than by a runner inside the backend, which is a manual, gated step I have to keep in sync with the repo. If this ever needed to leave Supabase, the auth integration is the piece that would hurt. For the current stage, managing one platform instead of four services is the right trade, and the RLS boundary is worth more to me than provider independence.
+The cost is coupling to Supabase's auth model and platform behavior, including the free-tier pause that required the keep-alive job. Migrations are applied through Supabase rather than by a runner inside the backend, which is a manual gated step that must stay in sync with the repo. Leaving Supabase later would hurt most on the auth integration. At the current stage, one platform instead of four services is the better trade, and the RLS boundary outweighs provider independence.
 
 ### Render and Vercel on their free tiers
 
-The backend runs on Render, the frontend on Vercel, both free. The frontend is static files on a CDN, which is a genuinely good fit for a free plan. The backend is where the trade-off shows: a free Render service sleeps after inactivity and cold-starts on the next request, and the free Key Value store has no persistence, so rate-limit windows reset when it restarts. I accepted both. A reset rate-limit window is harmless, and the cold start is a few seconds on a product that is not yet latency-critical. The moment either becomes a real problem, the fix is a paid instance, not a rewrite.
+The backend runs on Render, the frontend on Vercel, both free. Static files on a CDN fit a free plan well. The backend trade-offs are more visible: a free Render service sleeps after inactivity and cold-starts on the next request, and the free Key Value store has no persistence, so rate-limit windows reset on restart. A reset rate-limit window is harmless, and the cold start is a few seconds on a product that is not yet latency-critical. The fix for either is a paid instance, not a rewrite.
 
 ### A monorepo with npm workspaces
 
-Frontend and backend live in one repository under `apps/`. One clone, one CI pipeline, and changes that span the stack land in one place. The cost is that the two toolchains (npm and Python) share a root, and a quirk I documented is that the backend tests live at the repo root `tests/` rather than under `apps/api/`. For a single maintainer, the coordination this saves is worth the small awkwardness.
+Frontend and backend live in one repository under `apps/`. One clone, one CI pipeline, and stack-spanning changes land in one place. The cost is that the npm and Python toolchains share a root, and the backend tests live at the repo root `tests/` rather than under `apps/api/`. For a single maintainer, the coordination savings outweigh that awkwardness.
 
 ### Deepgram streaming instead of batch transcription
 
-Transcription could have waited for the full recording and sent one request. I stream audio to Deepgram over a socket and show interim results as the user speaks. Live feedback is most of the product's feel, so the extra moving parts (the ticket flow, idle and chunk limits, backpressure) are the cost of the thing that makes it feel alive.
+Transcription could wait for the full recording and send one request. Instead, audio streams to Deepgram over a socket and interim results appear while the user speaks. Live feedback is the product's feel; the ticket flow, idle and chunk limits, and backpressure are the cost of that feel.
 
 ### Reserve-then-refund billing instead of charge-on-success
 
-The simpler design charges a credit when an operation succeeds. That leaves a race: two requests both read the last credit and both go. Reserving the credit up front with an atomic decrement closes the race, at the cost of a refund path I have to maintain for every failure mode, including client disconnects. Billing integrity under concurrency was worth the extra code.
+The simpler design charges a credit when an operation succeeds. That leaves a race: two requests both read the last credit and both proceed. Reserving the credit up front with an atomic decrement closes the race, at the cost of a refund path for every failure mode, including client disconnects. Billing integrity under concurrency is worth the extra code.
 
 ### WebSocket tickets instead of a JWT in the URL
 
-The quick way to authenticate a socket is to put the JWT in the query string. URLs get logged in a lot of places, so I issue a short-lived single-purpose ticket over HTTP and connect with that. More steps, but no durable credential ends up in a log.
+Putting the JWT in the query string is the quick path, but URLs get logged in many places. A short-lived single-purpose ticket issued over HTTP means no durable credential ends up in a log.
 
 ### A self-hosted fine-tune with a managed fallback
 
-I could have used OpenAI for everything, or committed fully to self-hosting. I did both: the fine-tuned Voira v1 so drafts adapt to the different kinds of writing users bring to it, with the direct OpenAI path as a fallback that the feature flag can promote to primary instantly. That means two inference paths to maintain and a model to train and host. In exchange I get the specialized output when the model is healthy and a product that keeps working when it is not, which matters a lot more when the model is an 8B running on constrained hardware.
-
-## Running it locally
-
-You need Node 18+, Python 3.11+, and a Supabase project.
-
-```bash
-npm install
-npm run dev        # starts the API and the web app together
-# or separately:
-npm run dev:api    # FastAPI on :8000
-npm run dev:web    # Vite on :5173
-```
-
-Backend tests live at the repo root, not under `apps/api/`:
-
-```bash
-cd apps/api && pytest ../../tests -v
-```
-
-Environment variables go in `apps/web/.env` and `apps/api/.env` (copy the committed `.env.example` files and fill them in); the Environment variables section at the end of this file explains how they are split.
+The system uses both: Voira v1 so drafts adapt to the different kinds of writing users bring, and a direct OpenAI path as a fallback the feature flag can promote to primary instantly. That means two inference paths to maintain and a model to train and host. In exchange, specialized output is available when the model is healthy, and the product keeps working when it is not, which matters when the model is an 8B running on constrained hardware.
 
 ## Containers and local Kubernetes
 
-Voira is small, which makes it a good place to practice the operational side without risk. The repo ships a working local stack in Docker and a set of Kubernetes manifests you can run on a laptop with kind or minikube.
+The repo ships a working local stack in Docker and Kubernetes manifests for kind or minikube. These are for operational practice and local validation; production still deploys on Render and Vercel.
 
 ### Docker Compose
 
@@ -335,16 +305,18 @@ docker compose up --build
 # redis (valkey) on :6379
 ```
 
-Compose runs three services: the FastAPI backend (from `infra/Dockerfile`), the web app built and served by nginx (from `apps/web/Dockerfile`), and Valkey so the rate limiter uses its real backend instead of the in-memory fallback. Supabase stays in the cloud; point the env files at your project. The Voira v1 inference server is not a Compose service, because `mlx` needs Apple Silicon and Metal and Docker on macOS does not expose them. You run it on the host and point `VOIRA_MODEL_URL` at `http://host.docker.internal:8090`; left unset, the backend uses the OpenAI fallback path.
+Compose runs three services: the FastAPI backend (`infra/Dockerfile`), the web app behind nginx (`apps/web/Dockerfile`), and Valkey so the rate limiter uses its real backend instead of the in-memory fallback. Supabase stays in the cloud; point the env files at the project. The Voira v1 inference server is not a Compose service, because `mlx` needs Apple Silicon and Metal, which Docker on macOS does not expose. Run it on the host and point `VOIRA_MODEL_URL` at `http://host.docker.internal:8090`; left unset, the backend uses the OpenAI fallback path.
+
+Copy `apps/api/.env.example` and `apps/web/.env.example` to `.env` files and fill them in before bringing the stack up. The Environment variables section below describes the split.
 
 ### Kubernetes on kind
 
-The manifests in `infra/k8s/` bring up the same three services with health probes, resource limits, and an ingress. They are wired with a `kustomization.yaml` so a single apply installs the core set and never touches the template secret or the optional autoscaler.
+The manifests in `infra/k8s/` bring up the same three services with health probes, resource limits, and an ingress. A `kustomization.yaml` installs the core set and never touches the template secret or the optional autoscaler.
 
 ```bash
 kind create cluster --name voira
 
-# Build the images and load them into the cluster (kind does not see your
+# Build the images and load them into the cluster (kind does not see
 # local Docker images by default).
 docker build -t voira-api:local -f infra/Dockerfile .
 docker build -t voira-web:local \
@@ -360,25 +332,21 @@ kubectl apply -k infra/k8s/
 kubectl -n voira get pods
 ```
 
-The images are built from the same Dockerfiles Compose uses. Liveness hits `/health`, readiness hits `/health/ready`, so a pod only receives traffic once its dependencies answer. The web API URL is baked in at build time, so build the web image with `VITE_API_BASE_URL` set to the API ingress host. On a local cluster the refinement runs the OpenAI fallback path, since the `mlx` model cannot run in a Linux container. The optional autoscaler is a separate apply (`kubectl apply -f infra/k8s/hpa.yaml`) because it needs metrics-server.
+The images are built from the same Dockerfiles Compose uses. Liveness hits `/health`, readiness hits `/health/ready`, so a pod only receives traffic once its dependencies answer. The web API URL is baked in at build time, so build the web image with `VITE_API_BASE_URL` set to the API ingress host. On a local cluster refinement uses the OpenAI fallback path, since the `mlx` model cannot run in a Linux container. The optional autoscaler is a separate apply (`kubectl apply -f infra/k8s/hpa.yaml`) because it needs metrics-server.
 
-### Where I would take the infrastructure next
+### Next infrastructure experiments
 
-These are the free-tier experiments that would teach the most without costing anything.
+Free-tier experiments that teach the most without costing anything:
 
-Publish images to the GitHub Container Registry from CI so the Kubernetes manifests pull a tagged image instead of a local build. A skeleton workflow for this is included and documented below.
-
-Add Prometheus and Grafana to the local cluster to scrape the backend and chart request rate, latency, and error rate against the limits the app already enforces.
-
-Turn on a HorizontalPodAutoscaler against the API deployment and generate load to watch it scale, which is safe to try precisely because the backend is stateless.
-
-Run the Supabase CLI local stack so the whole system, database included, comes up offline for development and tests.
-
-For the model, a GPU node (or a CPU `llama.cpp` build of the same adapter) would let the inference server run inside the cluster instead of only on a Mac. I have left this as a documented path rather than a default manifest because it needs hardware the free tier does not give you.
+- Publish images to GHCR from CI so Kubernetes manifests pull a tagged image instead of a local build. A skeleton workflow for this is included below.
+- Add Prometheus and Grafana to the local cluster to scrape the backend and chart request rate, latency, and error rate.
+- Turn on a HorizontalPodAutoscaler against the API deployment and generate load to watch it scale (safe because the backend is stateless).
+- Run the Supabase CLI local stack so the whole system, database included, comes up offline.
+- For the model, a GPU node (or a CPU `llama.cpp` build of the same adapter) would let the inference server run inside the cluster. That path is documented rather than defaulted, because it needs hardware the free tier does not provide.
 
 ### Optional: build images in CI
 
-`.github/workflows/docker-build.yml` builds the API and web images and pushes them to GHCR on a push to `main`. It is off the critical path; the app deploys fine without it. It exists so the Kubernetes workflow can consume versioned images.
+`.github/workflows/docker-build.yml` builds the API and web images and pushes them to GHCR on a push to `main`. It is off the critical path; the app deploys fine without it. It exists so a Kubernetes workflow can consume versioned images.
 
 ## Project layout
 
@@ -392,10 +360,14 @@ supabase/         SQL migrations and RLS policies
 infra/
   Dockerfile      Backend image
   k8s/            Kubernetes manifests for local clusters
+docs/
+  history/        Implementation log, migration notes, phase plans
+  ops/            Production setup notes
 tests/            Backend pytest suite (at the repo root, by design)
 docker-compose.yml
+SECURITY.md       Security policy (kept at repo root for GitHub)
 ```
 
 ## Environment variables
 
-Configuration is supplied entirely through environment variables, split by trust level. The frontend reads `apps/web/.env`, which holds public, build-time values only. The backend reads `apps/api/.env`, which holds the privileged credentials: the Supabase service-role key, the transcription and model provider keys, the billing secrets, and runtime settings such as the allowed CORS origins and the cache URL. A committed `.env.example` sits next to each and documents the shape without carrying real values, so nothing sensitive is ever committed. You copy each example to `.env` and fill it in. In production the backend refuses to start when a required secret is missing, which turns a misconfigured deploy into a fast, loud failure instead of a quiet half-broken one.
+Configuration is supplied entirely through environment variables, split by trust level. The frontend reads `apps/web/.env`, which holds public, build-time values only. The backend reads `apps/api/.env`, which holds the privileged credentials: the Supabase service-role key, the transcription and model provider keys, the billing secrets, and runtime settings such as the allowed CORS origins and the cache URL. A committed `.env.example` sits next to each and documents the shape without carrying real values, so nothing sensitive is ever committed. Copy each example to `.env` and fill it in. In production the backend refuses to start when a required secret is missing, which turns a misconfigured deploy into a fast failure instead of a quiet half-broken one.
