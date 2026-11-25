@@ -11,6 +11,9 @@ from config import settings
 WS_INSUFFICIENT_CREDITS_CODE = 4401  # app-specific; distinct from 1008 auth failures
 _TICKET_PREFIX = "v1"
 
+# Sourced from settings so it can be tuned per environment.
+WS_TICKET_TTL_SECONDS = settings.ws_ticket_ttl_seconds
+
 
 def create_ws_ticket(user_id: str) -> tuple[str, int]:
     """Return (ticket, expires_in_seconds) for an authenticated user."""
