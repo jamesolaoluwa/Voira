@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voira-api
+  namespace: voira
+  labels:
+    app: voira-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: voira-api
+  template:
+    metadata:
+      labels:
+        app: voira-api
+    spec:
+      containers:
+        - name: api
+          # Built locally from infra/Dockerfile. On kind:
+          #   docker build -t voira-api:local -f infra/Dockerfile .
+          #   kind load docker-image voira-api:local --name voira
+          image: voira-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: voira-api-config
+            - secretRef:
+                name: voira-api-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            # Only receive traffic once dependencies answer.
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

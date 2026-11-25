@@ -1,0 +1,34 @@
+# Routes two hosts to the web and API services. Needs an ingress controller
+# (on kind: the ingress-nginx deploy; on minikube: `minikube addons enable ingress`).
+# Add both hosts to /etc/hosts pointing at the cluster ingress IP:
+#   127.0.0.1 voira.local api.voira.local
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: voira
+  namespace: voira
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: voira.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: voira-web
+                port:
+                  number: 80
+    - host: api.voira.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: voira-api
+                port:
+                  number: 8000
