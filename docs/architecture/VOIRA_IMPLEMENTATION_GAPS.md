@@ -569,7 +569,7 @@ Redis-backed rate limiting in production, in-memory fallback for dev.
 ### P2 - Medium
 
 **LLM-007: No Prompt Caching**
-- Location: `apps/api/llm_refinement.py` and `docs/llm_prompt_caching.md`
+- Location: `apps/api/llm_refinement.py` and `docs/llm/llm_prompt_caching.md`
 - Issue: Documentation suggests caching but it's not implemented
 - Impact: Redundant tokens sent for identical system prompts
 - Fix: Implement prompt prefix caching per OpenAI documentation
